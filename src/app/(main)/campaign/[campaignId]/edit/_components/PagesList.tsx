@@ -87,7 +87,8 @@ export interface PagesContentHandle {
 
 interface PagesTreeProps {
   //ref: React.RefObject<PagesTreeHandle | null>;
-  pages: PageRow[];
+  /** Store data can be absent during the first client render. */
+  pages?: PageRow[] | null;
   currentPageId: string | null;
   onPageSelect: (pageId: string) => void;
   // onPageSettings: (pageId: string) => void;
@@ -269,7 +270,11 @@ export default function PagesList({
     }),
   );
 
-  const sorted = [...pages].sort((a, b) => a.order - b.order);
+  const safePages = React.useMemo(
+    () => (Array.isArray(pages) ? pages : []),
+    [pages],
+  );
+  const sorted = [...safePages].sort((a, b) => a.order - b.order);
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -282,12 +287,12 @@ export default function PagesList({
 
   // Separate regular pages from error pages
   const { regularPages, resultPages } = React.useMemo(() => {
-    const regular = pages.filter((page) => page.pageType !== "result_page");
-    const result = pages
+    const regular = safePages.filter((page) => page.pageType !== "result_page");
+    const result = safePages
       .filter((page) => page.pageType === "result_page")
       .sort((a, b) => 0 - 0);
     return { regularPages: regular, resultPages: result };
-  }, [pages]);
+  }, [safePages]);
 
   // Handler to create a new page (if a collection ID is given this will be a dynamic page)
   const handleAddPage = async (collectionId?: string) => {};
@@ -387,7 +392,7 @@ export default function PagesList({
 
         <div className="flex items-center gap-2 mt-2">
           <span className="text-xs text-muted-foreground font-medium">
-            Error pages
+            Result pages
           </span>
           <Separator className="flex-1" />
         </div>

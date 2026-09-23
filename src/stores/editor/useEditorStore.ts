@@ -130,7 +130,7 @@ interface EditorState {
   isDraggingToCanvas: boolean;
   dragElementType: string | null;
   dragElementName: string | null;
-  dragElementSource: "elements" | "components" | null;
+  dragElementSource: "elements" | "layouts" | null;
   dragPosition: DragPosition | null;
   canvasDropTarget: CanvasDropTarget | null;
 
@@ -197,7 +197,7 @@ interface EditorActions {
 
   startCanvasDrag: (
     elementType: string,
-    source: "elements" | "components",
+    source: "elements" | "layouts",
     elementName: string,
     initialPosition: DragPosition,
   ) => void;

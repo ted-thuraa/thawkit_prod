@@ -83,6 +83,8 @@ import {
   type EditorElementType,
 } from "@/lib/editor/element-templates";
 import PagesList from "./PagesList";
+import LayersTree from "./LayersTree";
+import ElementLibrary from "./ElementLibrary";
 // import PagesContent, {
 //   PAGE_TYPE_LABEL,
 //   PagesContentHandle,
@@ -118,10 +120,7 @@ const LeftPanel = React.memo(function LeftPanel({
   const selectedLayerId = useEditorStore((s) => s.selectedLayerId);
   const setSelectedLayerId = useEditorStore((s) => s.setSelectedLayerId);
   const setActiveSidebarTab = useEditorStore((s) => s.setActiveSidebarTab);
-  const editingComponentId = useEditorStore((s) => s.editingComponentId);
-  const editingComponentVariantId = useEditorStore(
-    (s) => s.editingComponentVariantId,
-  );
+
   const setEditingComponentVariantId = useEditorStore(
     (s) => s.setEditingComponentVariantId,
   );
@@ -171,7 +170,7 @@ const LeftPanel = React.memo(function LeftPanel({
   );
 
   useEffect(() => {
-    if (editingComponentId || !currentPageId || !currentPage) {
+    if (!currentPageId || !currentPage) {
       previousLayersRef.current = null;
       return;
     }
@@ -187,7 +186,7 @@ const LeftPanel = React.memo(function LeftPanel({
       void persistLayers(currentPageId);
     }, 400);
     return () => clearTimeout(timeout);
-  }, [currentPage, currentPageId, editingComponentId, persistLayers]);
+  }, [currentPage, currentPageId, persistLayers]);
 
   // ─── Pages tab state & handlers ───────────────────────────────────────
   const [isCreatingPage, setIsCreatingPage] = useState(false);
@@ -206,10 +205,27 @@ const LeftPanel = React.memo(function LeftPanel({
 
   const hasLandingPage = pages.some((p) => p.pageType === "landing_page");
 
+  // ─── Layers tab handlers ──────────────────────────────────────────────
+  const handleLayerSelect = useCallback(
+    (layerId: string | null) => {
+      setSelectedLayerId(layerId);
+    },
+    [setSelectedLayerId],
+  );
+
+  const handleLayersReorder = useCallback(
+    (newLayers: Layer[]) => {
+      if (currentPageId) {
+        setLayers(currentPageId, newLayers);
+      }
+    },
+    [currentPageId, setLayers],
+  );
+
   return (
     <>
       <div
-        className={`relative h-full shrink-0 overflow-hidden transition-[width] duration-300 ease-out ${
+        className={`relative z-30 h-full shrink-0 overflow-visible transition-[width] duration-300 ease-out ${
           isExpanded ? "w-64" : "w-10"
         }`}
       >
@@ -263,12 +279,9 @@ const LeftPanel = React.memo(function LeftPanel({
 
                   <hr className="mt-4" />
 
-                  {/* Content - forceMount keeps all tabs mounted for instant switching */}
-                  <TabsContent
-                    value="layers"
-                    className="flex flex-col min-h-0"
-                    forceMount
-                  >
+                  {/* Radix mounts only the active content so the selected tab
+                      controls which panel is visible. */}
+                  <TabsContent value="layers" className="flex flex-col min-h-0">
                     <header className="py-5 flex justify-between shrink-0 z-20">
                       <span className="font-medium">Layers</span>
                       {!readOnly && (
@@ -297,7 +310,7 @@ const LeftPanel = React.memo(function LeftPanel({
                         } as React.CSSProperties
                       }
                     >
-                      {!currentPageId && !editingComponentId ? (
+                      {!currentPageId ? (
                         <Empty>
                           <EmptyTitle>No page selected</EmptyTitle>
                           <EmptyDescription>
@@ -312,16 +325,15 @@ const LeftPanel = React.memo(function LeftPanel({
                           </EmptyDescription>
                         </Empty>
                       ) : (
-                        <div>layer tree</div>
-                        // <LayersTree
-                        //   layers={layersForCurrentPage}
-                        //   onLayerSelect={handleLayerSelect}
-                        //   onReorder={handleLayersReorder}
-                        //   pageId={currentPageId || ""}
-                        //   // liveLayerUpdates={liveLayerUpdates}
-                        //   // liveComponentUpdates={liveComponentUpdates}
-                        //   // readOnly={readOnly}
-                        // />
+                        <LayersTree
+                          layers={layersForCurrentPage}
+                          onLayerSelect={handleLayerSelect}
+                          onReorder={handleLayersReorder}
+                          pageId={currentPageId || ""}
+                          // liveLayerUpdates={liveLayerUpdates}
+                          // liveComponentUpdates={liveComponentUpdates}
+                          // readOnly={readOnly}
+                        />
                       )}
                     </div>
                   </TabsContent>
@@ -329,7 +341,6 @@ const LeftPanel = React.memo(function LeftPanel({
                   <TabsContent
                     value="pages"
                     className="flex flex-col min-h-0 overflow-y-auto no-scrollbar"
-                    forceMount
                   >
                     <PagesList
                       //ref={pagesRef}
@@ -362,14 +373,13 @@ const LeftPanel = React.memo(function LeftPanel({
             this root (e.g. `absolute left-full top-0 ml-3`) rather than
             assuming a docked sidebar edge. */}
           {showElementLibrary && (
-            <div className="absolute left-full top-0 ml-3 w-64 rounded-xl border bg-background p-4 text-sm shadow-lg">
-              element lib
+            <div className="absolute left-full top-0 z-40 ml-3 w-64 rounded-xl border bg-background p-4 text-sm shadow-lg">
+              <ElementLibrary
+                isOpen={showElementLibrary}
+                onClose={() => setShowElementLibrary(false)}
+              />
             </div>
           )}
-          {/* <ElementLibrary
-          isOpen={showElementLibrary}
-          onClose={() => setShowElementLibrary(false)}
-        /> */}
         </Suspense>
       </div>
     </>

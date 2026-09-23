@@ -37,6 +37,19 @@ export interface FlattenedPageNode {
   collapsed?: boolean;
 }
 
+/** Runtime guard for tree data crossing the editor hydration boundary. */
+function isPageTreeNode(value: unknown): value is PageTreeNode {
+  if (value === null || typeof value !== "object") return false;
+
+  const node = value as Partial<PageTreeNode>;
+  return (
+    typeof node.id === "string" &&
+    node.type === "page" &&
+    node.data !== null &&
+    typeof node.data === "object"
+  );
+}
+
 /**
  * Find the homepage from a list of pages
  */
@@ -112,22 +125,35 @@ export function getPageIcon(page: Page): IconProps["name"] {
 /**
  * Build a tree structure from pages and folders
  */
-export function buildPageTree(pages: Page[]) {
-  return;
+export function buildPageTree(
+  pages: Page[] | null | undefined = [],
+): PageTreeNode[] {
+  const safePages = Array.isArray(pages) ? pages : [];
+
+  // Folders are not part of the current funnel schema. Preserve the tree
+  // utility contract by returning one root node per page rather than the
+  // previous implicit `undefined` return.
+  return safePages.map((page) => ({
+    id: page.id,
+    type: "page" as const,
+    data: page,
+  }));
 }
 
 /**
  * Flatten a page tree structure into a linear array with depth information
  */
 export function flattenPageTree(
-  nodes: PageTreeNode[],
+  nodes: PageTreeNode[] | null | undefined = [],
   parentId: string | null = null,
   depth: number = 0,
   collapsedIds: Set<string> = new Set(),
 ): FlattenedPageNode[] {
   const flattened: FlattenedPageNode[] = [];
 
-  nodes.forEach((node, index) => {
+  const safeNodes = Array.isArray(nodes) ? nodes.filter(isPageTreeNode) : [];
+
+  safeNodes.forEach((node, index) => {
     const isCollapsed = collapsedIds.has(node.id);
 
     flattened.push({
@@ -141,7 +167,11 @@ export function flattenPageTree(
     });
 
     // Only flatten children if not collapsed and has children
-    if (node.children && node.children.length > 0 && !isCollapsed) {
+    if (
+      Array.isArray(node.children) &&
+      node.children.length > 0 &&
+      !isCollapsed
+    ) {
       flattened.push(
         ...flattenPageTree(node.children, node.id, depth + 1, collapsedIds),
       );

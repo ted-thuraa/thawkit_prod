@@ -44,6 +44,41 @@ export type CollectionFieldType =
   | "option"
   | "count"
   | "status";
+
+export type CollectionSortDirection = "asc" | "desc" | "manual";
+
+export interface CollectionSorting {
+  field: string; // field ID or 'manual_order'
+  direction: CollectionSortDirection;
+}
+
+export interface Collection {
+  id: string; // UUID
+  name: string;
+  uuid: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  sorting: CollectionSorting | null;
+  order: number;
+  is_published: boolean;
+  draft_items_count?: number;
+  has_published_version?: boolean;
+}
+
+export interface CreateCollectionData {
+  name: string;
+  sorting?: CollectionSorting | null;
+  order?: number;
+  is_published?: boolean;
+}
+
+export interface UpdateCollectionData {
+  name?: string;
+  sorting?: CollectionSorting | null;
+  order?: number;
+}
+
 /** Field-specific settings stored in the data column */
 export interface CollectionFieldData {
   multiple?: boolean; // For asset fields - allow multiple files
@@ -51,6 +86,34 @@ export interface CollectionFieldData {
   // For count fields: which child collection / reference field to count back from
   count?: { collectionId: string; fieldId: string };
 }
+
+export interface CreateCollectionFieldData {
+  name: string;
+  key?: string | null;
+  type: CollectionFieldType;
+  default?: string | null;
+  fillable?: boolean;
+  order: number;
+  collection_id: string; // UUID
+  reference_collection_id?: string | null; // UUID
+  hidden?: boolean;
+  is_computed?: boolean;
+  data?: CollectionFieldData;
+  is_published?: boolean;
+}
+
+export interface UpdateCollectionFieldData {
+  name?: string;
+  key?: string | null;
+  type?: CollectionFieldType;
+  default?: string | null;
+  fillable?: boolean;
+  order?: number;
+  reference_collection_id?: string | null; // UUID
+  hidden?: boolean;
+  data?: CollectionFieldData;
+}
+
 export interface CollectionField {
   id: string; // UUID
   name: string;
@@ -86,6 +149,68 @@ export interface CollectionItem {
 export interface CollectionItemWithValues extends CollectionItem {
   values: Record<string, string>; // field_id (UUID) -> value
   publish_status?: "new" | "updated" | "deleted"; // Status badge for publish modal
+}
+
+// Global Variables (site-wide typed singletons)
+//
+// A global combines a field-like schema (name + type) and its value in one
+// row. Its type is a subset of CollectionFieldType so it can ride the same
+// FieldVariable binding/resolution/formatting rails as collection fields.
+export type GlobalVariableType = Extract<
+  CollectionFieldType,
+  "text" | "rich_text" | "number" | "date" | "color" | "image" | "link"
+>;
+
+export const GLOBAL_VARIABLE_TYPES: readonly GlobalVariableType[] = [
+  "text",
+  "rich_text",
+  "number",
+  "date",
+  "color",
+  "image",
+  "link",
+] as const;
+
+/** Runtime guard for an allowed global variable type (used by API validation). */
+export function isValidGlobalVariableType(
+  type: unknown,
+): type is GlobalVariableType {
+  return (
+    typeof type === "string" &&
+    (GLOBAL_VARIABLE_TYPES as readonly string[]).includes(type)
+  );
+}
+
+export interface GlobalVariable {
+  id: string; // UUID
+  name: string;
+  key: string | null; // Stable slug used for resolution/imports
+  type: GlobalVariableType;
+  value: string | null; // Stored as text, cast based on type (same as collection values)
+  data: CollectionFieldData; // Type-specific config (format, options)
+  order: number;
+  is_published: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface CreateGlobalVariableData {
+  name: string;
+  key?: string | null;
+  type: GlobalVariableType;
+  value?: string | null;
+  data?: CollectionFieldData;
+  order?: number;
+}
+
+export interface UpdateGlobalVariableData {
+  name?: string;
+  key?: string | null;
+  type?: GlobalVariableType;
+  value?: string | null;
+  data?: CollectionFieldData;
+  order?: number;
 }
 
 // Pagination Layer Definition (partial Layer for styling pagination controls)
@@ -803,6 +928,13 @@ export interface LayerVariables {
   };
 }
 
+export interface LayerUpdate {
+  layer_id: string;
+  user_id: string;
+  changes: Partial<Layer>;
+  timestamp: number;
+}
+
 /** A gradient stop with optional CMS field binding */
 export interface BoundColorStop {
   id: string;
@@ -826,6 +958,20 @@ export interface DesignColorVariable {
 export interface LayerTemplate extends Omit<Layer, "id" | "children"> {
   id?: string;
   children?: LayerTemplate[];
+}
+
+// Template reference marker (lazy reference resolved during template instantiation)
+export type LayerTemplateRef = { __ref: string } & Partial<
+  Omit<LayerTemplate, "children">
+> & {
+    children?: Array<LayerTemplate | LayerTemplateRef>;
+  };
+
+// Block template definition (used in template collections)
+export interface BlockTemplate {
+  icon: string;
+  name: string;
+  template: LayerTemplate | LayerTemplateRef;
 }
 
 // Pagination Layer Definition (partial Layer for styling pagination controls)

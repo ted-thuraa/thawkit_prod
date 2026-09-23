@@ -37,7 +37,8 @@ import {
 import PageContextMenu from "./PageContextMenu";
 
 interface PagesTreeProps {
-  pages: Page[];
+  /** Page data may be absent while the campaign store hydrates. */
+  pages?: Page[] | null;
 
   selectedItemId: string | null;
   currentPageId?: string | null;
@@ -428,9 +429,10 @@ export default function PagesTree({
   onStatusChange,
 }: PagesTreeProps) {
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
+  const safePages = useMemo(() => (Array.isArray(pages) ? pages : []), [pages]);
 
   // Build tree structure
-  const tree = useMemo(() => buildPageTree(pages), [pages]);
+  const tree = useMemo(() => buildPageTree(safePages), [safePages]);
 
   // Flatten the tree for rendering (respects collapsed state)
   const flattenedNodes = useMemo(
@@ -536,7 +538,7 @@ export default function PagesTree({
         if (activeNode.type === "page") {
           const activePage = activeNode.data as Page;
           if (activePage.is_dynamic) {
-            const rootHasDynamicPage = pages.some(
+            const rootHasDynamicPage = safePages.some(
               (p) =>
                 p.id !== activePage.id &&
                 p.is_dynamic &&
@@ -552,11 +554,10 @@ export default function PagesTree({
       }
 
       // Determine drop position based on node type
-      let position: "above" | "below" | "inside";
+      const position: "above" | "below" | "inside" =
+        relativeY < 0.5 ? "above" : "below";
 
       // Pages cannot have children - use 2-way split
-      position = relativeY < 0.5 ? "above" : "below";
-
       // Calculate target parent
       const targetParentId = overNode.parentId;
 
@@ -580,7 +581,7 @@ export default function PagesTree({
 
         // Prevent moving index page to folder that already has one
         if (activePage.pageType === "landing_page") {
-          const targetFolderHasIndex = pages.some(
+          const targetFolderHasIndex = safePages.some(
             (p) => p.id !== activePage.id && p.pageType === "landing_page",
           );
 
@@ -590,7 +591,7 @@ export default function PagesTree({
         }
 
         // Prevent slug conflicts
-        const slugConflict = pages.some(
+        const slugConflict = safePages.some(
           (p) =>
             p.id !== activePage.id &&
             p.slug === activePage.slug &&
@@ -603,7 +604,7 @@ export default function PagesTree({
 
         // Prevent moving dynamic page to folder that already has one
         if (activePage.is_dynamic) {
-          const targetFolderHasDynamicPage = pages.some(
+          const targetFolderHasDynamicPage = safePages.some(
             (p) =>
               p.id !== activePage.id &&
               p.is_dynamic &&
@@ -729,6 +730,14 @@ export default function PagesTree({
       }
     };
   }, [isDropNotAllowed, activeId]);
+
+  if (safePages.length === 0) {
+    return (
+      <div className="py-6 text-center text-xs text-muted-foreground">
+        No pages yet
+      </div>
+    );
+  }
 
   return (
     <DndContext
