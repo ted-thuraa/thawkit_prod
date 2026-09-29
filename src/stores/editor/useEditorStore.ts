@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import type { Layer, Breakpoint, UIState } from "@/types/funnel";
 import { scheduleLayerIdUrlUpdate } from "@/hooks/use-editor-url";
+import { useCanvasTextEditorStore } from "./useCanvasTextEditorStore";
 
 /**
  * ─────────────────────────────────────────────────────────────────────────
@@ -143,10 +144,28 @@ interface EditorState {
   siblingLayerIds: string[];
   canvasSiblingDropTarget: CanvasSiblingDropTarget | null;
   layerDragStartPosition: { x: number; y: number } | null;
-
+  activeInteractionTriggerLayerId: string | null;
+  activeInteractionTargetLayerIds: string[];
+  activeTextStyleKey: string | null; // Currently active text style (e.g., 'bold', 'italic'),
+  /** Layer ID whose content should be opened in a RichTextEditorSheet (set from iframe on double-click) */
+  richTextSheetLayerId: string | null;
   isSidebarResizing: boolean;
   leftSidebarWidth: number;
   isCanvasContextMenuOpen: boolean;
+
+  /** Index of the selected sublayer within a richText element (null = no sublayer selected) */
+  activeSublayerIndex: number | null;
+  /** Index of the selected list item within its parent list (null = no list item selected) */
+  activeListItemIndex: number | null;
+  // Element picker state (for linking filter inputs to collection conditions)
+  elementPicker: {
+    active: boolean;
+    onSelect: ((layerId: string) => void) | null;
+    validate?: ((layerId: string) => boolean) | null;
+    originPosition?: { x: number; y: number } | null;
+  } | null;
+  // Computed getters
+  showTextStyleControls: () => boolean;
 }
 
 interface EditorActions {
@@ -217,11 +236,20 @@ interface EditorActions {
     target: CanvasSiblingDropTarget | null,
   ) => void;
   endCanvasLayerDrag: () => void;
+  setActiveSublayerIndex: (index: number | null) => void;
+  selectLayerWithSublayer: (
+    layerId: string,
+    sublayer: {
+      textStyleKey: string | null;
+      sublayerIndex: number | null;
+      listItemIndex: number | null;
+    },
+  ) => void;
 
   setSidebarResizing: (value: boolean) => void;
   setLeftSidebarWidth: (value: number) => void;
   setCanvasContextMenuOpen: (value: boolean) => void;
-
+  closeRichTextSheet: () => void;
   /**
    * Reset all of the above back to defaults. NOT present in Ycode's
    * version — Ycode is single-project per deployment, so it never needs to
@@ -276,11 +304,29 @@ const initialState: EditorState = {
   layerDragStartPosition: null,
   isSidebarResizing: false,
   leftSidebarWidth: 256,
+  activeTextStyleKey: null,
   isCanvasContextMenuOpen: false,
+  activeInteractionTriggerLayerId: null,
+  activeInteractionTargetLayerIds: [],
+  richTextSheetLayerId: null,
+  activeSublayerIndex: null,
+  activeListItemIndex: null,
+  // Element picker initial state
+  elementPicker: null,
 };
 
 export const useEditorStore = create<EditorStore>((set, get) => ({
   ...initialState,
+  closeRichTextSheet: () => set({ richTextSheetLayerId: null }),
+  // Computed getter: Returns true when text style controls should be shown
+  // This happens when:
+  // 1. Canvas text editing is active, OR
+  // 2. A text style is selected from the dropdown (e.g., bold, italic, custom style)
+  showTextStyleControls: () => {
+    const state = get();
+    const isCanvasTextEditing = useCanvasTextEditorStore.getState().isEditing;
+    return isCanvasTextEditing || !!state.activeTextStyleKey;
+  },
 
   setSelectedLayerId: (id) => {
     set({
@@ -527,4 +573,25 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   setCanvasContextMenuOpen: (value) => set({ isCanvasContextMenuOpen: value }),
 
   resetForNewCampaign: () => set({ ...initialState }),
+  setActiveSublayerIndex: (index) => set({ activeSublayerIndex: index }),
+  selectLayerWithSublayer: (layerId, sublayer) => {
+    set({
+      selectedLayerId: layerId,
+      selectedLayerIds: [layerId],
+      lastSelectedLayerId: layerId,
+      activeTextStyleKey: sublayer.textStyleKey,
+      activeSublayerIndex: sublayer.sublayerIndex,
+      activeListItemIndex: sublayer.listItemIndex,
+    });
+
+    if (typeof window !== "undefined") {
+      const pathname = window.location.pathname;
+      const isLayerRoute = /^\/ycode\/(layers|pages|components)\//.test(
+        pathname,
+      );
+      if (isLayerRoute) {
+        //updateUrlQueryParam('layer', layerId);
+      }
+    }
+  },
 }));

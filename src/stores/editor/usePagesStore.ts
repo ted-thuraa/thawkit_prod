@@ -4,7 +4,7 @@
 
 import { create } from "zustand";
 import { cloneDeep } from "lodash";
-import type { Layer } from "@/types/funnel";
+import type { Layer, Page } from "@/types/funnel";
 import type { PageRow } from "@/lib/editor/resolve-editor-bootstrap";
 import {
   canHaveChildren,
@@ -42,7 +42,7 @@ export interface PageLayers {
 }
 
 interface PagesState {
-  pages: PageRow[];
+  pages: Page[];
   draftsByPageId: Record<string, PageLayers>;
   isLoading: boolean;
   error: string | null;

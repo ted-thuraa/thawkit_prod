@@ -32,7 +32,7 @@ import { usePagesStore } from "@/stores/editor/usePagesStore";
 import { useCanvasTextEditorStore } from "@/stores/editor/useCanvasTextEditorStore";
 import { SelectionOverlay } from "@/components/SelectionOverlay";
 import { BREAKPOINTS } from "@/lib/breakpoint-utils";
-import { CANVAS_PADDING } from "@/lib/canvas-utils";
+import { CANVAS_BORDER, CANVAS_PADDING } from "@/lib/canvas-utils";
 import {
   DropContainerIndicator,
   DropLineIndicator,
@@ -66,6 +66,7 @@ import {
 import Icon from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import CanvasBuildSkeleton from "./CanvasBuildSkeleton";
+import { clearDragCursor, setDragCursor } from "@/lib/drag-cursor";
 
 type ViewportMode = "desktop" | "tablet" | "mobile";
 
@@ -76,8 +77,6 @@ interface EditorCenterCanvasProps {
   onLayerSelect?: (layerId: string) => void;
   onLayerDeselect?: () => void;
   onExitComponentEditMode?: () => void;
-  //   liveLayerUpdates?: UseLiveLayerUpdatesReturn | null;
-  //   liveComponentUpdates?: UseLiveComponentUpdatesReturn | null;
 }
 // Viewport widths are derived from BREAKPOINTS to avoid sitting on exact
 // breakpoint boundaries where CSS zoom sub-pixel rounding can toggle styles.
@@ -510,8 +509,6 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
   onLayerSelect,
   onLayerDeselect,
   onExitComponentEditMode,
-  //   liveLayerUpdates,
-  //   liveComponentUpdates,
 }: EditorCenterCanvasProps) {
   const selectedLayerId = useEditorStore((state) => state.selectedLayerId);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -520,11 +517,60 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
   const [previewContentHeight, setPreviewContentHeight] = useState(0);
   const [previewContainerHeight, setPreviewContainerHeight] = useState(0);
   const [previewContainerWidth, setPreviewContainerWidth] = useState(0);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-
   // State for iframe element (for SelectionOverlay)
   const [canvasIframeElement, setCanvasIframeElement] =
     useState<HTMLIFrameElement | null>(null);
+  const [showAddBlockPanel, setShowAddBlockPanel] = useState(false);
+
+  // Scroll canvas to selected element if it's off-screen
+  const prevCanvasLayerIdRef = useRef<string | null>(null);
+  const isInitialScrollRef = useRef(true);
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollCanvasToLayer = useCallback(
+    (layerId: string, smooth: boolean, force = false) => {
+      if (!canvasIframeElement) return;
+
+      const iframeDoc = canvasIframeElement.contentDocument;
+      const iframeWin = canvasIframeElement.contentWindow;
+      if (!iframeDoc || !iframeWin) return;
+
+      const el = iframeDoc.querySelector(
+        `[data-layer-id="${layerId}"]`,
+      ) as HTMLElement;
+      if (!el) return;
+
+      // Scrolling happens inside the iframe (the iframe element is sized to the
+      // visible canvas area; its own document handles overflow). All coordinates
+      // here are in the iframe's coordinate system, so zoom doesn't apply.
+      const scrollEl = iframeDoc.scrollingElement || iframeDoc.documentElement;
+      const elRect = el.getBoundingClientRect();
+      const currentScroll = scrollEl.scrollTop;
+      const viewHeight = scrollEl.clientHeight;
+
+      const elTopInDoc = currentScroll + elRect.top;
+      const elBottomInDoc = elTopInDoc + elRect.height;
+      const viewTop = currentScroll;
+      const viewBottom = viewTop + viewHeight;
+
+      if (!force && elTopInDoc >= viewTop && elBottomInDoc <= viewBottom)
+        return;
+
+      const fitsInView = elRect.height <= viewHeight;
+      const targetScroll = fitsInView
+        ? elTopInDoc - viewHeight / 2 + elRect.height / 2
+        : elTopInDoc;
+      // scrollEl.scrollTo starts the animation more reliably than iframeWin.scrollTo
+      // across browsers, which avoids a noticeable lag before smooth scrolling begins.
+      scrollEl.scrollTo({
+        top: Math.max(0, targetScroll),
+        behavior: smooth ? "smooth" : "auto",
+      });
+    },
+    [canvasIframeElement],
+  );
+  const scrollCanvasToLayerRef = useRef(scrollCanvasToLayer);
+  scrollCanvasToLayerRef.current = scrollCanvasToLayer;
 
   // Track iframe content size from iframe reports
   const [reportedContentHeight, setReportedContentHeight] = useState(0);
@@ -551,7 +597,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
   const updateLayer = usePagesStore((state) => state.updateLayer);
   const deleteLayer = usePagesStore((state) => state.deleteLayer);
   const deleteLayers = usePagesStore((state) => state.deleteLayers);
-  const setDraftLayers = usePagesStore((state) => state.setDraftLayers);
+  //const setDraftLayers = usePagesStore((state) => state.setDraftLayers);
   const pages = usePagesStore((state) => state.pages);
   const setSelectedLayerId = useEditorStore(
     (state) => state.setSelectedLayerId,
@@ -605,7 +651,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
 
   // Get collection ID from current page if it's dynamic
   const collectionId = useMemo(() => {
-    if (!currentPage?.isDynamic) return null;
+    if (!currentPage?.is_dynamic) return null;
     return currentPage.settings?.cms?.collection_id || null;
   }, [currentPage]);
   const selectedLocaleId = useLocalisationStore(
@@ -942,6 +988,38 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
     return (containerHeight - CANVAS_PADDING) / (zoom / 100);
   }, [iframeContentHeight, containerHeight, zoom, editingComponentId]);
 
+  // Same logic as finalIframeHeight, applied to the preview iframe. Sizing the
+  // wrapper to the measured scrollHeight is unstable on pages that pin absolute
+  // elements to the viewport (e.g. `bottom: -6rem` with no positioned ancestor)
+  // — once `h-full` is restored after measurement, those elements extend past
+  // the wrapper. Sizing to the visible container area instead lets the iframe
+  // scroll internally and keeps the scrollbar bounded and accurate.
+  const finalPreviewIframeHeight = useMemo(() => {
+    if (!previewContainerHeight || previewZoom <= 0) return 0;
+    return (previewContainerHeight - CANVAS_PADDING) / (previewZoom / 100);
+  }, [previewContainerHeight, previewZoom]);
+
+  // Natural (unscaled) width of the preview iframe — its true layout viewport.
+  // Mirrors the previous `width: '100%' (minWidth: viewport)` vs fixed-width
+  // logic, but as a concrete pixel value so the iframe can be scaled with
+  // `transform` instead of CSS `zoom`. In desktop autofit the preview fills the
+  // available container width (but never below the desktop breakpoint); other
+  // modes use the exact breakpoint width.
+  const previewStageWidth = useMemo(() => {
+    if (viewportMode === "desktop" && previewZoomMode === "autofit") {
+      return Math.max(
+        previewContainerWidth - CANVAS_PADDING,
+        previewContentWidth,
+      );
+    }
+    return previewContentWidth;
+  }, [
+    viewportMode,
+    previewZoomMode,
+    previewContainerWidth,
+    previewContentWidth,
+  ]);
+
   // Handle any click inside the canvas (closes ElementLibrary panel and other popovers)
   const handleCanvasClick = useCallback(() => {
     // Ignore clicks that are part of a pan gesture (Space-drag / middle-mouse)
@@ -1194,6 +1272,13 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
     setCanvasIframeElement(iframeElement);
   }, []);
 
+  // Undo/Redo handlers
+  // Note: We don't auto-save after undo/redo to preserve the redo stack
+  // The state will be saved when the user makes the next change
+  const handleUndo = useCallback(async () => {}, []);
+
+  const handleRedo = useCallback(async () => {}, []);
+
   // Handle layer hover from Canvas (for SelectionOverlay)
   const handleCanvasLayerHover = useCallback(
     (layerId: string | null) => {},
@@ -1289,14 +1374,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
     if (selectedLayer?.name === "slide") return null;
 
     return result;
-  }, [
-    selectedLayerId,
-    currentPageId,
-    editingComponentId,
-    activeComponentVariantId,
-    componentDrafts,
-    currentPage,
-  ]);
+  }, [selectedLayerId, currentPageId, editingComponentId, currentPage]);
 
   // Get selected layer name for drag preview
   const selectedLayerName = useMemo(() => {
@@ -1599,267 +1677,239 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
                             />
                           </div>
                           <h2 className="text-2xl font-bold text-gray-900 mb-3">
-                            {canEditStructure
-                              ? "Start building"
-                              : "No content yet"}
+                            "Start building"
                           </h2>
                           <p className="text-gray-600 mb-8">
-                            {canEditStructure
-                              ? "Add your first block to begin creating your page."
-                              : "This page has no content to edit yet."}
+                            "Add your first block to begin creating your page."
                           </p>
-                          {canEditStructure && (
-                            <div className="relative inline-block">
-                              <Button
-                                onClick={() =>
-                                  setShowAddBlockPanel(!showAddBlockPanel)
-                                }
-                                size="lg"
-                                className="gap-2"
-                                disabled={
-                                  !!(
-                                    selectedLocale && !selectedLocale.is_default
-                                  )
-                                }
-                              >
-                                <Icon name="plus" className="w-5 h-5" />
-                                Add Block
-                              </Button>
 
-                              {/* Add Block Panel */}
-                              {showAddBlockPanel && currentPageId && (
-                                <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 z-50 bg-white border border-gray-200 rounded-lg shadow-2xl min-w-60">
-                                  <div className="p-2">
-                                    <div className="text-xs text-gray-500 px-3 py-2 mb-1 font-medium">
-                                      Choose a block
-                                    </div>
+                          <div className="relative inline-block">
+                            <Button
+                              size="lg"
+                              className="gap-2"
+                              disabled={
+                                !!(selectedLocale && !selectedLocale.is_default)
+                              }
+                            >
+                              <Icon name="plus" className="w-5 h-5" />
+                              Add Block
+                            </Button>
 
-                                    <Button
-                                      onClick={() => {
-                                        // Always add inside Body container
-                                        const result = addLayerFromTemplate(
-                                          currentPageId,
-                                          "body",
-                                          "div",
-                                        );
-                                        if (result && liveLayerUpdates) {
-                                          // Get FRESH state and find actual parent
-                                          const freshDraft =
-                                            usePagesStore.getState()
-                                              .draftsByPageId[currentPageId];
-                                          if (freshDraft) {
-                                            const findLayerWithParent = (
-                                              layers: Layer[],
-                                              id: string,
-                                              parent: Layer | null = null,
-                                            ): {
-                                              layer: Layer;
-                                              parent: Layer | null;
-                                            } | null => {
-                                              for (const l of layers) {
-                                                if (l.id === id)
-                                                  return { layer: l, parent };
-                                                if (l.children) {
-                                                  const found =
-                                                    findLayerWithParent(
-                                                      l.children,
-                                                      id,
-                                                      l,
-                                                    );
-                                                  if (found) return found;
-                                                }
-                                              }
-                                              return null;
-                                            };
-                                            const found = findLayerWithParent(
-                                              freshDraft.layers,
-                                              result.newLayerId,
-                                            );
-                                            if (found?.layer) {
-                                              const actualParentId =
-                                                found.parent?.id || null;
-                                              liveLayerUpdates.broadcastLayerAdd(
-                                                currentPageId,
-                                                actualParentId,
-                                                "div",
-                                                found.layer,
-                                              );
-                                            }
-                                          }
-                                        }
-                                        setShowAddBlockPanel(false);
-                                      }}
-                                      variant="ghost"
-                                      className="w-full justify-start gap-3 px-3 py-3 h-auto"
-                                    >
-                                      <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center shrink-0">
-                                        <Icon
-                                          name="container"
-                                          className="w-5 h-5 text-gray-700"
-                                        />
-                                      </div>
-                                      <div className="text-left">
-                                        <div className="text-sm font-semibold text-gray-900">
-                                          Div
-                                        </div>
-                                        <div className="text-xs text-gray-500">
-                                          Container element
-                                        </div>
-                                      </div>
-                                    </Button>
-
-                                    <Button
-                                      onClick={() => {
-                                        // Always add inside Body container
-                                        const result = addLayerFromTemplate(
-                                          currentPageId,
-                                          "body",
-                                          "heading",
-                                        );
-                                        if (result && liveLayerUpdates) {
-                                          // Get FRESH state and find actual parent
-                                          const freshDraft =
-                                            usePagesStore.getState()
-                                              .draftsByPageId[currentPageId];
-                                          if (freshDraft) {
-                                            const findLayerWithParent = (
-                                              layers: Layer[],
-                                              id: string,
-                                              parent: Layer | null = null,
-                                            ): {
-                                              layer: Layer;
-                                              parent: Layer | null;
-                                            } | null => {
-                                              for (const l of layers) {
-                                                if (l.id === id)
-                                                  return { layer: l, parent };
-                                                if (l.children) {
-                                                  const found =
-                                                    findLayerWithParent(
-                                                      l.children,
-                                                      id,
-                                                      l,
-                                                    );
-                                                  if (found) return found;
-                                                }
-                                              }
-                                              return null;
-                                            };
-                                            const found = findLayerWithParent(
-                                              freshDraft.layers,
-                                              result.newLayerId,
-                                            );
-                                            if (found?.layer) {
-                                              const actualParentId =
-                                                found.parent?.id || null;
-                                              liveLayerUpdates.broadcastLayerAdd(
-                                                currentPageId,
-                                                actualParentId,
-                                                "heading",
-                                                found.layer,
-                                              );
-                                            }
-                                          }
-                                        }
-                                        setShowAddBlockPanel(false);
-                                      }}
-                                      variant="ghost"
-                                      className="w-full justify-start gap-3 px-3 py-3 h-auto"
-                                    >
-                                      <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center shrink-0">
-                                        <Icon
-                                          name="heading"
-                                          className="w-5 h-5 text-gray-700"
-                                        />
-                                      </div>
-                                      <div className="text-left">
-                                        <div className="text-sm font-semibold text-gray-900">
-                                          Heading
-                                        </div>
-                                        <div className="text-xs text-gray-500">
-                                          Title text
-                                        </div>
-                                      </div>
-                                    </Button>
-
-                                    <Button
-                                      onClick={() => {
-                                        // Always add inside Body container
-                                        const result = addLayerFromTemplate(
-                                          currentPageId,
-                                          "body",
-                                          "text",
-                                        );
-                                        if (result && liveLayerUpdates) {
-                                          // Get FRESH state and find actual parent
-                                          const freshDraft =
-                                            usePagesStore.getState()
-                                              .draftsByPageId[currentPageId];
-                                          if (freshDraft) {
-                                            const findLayerWithParent = (
-                                              layers: Layer[],
-                                              id: string,
-                                              parent: Layer | null = null,
-                                            ): {
-                                              layer: Layer;
-                                              parent: Layer | null;
-                                            } | null => {
-                                              for (const l of layers) {
-                                                if (l.id === id)
-                                                  return { layer: l, parent };
-                                                if (l.children) {
-                                                  const found =
-                                                    findLayerWithParent(
-                                                      l.children,
-                                                      id,
-                                                      l,
-                                                    );
-                                                  if (found) return found;
-                                                }
-                                              }
-                                              return null;
-                                            };
-                                            const found = findLayerWithParent(
-                                              freshDraft.layers,
-                                              result.newLayerId,
-                                            );
-                                            if (found?.layer) {
-                                              const actualParentId =
-                                                found.parent?.id || null;
-                                              liveLayerUpdates.broadcastLayerAdd(
-                                                currentPageId,
-                                                actualParentId,
-                                                "text",
-                                                found.layer,
-                                              );
-                                            }
-                                          }
-                                        }
-                                        setShowAddBlockPanel(false);
-                                      }}
-                                      variant="ghost"
-                                      className="w-full justify-start gap-3 px-3 py-3 h-auto"
-                                    >
-                                      <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center shrink-0">
-                                        <Icon
-                                          name="type"
-                                          className="w-5 h-5 text-gray-700"
-                                        />
-                                      </div>
-                                      <div className="text-left">
-                                        <div className="text-sm font-semibold text-gray-900">
-                                          Paragraph
-                                        </div>
-                                        <div className="text-xs text-gray-500">
-                                          Body text
-                                        </div>
-                                      </div>
-                                    </Button>
+                            {/* Add Block Panel */}
+                            {showAddBlockPanel && currentPageId && (
+                              <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 z-50 bg-white border border-gray-200 rounded-lg shadow-2xl min-w-60">
+                                <div className="p-2">
+                                  <div className="text-xs text-gray-500 px-3 py-2 mb-1 font-medium">
+                                    Choose a block
                                   </div>
+
+                                  <Button
+                                    onClick={() => {
+                                      // Always add inside Body container
+                                      const result = addLayerFromTemplate(
+                                        currentPageId,
+                                        "body",
+                                        "div",
+                                      );
+                                      if (result) {
+                                        // Get FRESH state and find actual parent
+                                        const freshDraft =
+                                          usePagesStore.getState()
+                                            .draftsByPageId[currentPageId];
+                                        if (freshDraft) {
+                                          const findLayerWithParent = (
+                                            layers: Layer[],
+                                            id: string,
+                                            parent: Layer | null = null,
+                                          ): {
+                                            layer: Layer;
+                                            parent: Layer | null;
+                                          } | null => {
+                                            for (const l of layers) {
+                                              if (l.id === id)
+                                                return { layer: l, parent };
+                                              if (l.children) {
+                                                const found =
+                                                  findLayerWithParent(
+                                                    l.children,
+                                                    id,
+                                                    l,
+                                                  );
+                                                if (found) return found;
+                                              }
+                                            }
+                                            return null;
+                                          };
+                                          const found = findLayerWithParent(
+                                            freshDraft.layers,
+                                            result.newLayerId,
+                                          );
+                                          if (found?.layer) {
+                                            const actualParentId =
+                                              found.parent?.id || null;
+                                          }
+                                        }
+                                      }
+                                      setShowAddBlockPanel(false);
+                                    }}
+                                    variant="ghost"
+                                    className="w-full justify-start gap-3 px-3 py-3 h-auto"
+                                  >
+                                    <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center shrink-0">
+                                      <Icon
+                                        name="container"
+                                        className="w-5 h-5 text-gray-700"
+                                      />
+                                    </div>
+                                    <div className="text-left">
+                                      <div className="text-sm font-semibold text-gray-900">
+                                        Div
+                                      </div>
+                                      <div className="text-xs text-gray-500">
+                                        Container element
+                                      </div>
+                                    </div>
+                                  </Button>
+
+                                  <Button
+                                    onClick={() => {
+                                      // Always add inside Body container
+                                      const result = addLayerFromTemplate(
+                                        currentPageId,
+                                        "body",
+                                        "heading",
+                                      );
+                                      if (result) {
+                                        // Get FRESH state and find actual parent
+                                        const freshDraft =
+                                          usePagesStore.getState()
+                                            .draftsByPageId[currentPageId];
+                                        if (freshDraft) {
+                                          const findLayerWithParent = (
+                                            layers: Layer[],
+                                            id: string,
+                                            parent: Layer | null = null,
+                                          ): {
+                                            layer: Layer;
+                                            parent: Layer | null;
+                                          } | null => {
+                                            for (const l of layers) {
+                                              if (l.id === id)
+                                                return { layer: l, parent };
+                                              if (l.children) {
+                                                const found =
+                                                  findLayerWithParent(
+                                                    l.children,
+                                                    id,
+                                                    l,
+                                                  );
+                                                if (found) return found;
+                                              }
+                                            }
+                                            return null;
+                                          };
+                                          const found = findLayerWithParent(
+                                            freshDraft.layers,
+                                            result.newLayerId,
+                                          );
+                                          if (found?.layer) {
+                                            const actualParentId =
+                                              found.parent?.id || null;
+                                          }
+                                        }
+                                      }
+                                      setShowAddBlockPanel(false);
+                                    }}
+                                    variant="ghost"
+                                    className="w-full justify-start gap-3 px-3 py-3 h-auto"
+                                  >
+                                    <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center shrink-0">
+                                      <Icon
+                                        name="heading"
+                                        className="w-5 h-5 text-gray-700"
+                                      />
+                                    </div>
+                                    <div className="text-left">
+                                      <div className="text-sm font-semibold text-gray-900">
+                                        Heading
+                                      </div>
+                                      <div className="text-xs text-gray-500">
+                                        Title text
+                                      </div>
+                                    </div>
+                                  </Button>
+
+                                  <Button
+                                    onClick={() => {
+                                      // Always add inside Body container
+                                      const result = addLayerFromTemplate(
+                                        currentPageId,
+                                        "body",
+                                        "text",
+                                      );
+                                      if (result) {
+                                        // Get FRESH state and find actual parent
+                                        const freshDraft =
+                                          usePagesStore.getState()
+                                            .draftsByPageId[currentPageId];
+                                        if (freshDraft) {
+                                          const findLayerWithParent = (
+                                            layers: Layer[],
+                                            id: string,
+                                            parent: Layer | null = null,
+                                          ): {
+                                            layer: Layer;
+                                            parent: Layer | null;
+                                          } | null => {
+                                            for (const l of layers) {
+                                              if (l.id === id)
+                                                return { layer: l, parent };
+                                              if (l.children) {
+                                                const found =
+                                                  findLayerWithParent(
+                                                    l.children,
+                                                    id,
+                                                    l,
+                                                  );
+                                                if (found) return found;
+                                              }
+                                            }
+                                            return null;
+                                          };
+                                          const found = findLayerWithParent(
+                                            freshDraft.layers,
+                                            result.newLayerId,
+                                          );
+                                          if (found?.layer) {
+                                            const actualParentId =
+                                              found.parent?.id || null;
+                                          }
+                                        }
+                                      }
+                                      setShowAddBlockPanel(false);
+                                    }}
+                                    variant="ghost"
+                                    className="w-full justify-start gap-3 px-3 py-3 h-auto"
+                                  >
+                                    <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center shrink-0">
+                                      <Icon
+                                        name="type"
+                                        className="w-5 h-5 text-gray-700"
+                                      />
+                                    </div>
+                                    <div className="text-left">
+                                      <div className="text-sm font-semibold text-gray-900">
+                                        Paragraph
+                                      </div>
+                                      <div className="text-xs text-gray-500">
+                                        Body text
+                                      </div>
+                                    </div>
+                                  </Button>
                                 </div>
-                              )}
-                            </div>
-                          )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -1888,7 +1938,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
         {/* Preview toolbar */}
         <div className="shrink-0 grid grid-cols-3 items-center p-4 border-b bg-background">
           <div />
-          <ViewportZoomControls
+          {/* <ViewportZoomControls
             viewportMode={viewportMode}
             zoom={previewZoom}
             onViewportChange={setViewportMode}
@@ -1897,18 +1947,18 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
             onResetZoom={previewResetZoom}
             onZoomToFit={previewZoomToFit}
             onAutofit={previewAutofit}
-          />
+          /> */}
           <div className="flex justify-end">
-            {previewUrl && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => window.open(previewUrl, "_blank")}
-              >
-                Open in new tab
-                <Icon name="external-link" />
-              </Button>
-            )}
+            {/* {previewUrl && ( */}
+            <Button
+              variant="secondary"
+              size="sm"
+              // onClick={() => window.open(previewUrl, "_blank")}
+            >
+              Open in new tab
+              <Icon name="external-link" />
+            </Button>
+            {/* )} */}
           </div>
         </div>
 
@@ -1918,11 +1968,11 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
           className="flex-1 relative flex items-start overflow-x-auto overflow-y-hidden"
           style={{ padding: `${CANVAS_BORDER}px` }}
         >
-          {isPreviewLoading && (
+          {/* {isPreviewLoading && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-background">
               <Spinner />
             </div>
-          )}
+          )} */}
           {/* Sizer: occupies the SCALED footprint so centering and scrolling
               match the visible preview size. */}
           <div
@@ -1955,7 +2005,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
                 transition: "none",
               }}
             >
-              {layers.length > 0 && isPreviewMode ? (
+              {/* {layers.length > 0 && isPreviewMode ? (
                 <iframe
                   ref={iframeRef}
                   src={previewUrl}
@@ -1964,21 +2014,21 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
                   tabIndex={-1}
                   onLoad={handlePreviewLoad}
                 />
-              ) : layers.length === 0 && isPreviewMode ? (
-                <div className="w-full h-full flex items-center justify-center p-12">
-                  <div className="text-center max-w-md">
-                    <div className="w-20 h-20 bg-linear-to-br from-blue-100 to-blue-50 rounded-2xl mx-auto mb-6 flex items-center justify-center">
-                      <Icon name="layout" className="w-10 h-10 text-blue-500" />
-                    </div>
-                    <h2 className="text-2xl font-bold text-gray-900 mb-3">
-                      No content
-                    </h2>
-                    <p className="text-gray-600">
-                      This page has no content to preview.
-                    </p>
+              ) : layers.length === 0 && isPreviewMode ? ( */}
+              <div className="w-full h-full flex items-center justify-center p-12">
+                <div className="text-center max-w-md">
+                  <div className="w-20 h-20 bg-linear-to-br from-blue-100 to-blue-50 rounded-2xl mx-auto mb-6 flex items-center justify-center">
+                    <Icon name="layout" className="w-10 h-10 text-blue-500" />
                   </div>
+                  <h2 className="text-2xl font-bold text-gray-900 mb-3">
+                    No content
+                  </h2>
+                  <p className="text-gray-600">
+                    This page has no content to preview.
+                  </p>
                 </div>
-              ) : null}
+              </div>
+              {/*  ) : null} */}
             </div>
           </div>
         </div>

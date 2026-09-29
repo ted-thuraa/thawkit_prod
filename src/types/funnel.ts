@@ -885,6 +885,67 @@ export interface Layer {
   variables?: LayerVariables;
 
   interactions?: LayerInteraction[];
+  // SSR-only property for resolved collection items
+  _collectionItems?: CollectionItemWithValues[];
+  // SSR-only property for collection item values (used for visibility filtering)
+  _collectionItemValues?: Record<string, string>;
+  // SSR-only property for collection item ID (used for link URL building)
+  _collectionItemId?: string;
+  // SSR-only property for collection item slug (used for link URL building)
+  _collectionItemSlug?: string;
+  // SSR-only property for layer-specific collection data (layer_id -> field values map)
+  _layerDataMap?: Record<string, Record<string, string>>;
+  // SSR-only property for master component ID (for translation lookups)
+  _masterComponentId?: string;
+  // SSR-only property for original layer ID before instance-specific ID transform (for translation lookups)
+  _originalLayerId?: string;
+  // SSR-only property for pagination metadata (when pagination is enabled)
+  _paginationMeta?: CollectionPaginationMeta;
+  // SSR-only property: live pagination numbers stashed on the count/info text
+  // layers so renderers can resolve `pagination` inline variables at display time
+  _paginationNumbers?: PaginationNumbers;
+  // SSR-only property for dynamic inline styles from CMS color field bindings
+  _dynamicStyles?: Record<string, string>;
+  // SSR-only property: when a conditionalVisibility rule references a date
+  // preset (e.g. `$today`), the layer is kept in the tree even if the
+  // export-time eval is false, and this metadata is attached so layerToHtml
+  // can serialize it for the static-export client-side runtime to re-eval.
+  // Non-date conditions are baked to a boolean at export time; only
+  // date-preset conditions are re-evaluated client-side against the current date.
+  _dynamicVisibilityRule?: {
+    /** Project timezone (IANA) for resolving date presets on the client. */
+    timezone?: string;
+    groups: Array<{ conditions: DynamicVisibilityCondition[] }>;
+  };
+  // SSR-only property for filterable collection config (when collection has linked filter inputs)
+  _filterConfig?: {
+    collectionId: string;
+    collectionLayerId: string;
+    filters: ConditionalVisibility;
+    sortBy?: string;
+    sortOrder?: "asc" | "desc";
+    sortByInputLayerId?: string;
+    sortOrderInputLayerId?: string;
+    limit?: number;
+    // Hard cap on the total (from `collection.limit` with pagination enabled).
+    // Mirrors `CollectionPaginationMeta.maxTotal` so client-side filtering shows
+    // the same clamped count/`hasMore` as SSR instead of the raw filtered total.
+    maxTotal?: number;
+    // The collection's configured `offset` — leading records skipped before
+    // paginating. Forwarded to the filter API so client-side filtered paging
+    // composes offset with pagination the same way SSR does.
+    baseOffset?: number;
+    paginationMode?: "pages" | "load_more";
+    layerTemplate: Layer[];
+    collectionLayerClasses?: string[];
+    collectionLayerTag?: string;
+    isPublished?: boolean;
+    // Full collection layer (sans children) used by the client to rebuild
+    // proper item wrappers (anchor/link/attribute) when injecting filtered
+    // or load-more items. Without this, the wrapper would be a plain <div>
+    // and lose link/action behavior.
+    collectionLayer?: Omit<Layer, "children">;
+  };
 }
 
 export interface LayerVariables {
@@ -1258,20 +1319,20 @@ export interface Page {
 }
 
 export interface PageSettings {
-  // cms?: {
-  //   collection_id: string;
-  //   slug_field_id: string;
-  //   /**
-  //    * Controls the order in which `next-item` / `previous-item` link keywords
-  //    * traverse this dynamic page's collection. When omitted, items are sorted
-  //    * by their `manual_order` ascending — the same default used elsewhere in
-  //    * the system.
-  //    */
-  //   next_previous?: {
-  //     sort_by?: "manual" | string; // 'manual' or a collection field id
-  //     sort_order?: "asc" | "desc";
-  //   };
-  // };
+  cms?: {
+    collection_id: string;
+    slug_field_id: string;
+    /**
+     * Controls the order in which `next-item` / `previous-item` link keywords
+     * traverse this dynamic page's collection. When omitted, items are sorted
+     * by their `manual_order` ascending — the same default used elsewhere in
+     * the system.
+     */
+    next_previous?: {
+      sort_by?: "manual" | string; // 'manual' or a collection field id
+      sort_order?: "asc" | "desc";
+    };
+  };
   // auth?: {
   //   enabled: boolean;
   //   password: string;
@@ -1399,4 +1460,13 @@ export interface Translation {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+}
+
+// Settings Types
+export interface Setting {
+  id: string;
+  key: string;
+  value: any;
+  created_at: string;
+  updated_at: string;
 }
