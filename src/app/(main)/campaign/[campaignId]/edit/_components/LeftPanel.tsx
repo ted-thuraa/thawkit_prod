@@ -365,15 +365,10 @@ const LeftPanel = React.memo(function LeftPanel({
         {/* Invisible overlay during resize to prevent iframe from capturing mouse events */}
         {/* {isResizing && <div className="fixed inset-0 z-50 cursor-col-resize" />} */}
 
-        {/* Element Library Slide-Out (lazy loaded, always mounted to preserve state) */}
+        {/* Element Library Slide-Out: positioned beside this floating panel. */}
         <Suspense fallback={null}>
-          {/* Placeholder only — absolutely positioned so it no longer takes
-            space in the panel's flow. When the real <ElementLibrary /> is
-            re-enabled below, make sure it positions itself relative to
-            this root (e.g. `absolute left-full top-0 ml-3`) rather than
-            assuming a docked sidebar edge. */}
           {showElementLibrary && (
-            <div className="absolute left-full top-0 z-40 ml-3 w-64 rounded-xl border bg-background p-4 text-sm shadow-lg">
+            <div className="absolute left-full top-0 z-40 h-full w-64 overflow-hidden rounded-xl border bg-background shadow-lg">
               <ElementLibrary
                 isOpen={showElementLibrary}
                 onClose={() => setShowElementLibrary(false)}

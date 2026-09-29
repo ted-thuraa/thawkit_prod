@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
 import type { EditorBootstrapContext } from "@/lib/editor/resolve-editor-bootstrap";
 import { usePagesStore } from "@/stores/editor/usePagesStore";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { GitForkIcon, Palette, Plus } from "lucide-react";
 import RightPanel from "./RightPanel";
 import EditorToolbar from "./EditorToolbar";
+import EditorCenterCanvas from "./EditorCanvas";
 
 interface EditorShellProps {
   /** Floating panel pinned to the left edge. */
@@ -91,7 +92,9 @@ export function CampaignEditorMain({
   bootstrap: EditorBootstrapContext;
 }) {
   const { urlState, navigateToLayers } = useCampaignEditorUrl(campaignId);
-  console.log("editor main");
+  const [viewportMode, setViewportMode] = useState<
+    "desktop" | "tablet" | "mobile"
+  >(urlState.view || "desktop");
   useEffect(() => {
     usePagesStore.getState().hydrateFromBootstrap(bootstrap.pages);
     //useComponentsStore.getState().hydrateFromBootstrap(bootstrap.components);
@@ -215,14 +218,12 @@ export function CampaignEditorMain({
       >
         {/* CANVAS SLOT — sits behind the floating panels and fills the whole
           area, so the mounted component must size itself `h-full w-full`.
-          Not mounted yet, same as before this pass:
-            layers route    → <EditorBuilder layers={activePage.layers} />
-            component route → the component editor, once
-                              useComponentsStore hydration is re-enabled
-                              above (`components.find(...)` for
-                              `urlState.resourceId` / `urlState.variantId`).
-          `activePage` is null on the component route, so guard it when
-          uncommenting. */}
+          Not mounted yet, same as before this pass: */}
+        <EditorCenterCanvas
+          currentPageId={activePage.id}
+          viewportMode={viewportMode}
+          setViewportMode={setViewportMode}
+        />
       </EditorShell>
     );
   }

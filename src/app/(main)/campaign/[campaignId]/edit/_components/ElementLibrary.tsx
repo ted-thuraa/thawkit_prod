@@ -366,7 +366,6 @@ export default function ElementLibrary({
   );
   const startCanvasDrag = useEditorStore((s) => s.startCanvasDrag);
   const endCanvasDrag = useEditorStore((s) => s.endCanvasDrag);
-  const leftSidebarWidth = useEditorStore((s) => s.leftSidebarWidth);
 
   //const { openComponent } = useEditorActions();
 
@@ -970,10 +969,9 @@ export default function ElementLibrary({
   return (
     <div
       className={cn(
-        "fixed top-14 bottom-0 w-64 bg-background border-r z-50 flex flex-col",
+        "flex h-full w-full min-h-0 flex-col overflow-hidden bg-background",
         !isOpen && "hidden",
       )}
-      style={{ left: `${leftSidebarWidth}px` }}
     >
       {/* Tabs */}
       <Tabs
@@ -999,7 +997,6 @@ export default function ElementLibrary({
 
         <TabsContent
           value="elements"
-          forceMount
           ref={(el) => {
             tabRefs.current.elements = el;
           }}
@@ -1029,7 +1026,6 @@ export default function ElementLibrary({
 
         <TabsContent
           value="layouts"
-          forceMount
           ref={(el) => {
             tabRefs.current.layouts = el;
           }}
