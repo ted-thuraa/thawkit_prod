@@ -1414,6 +1414,8 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
     return layer?.name || null;
   }, [selectedLayerId, layers]);
 
+  console.log("EditorCenterCanvas here");
+
   return (
     <div className="flex-1 min-w-0 flex flex-col relative">
       {/* Top Bar */}
