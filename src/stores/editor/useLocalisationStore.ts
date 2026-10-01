@@ -5,10 +5,17 @@
  * Handles CRUD operations and default locale management
  */
 
-import { create } from 'zustand';
-import { localisationApi } from '@/lib/api';
-import { getTranslatableKey } from '@/lib/localisation-utils';
-import type { Locale, CreateLocaleData, UpdateLocaleData, Translation, CreateTranslationData, UpdateTranslationData } from '@/types';
+import { create } from "zustand";
+import { localisationApi } from "@/lib/api";
+import { getTranslatableKey } from "@/lib/localisation-utils";
+import type {
+  Locale,
+  CreateLocaleData,
+  UpdateLocaleData,
+  Translation,
+  CreateTranslationData,
+  UpdateTranslationData,
+} from "@/types/funnel";
 
 /**
  * Sort locales: default first, then alphabetically by label
@@ -71,20 +78,77 @@ interface LocalisationActions {
   clearTranslations: (localeId?: string) => void;
 
   // Translation CRUD
-  createTranslation: (data: CreateTranslationData) => Promise<Translation | null>;
-  updateTranslation: (translation: Translation | { locale_id: string; source_type: string; source_id: string; content_key: string }, updates: UpdateTranslationData) => Promise<void>;
-  updateTranslationValue: (translation: Translation | { locale_id: string; source_type: string; source_id: string; content_key: string }, contentValue: string) => Promise<void>;
-  updateTranslationStatus: (translation: Translation | { locale_id: string; source_type: string; source_id: string; content_key: string }, isCompleted: boolean) => Promise<void>;
-  deleteTranslation: (translation: Translation | { locale_id: string; source_type: string; source_id: string; content_key: string }) => Promise<void>;
+  createTranslation: (
+    data: CreateTranslationData,
+  ) => Promise<Translation | null>;
+  updateTranslation: (
+    translation:
+      | Translation
+      | {
+          locale_id: string;
+          source_type: string;
+          source_id: string;
+          content_key: string;
+        },
+    updates: UpdateTranslationData,
+  ) => Promise<void>;
+  updateTranslationValue: (
+    translation:
+      | Translation
+      | {
+          locale_id: string;
+          source_type: string;
+          source_id: string;
+          content_key: string;
+        },
+    contentValue: string,
+  ) => Promise<void>;
+  updateTranslationStatus: (
+    translation:
+      | Translation
+      | {
+          locale_id: string;
+          source_type: string;
+          source_id: string;
+          content_key: string;
+        },
+    isCompleted: boolean,
+  ) => Promise<void>;
+  deleteTranslation: (
+    translation:
+      | Translation
+      | {
+          locale_id: string;
+          source_type: string;
+          source_id: string;
+          content_key: string;
+        },
+  ) => Promise<void>;
   upsertTranslations: (translations: CreateTranslationData[]) => Promise<void>;
 
   // Optimistic translation updates (immediate store updates, no API calls)
-  optimisticallyUpdateTranslationValue: (localeId: string, key: string, contentValue: string) => void;
+  optimisticallyUpdateTranslationValue: (
+    localeId: string,
+    key: string,
+    contentValue: string,
+  ) => void;
 
   // Translation queries
-  getTranslation: (localeId: string, translation: Translation | { source_type: string; source_id: string; content_key: string }) => Translation | undefined;
-  getTranslationByKey: (localeId: string, key: string) => Translation | undefined;
-  getTranslationsBySource: (localeId: string, sourceType: string, sourceId: string) => Translation[];
+  getTranslation: (
+    localeId: string,
+    translation:
+      | Translation
+      | { source_type: string; source_id: string; content_key: string },
+  ) => Translation | undefined;
+  getTranslationByKey: (
+    localeId: string,
+    key: string,
+  ) => Translation | undefined;
+  getTranslationsBySource: (
+    localeId: string,
+    sourceType: string,
+    sourceId: string,
+  ) => Translation[];
 
   // Error management
   setError: (error: string | null) => void;
@@ -119,13 +183,19 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
   // Set locales (used by unified init)
   setLocales: (locales) => {
     const sortedLocales = sortLocales(locales);
-    const defaultLocale = sortedLocales.find(l => l.is_default) || null;
+    const defaultLocale = sortedLocales.find((l) => l.is_default) || null;
     const { selectedLocaleId } = get();
 
     // Auto-select first locale if none selected and we have locales
-    const newSelectedLocaleId = selectedLocaleId || (sortedLocales.length > 0 ? sortedLocales[0].id : null);
+    const newSelectedLocaleId =
+      selectedLocaleId ||
+      (sortedLocales.length > 0 ? sortedLocales[0].id : null);
 
-    set({ locales: sortedLocales, defaultLocale, selectedLocaleId: newSelectedLocaleId });
+    set({
+      locales: sortedLocales,
+      defaultLocale,
+      selectedLocaleId: newSelectedLocaleId,
+    });
   },
 
   // Load all locales
@@ -143,12 +213,18 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
       const locales = sortLocales(result.data || []);
       const defaultLocale = locales.find((l: Locale) => l.is_default) || null;
       const { selectedLocaleId } = get();
-      const newSelectedLocaleId = selectedLocaleId || (locales.length > 0 ? locales[0].id : null);
+      const newSelectedLocaleId =
+        selectedLocaleId || (locales.length > 0 ? locales[0].id : null);
 
-      set({ locales, defaultLocale, selectedLocaleId: newSelectedLocaleId, isLoading: initialLoadingState });
+      set({
+        locales,
+        defaultLocale,
+        selectedLocaleId: newSelectedLocaleId,
+        isLoading: initialLoadingState,
+      });
     } catch (error) {
-      console.error('Failed to load locales:', error);
-      set({ error: 'Failed to load locales', isLoading: initialLoadingState });
+      console.error("Failed to load locales:", error);
+      set({ error: "Failed to load locales", isLoading: initialLoadingState });
     }
   },
 
@@ -160,15 +236,20 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
       const result = await localisationApi.createLocale(data);
 
       if (result.error || !result.data) {
-        set({ error: result.error || 'Failed to create locale', isLoading: initialLoadingState });
+        set({
+          error: result.error || "Failed to create locale",
+          isLoading: initialLoadingState,
+        });
         return null;
       }
 
       const { locale, locales } = result.data;
       const sortedLocales = sortLocales(locales);
-      const defaultLocale = sortedLocales.find(l => l.is_default) || null;
+      const defaultLocale = sortedLocales.find((l) => l.is_default) || null;
       const { selectedLocaleId } = get();
-      const newSelectedLocaleId = selectedLocaleId || (sortedLocales.length > 0 ? sortedLocales[0].id : null);
+      const newSelectedLocaleId =
+        selectedLocaleId ||
+        (sortedLocales.length > 0 ? sortedLocales[0].id : null);
 
       set({
         locales: sortedLocales,
@@ -179,8 +260,8 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
 
       return locale;
     } catch (error) {
-      console.error('Failed to create locale:', error);
-      set({ error: 'Failed to create locale', isLoading: initialLoadingState });
+      console.error("Failed to create locale:", error);
+      set({ error: "Failed to create locale", isLoading: initialLoadingState });
       return null;
     }
   },
@@ -193,13 +274,16 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
       const result = await localisationApi.updateLocale(id, updates);
 
       if (result.error || !result.data) {
-        set({ error: result.error || 'Failed to update locale', isLoading: initialLoadingState });
+        set({
+          error: result.error || "Failed to update locale",
+          isLoading: initialLoadingState,
+        });
         return;
       }
 
       const { locale, locales } = result.data;
       const sortedLocales = sortLocales(locales);
-      const defaultLocale = sortedLocales.find(l => l.is_default) || null;
+      const defaultLocale = sortedLocales.find((l) => l.is_default) || null;
 
       set({
         locales: sortedLocales,
@@ -207,8 +291,8 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
         isLoading: initialLoadingState,
       });
     } catch (error) {
-      console.error('Failed to update locale:', error);
-      set({ error: 'Failed to update locale', isLoading: initialLoadingState });
+      console.error("Failed to update locale:", error);
+      set({ error: "Failed to update locale", isLoading: initialLoadingState });
     }
   },
 
@@ -226,14 +310,18 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
 
       set((state) => {
         const locales = state.locales.filter((l) => l.id !== id);
-        const defaultLocale = state.defaultLocale?.id === id
-          ? locales.find(l => l.is_default) || null
-          : state.defaultLocale;
+        const defaultLocale =
+          state.defaultLocale?.id === id
+            ? locales.find((l) => l.is_default) || null
+            : state.defaultLocale;
 
         // If deleted locale was selected, select first remaining locale
-        const selectedLocaleId = state.selectedLocaleId === id
-          ? (locales.length > 0 ? locales[0].id : null)
-          : state.selectedLocaleId;
+        const selectedLocaleId =
+          state.selectedLocaleId === id
+            ? locales.length > 0
+              ? locales[0].id
+              : null
+            : state.selectedLocaleId;
 
         return {
           locales,
@@ -243,14 +331,17 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
         };
       });
     } catch (error) {
-      console.error('Failed to delete locale:', error);
-      set({ error: 'Failed to delete locale', isLoading: initialLoadingState });
+      console.error("Failed to delete locale:", error);
+      set({ error: "Failed to delete locale", isLoading: initialLoadingState });
     }
   },
 
   // Set a locale as default
   setDefaultLocale: async (id) => {
-    set({ isLoading: { ...initialLoadingState, setDefault: true }, error: null });
+    set({
+      isLoading: { ...initialLoadingState, setDefault: true },
+      error: null,
+    });
 
     try {
       const result = await localisationApi.setDefaultLocale(id);
@@ -263,16 +354,21 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
       const updatedLocale = result.data;
 
       set((state) => ({
-        locales: sortLocales(state.locales.map((l) => ({
-          ...l,
-          is_default: l.id === id,
-        }))),
+        locales: sortLocales(
+          state.locales.map((l) => ({
+            ...l,
+            is_default: l.id === id,
+          })),
+        ),
         defaultLocale: updatedLocale,
         isLoading: initialLoadingState,
       }));
     } catch (error) {
-      console.error('Failed to set default locale:', error);
-      set({ error: 'Failed to set default locale', isLoading: initialLoadingState });
+      console.error("Failed to set default locale:", error);
+      set({
+        error: "Failed to set default locale",
+        isLoading: initialLoadingState,
+      });
     }
   },
 
@@ -317,10 +413,14 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
       return Promise.resolve(); // Already loaded
     }
 
-    set({ isLoading: { ...initialLoadingState, loadTranslations: true }, error: null });
+    set({
+      isLoading: { ...initialLoadingState, loadTranslations: true },
+      error: null,
+    });
 
     // Return promise but don't block
-    return localisationApi.getTranslations(localeId)
+    return localisationApi
+      .getTranslations(localeId)
       .then((result) => {
         if (result.error) {
           set({ error: result.error, isLoading: initialLoadingState });
@@ -341,8 +441,11 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
         }));
       })
       .catch((error) => {
-        console.error('Failed to load translations:', error);
-        set({ error: 'Failed to load translations', isLoading: initialLoadingState });
+        console.error("Failed to load translations:", error);
+        set({
+          error: "Failed to load translations",
+          isLoading: initialLoadingState,
+        });
       });
   },
 
@@ -362,7 +465,7 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
     const localeTranslations = get().translations[localeId];
     if (!localeTranslations) return [];
     return Object.values(localeTranslations).filter(
-      (t) => t.source_type === sourceType && t.source_id === sourceId
+      (t) => t.source_type === sourceType && t.source_id === sourceId,
     );
   },
 
@@ -424,7 +527,10 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
       }
 
       if (!result.data) {
-        set({ error: 'No translation data returned', isLoading: initialLoadingState });
+        set({
+          error: "No translation data returned",
+          isLoading: initialLoadingState,
+        });
         return null;
       }
 
@@ -450,7 +556,10 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
       set((state) => {
         const localeTranslations = state.translations[localeId];
         if (!localeTranslations) {
-          return { error: 'Failed to create translation', isLoading: initialLoadingState };
+          return {
+            error: "Failed to create translation",
+            isLoading: initialLoadingState,
+          };
         }
 
         const { [key]: _, ...restTranslations } = localeTranslations;
@@ -459,7 +568,7 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
             ...state.translations,
             [localeId]: restTranslations,
           },
-          error: 'Failed to create translation',
+          error: "Failed to create translation",
           isLoading: initialLoadingState,
         };
       });
@@ -474,12 +583,15 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
     const existingTranslation = get().translations[localeId]?.[key];
 
     if (!existingTranslation) {
-      set({ error: 'Translation not found', isLoading: initialLoadingState });
+      set({ error: "Translation not found", isLoading: initialLoadingState });
       return;
     }
 
     // Optimistically update translation in store
-    if (updates.content_value !== undefined || updates.is_completed !== undefined) {
+    if (
+      updates.content_value !== undefined ||
+      updates.is_completed !== undefined
+    ) {
       set((state) => {
         const localeTranslations = state.translations[localeId] || {};
         const existingTranslation = localeTranslations[key];
@@ -492,8 +604,12 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
                 ...localeTranslations,
                 [key]: {
                   ...existingTranslation,
-                  ...(updates.content_value !== undefined && { content_value: updates.content_value }),
-                  ...(updates.is_completed !== undefined && { is_completed: updates.is_completed }),
+                  ...(updates.content_value !== undefined && {
+                    content_value: updates.content_value,
+                  }),
+                  ...(updates.is_completed !== undefined && {
+                    is_completed: updates.is_completed,
+                  }),
                   deleted_at: null, // Restore if previously deleted
                 },
               },
@@ -505,14 +621,24 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
       });
     }
 
-    set({ isLoading: { ...initialLoadingState, updateTranslation: true }, error: null });
+    set({
+      isLoading: { ...initialLoadingState, updateTranslation: true },
+      error: null,
+    });
 
     try {
-      const result = await localisationApi.updateTranslation(existingTranslation.id, updates);
+      const result = await localisationApi.updateTranslation(
+        existingTranslation.id,
+        updates,
+      );
 
       if (result.error) {
         // Revert optimistic update on error
-        if ((updates.content_value !== undefined || updates.is_completed !== undefined) && existingTranslation) {
+        if (
+          (updates.content_value !== undefined ||
+            updates.is_completed !== undefined) &&
+          existingTranslation
+        ) {
           set((state) => {
             const localeTranslations = state.translations[localeId] || {};
             return {
@@ -534,7 +660,10 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
       }
 
       if (!result.data) {
-        set({ error: 'No translation data returned', isLoading: initialLoadingState });
+        set({
+          error: "No translation data returned",
+          isLoading: initialLoadingState,
+        });
         return;
       }
 
@@ -555,7 +684,11 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
       }));
     } catch (error) {
       // Revert optimistic update on error
-      if ((updates.content_value !== undefined || updates.is_completed !== undefined) && existingTranslation) {
+      if (
+        (updates.content_value !== undefined ||
+          updates.is_completed !== undefined) &&
+        existingTranslation
+      ) {
         set((state) => {
           const localeTranslations = state.translations[localeId] || {};
           return {
@@ -566,14 +699,17 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
                 [key]: existingTranslation,
               },
             },
-            error: 'Failed to update translation',
+            error: "Failed to update translation",
             isLoading: initialLoadingState,
           };
         });
         return;
       }
-      console.error('Failed to update translation:', error);
-      set({ error: 'Failed to update translation', isLoading: initialLoadingState });
+      console.error("Failed to update translation:", error);
+      set({
+        error: "Failed to update translation",
+        isLoading: initialLoadingState,
+      });
     }
   },
 
@@ -584,7 +720,7 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
     const existingTranslation = get().translations[localeId]?.[key];
 
     if (!existingTranslation) {
-      set({ error: 'Translation not found', isLoading: initialLoadingState });
+      set({ error: "Translation not found", isLoading: initialLoadingState });
       return;
     }
 
@@ -612,10 +748,16 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
       return state;
     });
 
-    set({ isLoading: { ...initialLoadingState, updateTranslationValue: true }, error: null });
+    set({
+      isLoading: { ...initialLoadingState, updateTranslationValue: true },
+      error: null,
+    });
 
     try {
-      const result = await localisationApi.updateTranslation(existingTranslation.id, { content_value: contentValue });
+      const result = await localisationApi.updateTranslation(
+        existingTranslation.id,
+        { content_value: contentValue },
+      );
 
       if (result.error) {
         // Revert optimistic update on error
@@ -637,7 +779,10 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
       }
 
       if (!result.data) {
-        set({ error: 'No translation data returned', isLoading: initialLoadingState });
+        set({
+          error: "No translation data returned",
+          isLoading: initialLoadingState,
+        });
         return;
       }
 
@@ -668,7 +813,7 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
               [key]: existingTranslation,
             },
           },
-          error: 'Failed to update translation value',
+          error: "Failed to update translation value",
           isLoading: initialLoadingState,
         };
       });
@@ -682,14 +827,20 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
     const existingTranslation = get().translations[localeId]?.[key];
 
     if (!existingTranslation) {
-      set({ error: 'Translation not found', isLoading: initialLoadingState });
+      set({ error: "Translation not found", isLoading: initialLoadingState });
       return;
     }
 
-    set({ isLoading: { ...initialLoadingState, updateTranslationStatus: true }, error: null });
+    set({
+      isLoading: { ...initialLoadingState, updateTranslationStatus: true },
+      error: null,
+    });
 
     try {
-      const result = await localisationApi.updateTranslation(existingTranslation.id, { is_completed: isCompleted });
+      const result = await localisationApi.updateTranslation(
+        existingTranslation.id,
+        { is_completed: isCompleted },
+      );
 
       if (result.error) {
         set({ error: result.error, isLoading: initialLoadingState });
@@ -697,7 +848,10 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
       }
 
       if (!result.data) {
-        set({ error: 'No translation data returned', isLoading: initialLoadingState });
+        set({
+          error: "No translation data returned",
+          isLoading: initialLoadingState,
+        });
         return;
       }
 
@@ -717,26 +871,34 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
         isLoading: initialLoadingState,
       }));
     } catch (error) {
-      console.error('Failed to update translation status:', error);
-      set({ error: 'Failed to update translation status', isLoading: initialLoadingState });
+      console.error("Failed to update translation status:", error);
+      set({
+        error: "Failed to update translation status",
+        isLoading: initialLoadingState,
+      });
     }
   },
 
   // Delete a translation
   deleteTranslation: async (translation) => {
-    set({ isLoading: { ...initialLoadingState, deleteTranslation: true }, error: null });
+    set({
+      isLoading: { ...initialLoadingState, deleteTranslation: true },
+      error: null,
+    });
 
     const localeId = translation.locale_id;
     const key = getTranslatableKey(translation);
     const existingTranslation = get().translations[localeId]?.[key];
 
     if (!existingTranslation) {
-      set({ error: 'Translation not found', isLoading: initialLoadingState });
+      set({ error: "Translation not found", isLoading: initialLoadingState });
       return;
     }
 
     try {
-      const result = await localisationApi.deleteTranslation(existingTranslation.id);
+      const result = await localisationApi.deleteTranslation(
+        existingTranslation.id,
+      );
 
       if (result.error) {
         set({ error: result.error, isLoading: initialLoadingState });
@@ -759,19 +921,25 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
         };
       });
     } catch (error) {
-      console.error('Failed to delete translation:', error);
-      set({ error: 'Failed to delete translation', isLoading: initialLoadingState });
+      console.error("Failed to delete translation:", error);
+      set({
+        error: "Failed to delete translation",
+        isLoading: initialLoadingState,
+      });
     }
   },
 
   // Upsert multiple translations (create or update)
   upsertTranslations: async (translationsData) => {
-    set({ isLoading: { ...initialLoadingState, createTranslation: true }, error: null });
+    set({
+      isLoading: { ...initialLoadingState, createTranslation: true },
+      error: null,
+    });
 
     try {
-      const response = await fetch('/ycode/api/translations/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/ycode/api/translations/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ translations: translationsData }),
       });
 
@@ -796,10 +964,16 @@ export const useLocalisationStore = create<LocalisationStore>((set, get) => ({
         updatedTranslations[localeId][key] = translation;
       }
 
-      set({ translations: updatedTranslations, isLoading: initialLoadingState });
+      set({
+        translations: updatedTranslations,
+        isLoading: initialLoadingState,
+      });
     } catch (error) {
-      console.error('Failed to upsert translations:', error);
-      set({ error: 'Failed to upsert translations', isLoading: initialLoadingState });
+      console.error("Failed to upsert translations:", error);
+      set({
+        error: "Failed to upsert translations",
+        isLoading: initialLoadingState,
+      });
     }
   },
 

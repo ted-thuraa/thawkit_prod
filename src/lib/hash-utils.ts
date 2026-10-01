@@ -7,7 +7,7 @@
 
 import crypto from "crypto";
 import { stripUIProperties } from "./layer-utils";
-import type { Layer } from "@/types/funnel";
+import type { Layer, PageType } from "@/types/funnel";
 
 /**
  * Generate a SHA-256 hash from any content
@@ -68,17 +68,15 @@ export function generatePageMetadataHash(pageData: {
   name: string;
   slug: string;
   settings: any;
-  is_index: boolean;
+  page_type: PageType;
   is_dynamic: boolean;
-  error_page: number | null;
 }): string {
   return generateContentHash({
     name: pageData.name,
     slug: pageData.slug,
     settings: pageData.settings,
-    is_index: pageData.is_index,
+    page_type: pageData.page_type,
     is_dynamic: pageData.is_dynamic,
-    error_page: pageData.error_page,
   });
 }
 
@@ -117,9 +115,8 @@ export function generatePageContentHash(
     name: string;
     slug: string;
     settings: any;
-    is_index: boolean;
+    page_type: PageType;
     is_dynamic: boolean;
-    error_page: number | null;
   },
   layersData: {
     layers: any;
@@ -136,9 +133,8 @@ export function generatePageContentHash(
     name: pageData.name,
     slug: pageData.slug,
     settings: pageData.settings,
-    is_index: pageData.is_index,
+    page_type: pageData.page_type,
     is_dynamic: pageData.is_dynamic,
-    error_page: pageData.error_page,
     // Layer content
     layers: layersForHash,
     generated_css: layersData.generated_css,

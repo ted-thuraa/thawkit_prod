@@ -41,29 +41,15 @@ export function SelectionOverlay({
   const hoveredLayerIdRef = useRef(useEditorStore.getState().hoveredLayerId);
   const activeUIState = useEditorStore((state) => state.activeUIState);
   const isStateActive = activeUIState !== "neutral";
-  // While the AI composer is in "reference a layer" mode, outlines turn teal to
-  // signal the click will attach the layer to the chat rather than just select it.
-  const isAiLayerPicking = useEditorStore((state) => state.isAiLayerPicking);
-
-  // Pick-mode uses a brighter, slightly thicker teal so the outline keeps
-  // contrast over both light and dark page content (the muted badge teal washes
-  // out on dark backgrounds). A faint dark ring (box-shadow) is added for extra
-  // separation on light backgrounds.
-  const SELECTED_OUTLINE_CLASS = isAiLayerPicking
-    ? "outline outline-1 outline-[#22c1de] shadow-[0_0_0_1px_rgba(0,0,0,0.25)]"
-    : isStateActive
-      ? "outline outline-1 outline-[#8dd92f]"
-      : "outline outline-1 outline-blue-500";
-  const HOVERED_OUTLINE_CLASS = isAiLayerPicking
-    ? "outline outline-1 outline-[#22c1de] shadow-[0_0_0_1px_rgba(0,0,0,0.25)]"
-    : isStateActive
-      ? "outline outline-1 outline-[#8dd92f]/50"
-      : "outline outline-1 outline-blue-400/50";
-  const PARENT_OUTLINE_CLASS = isAiLayerPicking
-    ? "outline outline-1 outline-dashed outline-[#22c1de]"
-    : isStateActive
-      ? "outline outline-1 outline-dashed outline-[#8dd92f]"
-      : "outline outline-1 outline-dashed outline-blue-400";
+  const SELECTED_OUTLINE_CLASS = isStateActive
+    ? "outline outline-1 outline-[#8dd92f]"
+    : "outline outline-1 outline-blue-500";
+  const HOVERED_OUTLINE_CLASS = isStateActive
+    ? "outline outline-1 outline-[#8dd92f]/50"
+    : "outline outline-1 outline-blue-400/50";
+  const PARENT_OUTLINE_CLASS = isStateActive
+    ? "outline outline-1 outline-dashed outline-[#8dd92f]"
+    : "outline outline-1 outline-dashed outline-blue-400";
   // Container refs for outline groups (supports multiple instances per layer ID)
   const selectedContainerRef = useRef<HTMLDivElement>(null);
   const hoveredContainerRef = useRef<HTMLDivElement>(null);
@@ -217,13 +203,7 @@ export function SelectionOverlay({
       return;
     }
     const hovered = hoveredLayerIdRef.current;
-    // In pick mode the selection outline is hidden, so highlight whatever is
-    // hovered — even the already-selected layer — for a focused picking cursor.
-    const effectiveHoveredId = isAiLayerPicking
-      ? hovered
-      : hovered !== selectedLayerId
-        ? hovered
-        : null;
+    const effectiveHoveredId = hovered !== selectedLayerId ? hovered : null;
     updateOutline(
       hoveredContainerRef.current,
       effectiveHoveredId,
@@ -239,7 +219,6 @@ export function SelectionOverlay({
     selectedLayerId,
     updateOutline,
     HOVERED_OUTLINE_CLASS,
-    isAiLayerPicking,
   ]);
 
   // Update all outlines. Called whenever selection/parent change, on scroll,
@@ -250,25 +229,6 @@ export function SelectionOverlay({
       const ctx = getOutlineContext();
       if (!ctx) {
         hideAllOutlines();
-        return;
-      }
-
-      // Pick mode: strip selection/parent outlines for a focused picking UX and
-      // show only the layer currently under the cursor.
-      if (isAiLayerPicking) {
-        if (selectedContainerRef.current)
-          selectedContainerRef.current.style.display = "none";
-        if (parentContainerRef.current)
-          parentContainerRef.current.style.display = "none";
-        updateOutline(
-          hoveredContainerRef.current,
-          hoveredLayerIdRef.current,
-          ctx.iframeDoc,
-          ctx.iframeElement,
-          ctx.containerElement,
-          ctx.scale,
-          HOVERED_OUTLINE_CLASS,
-        );
         return;
       }
 
@@ -327,7 +287,6 @@ export function SelectionOverlay({
       SELECTED_OUTLINE_CLASS,
       HOVERED_OUTLINE_CLASS,
       PARENT_OUTLINE_CLASS,
-      isAiLayerPicking,
     ],
   );
 

@@ -2,14 +2,25 @@
  * Animation utility functions and constants for GSAP interactions
  */
 
-import type { InteractionTween, LayerInteraction, TweenProperties, Layer, Breakpoint, ApplyStyles, TweenPropertyKey } from '@/types';
-import { BREAKPOINTS } from '@/lib/breakpoint-utils';
+import type {
+  InteractionTween,
+  LayerInteraction,
+  TweenProperties,
+  Layer,
+  Breakpoint,
+  ApplyStyles,
+  TweenPropertyKey,
+} from "@/types/funnel";
+import { BREAKPOINTS } from "@/lib/breakpoint-utils";
 
 /**
  * One-shot intro triggers where the `from` state should be applied on initial
  * paint to avoid the element flashing in its `to` state before JS runs.
  */
-const IMPLICIT_ON_LOAD_TRIGGERS: ReadonlyArray<LayerInteraction['trigger']> = ['load', 'scroll-into-view'];
+const IMPLICIT_ON_LOAD_TRIGGERS: ReadonlyArray<LayerInteraction["trigger"]> = [
+  "load",
+  "scroll-into-view",
+];
 
 /**
  * Returns the effective apply mode for a tween property. Honors an explicit
@@ -18,22 +29,26 @@ const IMPLICIT_ON_LOAD_TRIGGERS: ReadonlyArray<LayerInteraction['trigger']> = ['
  * flicker-free, and `on-trigger` for everything else.
  */
 export function getEffectiveApplyStyle(
-  trigger: LayerInteraction['trigger'],
+  trigger: LayerInteraction["trigger"],
   propertyKey: TweenPropertyKey,
-  applyStyles: InteractionTween['apply_styles'] | undefined
+  applyStyles: InteractionTween["apply_styles"] | undefined,
 ): ApplyStyles {
   const explicit = applyStyles?.[propertyKey];
   if (explicit) return explicit;
-  if (IMPLICIT_ON_LOAD_TRIGGERS.includes(trigger)) return 'on-load';
-  return 'on-trigger';
+  if (IMPLICIT_ON_LOAD_TRIGGERS.includes(trigger)) return "on-load";
+  return "on-trigger";
 }
 
 /**
  * Default `apply_styles` for a new tween based on the interaction trigger.
  * Intro triggers default every property to `on-load` to avoid flicker.
  */
-export function getDefaultApplyStyles(trigger: LayerInteraction['trigger']): InteractionTween['apply_styles'] {
-  const mode: ApplyStyles = IMPLICIT_ON_LOAD_TRIGGERS.includes(trigger) ? 'on-load' : 'on-trigger';
+export function getDefaultApplyStyles(
+  trigger: LayerInteraction["trigger"],
+): InteractionTween["apply_styles"] {
+  const mode: ApplyStyles = IMPLICIT_ON_LOAD_TRIGGERS.includes(trigger)
+    ? "on-load"
+    : "on-trigger";
   return {
     x: mode,
     y: mode,
@@ -56,10 +71,10 @@ export function getDefaultApplyStyles(trigger: LayerInteraction['trigger']): Int
  */
 export function createSplitTextAnimation(
   element: HTMLElement,
-  config: { type: 'chars' | 'words' | 'lines'; stagger: { amount: number } },
+  config: { type: "chars" | "words" | "lines"; stagger: { amount: number } },
   tween: InteractionTween,
   gsapInstance: any,
-  SplitTextClass: any
+  SplitTextClass: any,
 ): { splitElements: HTMLElement[]; splitInstance: any } | null {
   try {
     const splitInstance = new SplitTextClass(element, {
@@ -67,8 +82,12 @@ export function createSplitTextAnimation(
     });
 
     // Get the split elements array from the instance
-    const splitProperty = config.type === 'chars' ? 'chars' :
-      config.type === 'words' ? 'words' : 'lines';
+    const splitProperty =
+      config.type === "chars"
+        ? "chars"
+        : config.type === "words"
+          ? "words"
+          : "lines";
     const createdElements = splitInstance[splitProperty] as HTMLElement[];
 
     if (!createdElements || createdElements.length === 0) {
@@ -83,14 +102,34 @@ export function createSplitTextAnimation(
 
     return { splitElements: createdElements, splitInstance };
   } catch (error) {
-    console.warn('Failed to create SplitText:', error);
+    console.warn("Failed to create SplitText:", error);
     return null;
   }
 }
 
 // Types
-export type TriggerType = 'click' | 'hover' | 'scroll-into-view' | 'while-scrolling' | 'load';
-export type PropertyType = 'position-x' | 'position-y' | 'scale' | 'rotation' | 'skew-x' | 'skew-y' | 'opacity' | 'width' | 'height' | 'background-color' | 'display' | 'split-text' | 'blur' | 'brightness' | 'grayscale';
+export type TriggerType =
+  | "click"
+  | "hover"
+  | "scroll-into-view"
+  | "while-scrolling"
+  | "load";
+export type PropertyType =
+  | "position-x"
+  | "position-y"
+  | "scale"
+  | "rotation"
+  | "skew-x"
+  | "skew-y"
+  | "opacity"
+  | "width"
+  | "height"
+  | "background-color"
+  | "display"
+  | "split-text"
+  | "blur"
+  | "brightness"
+  | "grayscale";
 
 export interface PropertyConfig {
   key: keyof TweenProperties;
@@ -112,9 +151,9 @@ export interface PropertyOption {
 }
 
 // Unit constants
-const POSITION_UNITS = ['px', '%', 'rem', 'em', 'vw', 'vh', 'svh', 'dvh'];
-const ANGLE_UNITS = ['deg', 'rad', 'turn'];
-const SIZE_UNITS = ['px', '%', 'rem', 'em', 'vh', 'svh', 'dvh'];
+const POSITION_UNITS = ["px", "%", "rem", "em", "vw", "vh", "svh", "dvh"];
+const ANGLE_UNITS = ["deg", "rad", "turn"];
+const SIZE_UNITS = ["px", "%", "rem", "em", "vh", "svh", "dvh"];
 
 export interface ParsedAnimationValue {
   number: string;
@@ -122,14 +161,17 @@ export interface ParsedAnimationValue {
 }
 
 /** Splits a CSS value into number and unit parts. Falls back to defaultUnit for bare numbers. */
-export function parseAnimationValue(value: string | null | undefined, defaultUnit: string): ParsedAnimationValue {
-  if (!value) return { number: '', unit: defaultUnit };
+export function parseAnimationValue(
+  value: string | null | undefined,
+  defaultUnit: string,
+): ParsedAnimationValue {
+  if (!value) return { number: "", unit: defaultUnit };
 
   const trimmed = value.trim();
-  if (!trimmed) return { number: '', unit: defaultUnit };
+  if (!trimmed) return { number: "", unit: defaultUnit };
 
   // Special non-numeric values (auto, etc.) — return as-is with empty unit
-  if (!/^-?[\d.]/.test(trimmed)) return { number: trimmed, unit: '' };
+  if (!/^-?[\d.]/.test(trimmed)) return { number: trimmed, unit: "" };
 
   // Match number followed by optional unit
   const match = trimmed.match(/^(-?[\d.]+)\s*(.*)$/);
@@ -143,7 +185,7 @@ export function parseAnimationValue(value: string | null | undefined, defaultUni
 
 /** Combines a number and unit into a single CSS value string */
 export function formatAnimationValue(number: string, unit: string): string {
-  if (!number) return '';
+  if (!number) return "";
   if (!unit) return number;
   return `${number}${unit}`;
 }
@@ -158,7 +200,7 @@ let _colorVariableResolver: ((id: string) => string | undefined) | null = null;
 /** Register a resolver mapping a color variable id to its raw value
  * ("#hex" or "#hex/opacity"). Pass null to clear. */
 export function setColorVariableResolver(
-  resolver: ((id: string) => string | undefined) | null
+  resolver: ((id: string) => string | undefined) | null,
 ): void {
   _colorVariableResolver = resolver;
 }
@@ -181,7 +223,7 @@ function colorToCss(value: string): string {
     return `var(--${id})`;
   }
 
-  const parts = value.split('/');
+  const parts = value.split("/");
   if (parts.length < 2) return value;
   const hex = parts[0];
   const opacity = parseInt(parts[1], 10) / 100;
@@ -196,181 +238,213 @@ function colorToCss(value: string): string {
 // Constants
 export const PROPERTY_OPTIONS: PropertyOption[] = [
   {
-    type: 'position-x',
-    label: 'Position X',
-    properties: [{
-      key: 'x',
-      unit: 'px',
-      units: POSITION_UNITS,
-      defaultFrom: '0px',
-      defaultFromAfterCurrent: '0px',
-      defaultTo: '100px',
-    }],
+    type: "position-x",
+    label: "Position X",
+    properties: [
+      {
+        key: "x",
+        unit: "px",
+        units: POSITION_UNITS,
+        defaultFrom: "0px",
+        defaultFromAfterCurrent: "0px",
+        defaultTo: "100px",
+      },
+    ],
   },
   {
-    type: 'position-y',
-    label: 'Position Y',
-    properties: [{
-      key: 'y',
-      unit: 'px',
-      units: POSITION_UNITS,
-      defaultFrom: '0px',
-      defaultFromAfterCurrent: '0px',
-      defaultTo: '100px',
-    }],
+    type: "position-y",
+    label: "Position Y",
+    properties: [
+      {
+        key: "y",
+        unit: "px",
+        units: POSITION_UNITS,
+        defaultFrom: "0px",
+        defaultFromAfterCurrent: "0px",
+        defaultTo: "100px",
+      },
+    ],
   },
   {
-    type: 'scale',
-    label: 'Scale',
-    properties: [{
-      key: 'scale',
-      unit: '',
-      defaultFrom: '1',
-      defaultFromAfterCurrent: '1',
-      defaultTo: '1.3',
-    }],
+    type: "scale",
+    label: "Scale",
+    properties: [
+      {
+        key: "scale",
+        unit: "",
+        defaultFrom: "1",
+        defaultFromAfterCurrent: "1",
+        defaultTo: "1.3",
+      },
+    ],
   },
   {
-    type: 'rotation',
-    label: 'Rotation',
-    properties: [{
-      key: 'rotation',
-      unit: 'deg',
-      units: ANGLE_UNITS,
-      defaultFrom: '0deg',
-      defaultFromAfterCurrent: '0deg',
-      defaultTo: '45deg',
-    }],
+    type: "rotation",
+    label: "Rotation",
+    properties: [
+      {
+        key: "rotation",
+        unit: "deg",
+        units: ANGLE_UNITS,
+        defaultFrom: "0deg",
+        defaultFromAfterCurrent: "0deg",
+        defaultTo: "45deg",
+      },
+    ],
   },
   {
-    type: 'skew-x',
-    label: 'Skew X',
-    properties: [{
-      key: 'skewX',
-      unit: 'deg',
-      units: ANGLE_UNITS,
-      defaultFrom: '0deg',
-      defaultFromAfterCurrent: '0deg',
-      defaultTo: '30deg',
-    }],
+    type: "skew-x",
+    label: "Skew X",
+    properties: [
+      {
+        key: "skewX",
+        unit: "deg",
+        units: ANGLE_UNITS,
+        defaultFrom: "0deg",
+        defaultFromAfterCurrent: "0deg",
+        defaultTo: "30deg",
+      },
+    ],
   },
   {
-    type: 'skew-y',
-    label: 'Skew Y',
-    properties: [{
-      key: 'skewY',
-      unit: 'deg',
-      units: ANGLE_UNITS,
-      defaultFrom: '0deg',
-      defaultFromAfterCurrent: '0deg',
-      defaultTo: '30deg',
-    }],
+    type: "skew-y",
+    label: "Skew Y",
+    properties: [
+      {
+        key: "skewY",
+        unit: "deg",
+        units: ANGLE_UNITS,
+        defaultFrom: "0deg",
+        defaultFromAfterCurrent: "0deg",
+        defaultTo: "30deg",
+      },
+    ],
   },
   {
-    type: 'opacity',
-    label: 'Opacity',
-    properties: [{
-      key: 'autoAlpha',
-      unit: '%',
-      defaultFrom: '100',
-      defaultFromAfterCurrent: '100',
-      defaultTo: '0',
-    }],
+    type: "opacity",
+    label: "Opacity",
+    properties: [
+      {
+        key: "autoAlpha",
+        unit: "%",
+        defaultFrom: "100",
+        defaultFromAfterCurrent: "100",
+        defaultTo: "0",
+      },
+    ],
   },
   {
-    type: 'height',
-    label: 'Height',
-    properties: [{
-      key: 'height',
-      unit: 'px',
-      units: SIZE_UNITS,
-      defaultFrom: '0px',
-      defaultFromAfterCurrent: '0px',
-      defaultTo: '100px',
-    }],
+    type: "height",
+    label: "Height",
+    properties: [
+      {
+        key: "height",
+        unit: "px",
+        units: SIZE_UNITS,
+        defaultFrom: "0px",
+        defaultFromAfterCurrent: "0px",
+        defaultTo: "100px",
+      },
+    ],
   },
   {
-    type: 'width',
-    label: 'Width',
-    properties: [{
-      key: 'width',
-      unit: 'px',
-      units: SIZE_UNITS,
-      defaultFrom: '0px',
-      defaultFromAfterCurrent: '0px',
-      defaultTo: '100px',
-    }],
+    type: "width",
+    label: "Width",
+    properties: [
+      {
+        key: "width",
+        unit: "px",
+        units: SIZE_UNITS,
+        defaultFrom: "0px",
+        defaultFromAfterCurrent: "0px",
+        defaultTo: "100px",
+      },
+    ],
   },
   {
-    type: 'background-color',
-    label: 'Background color',
-    properties: [{
-      key: 'backgroundColor',
-      unit: '',
-      defaultFrom: '#ffffff',
-      defaultFromAfterCurrent: '#ffffff',
-      defaultTo: '#000000',
-    }],
+    type: "background-color",
+    label: "Background color",
+    properties: [
+      {
+        key: "backgroundColor",
+        unit: "",
+        defaultFrom: "#ffffff",
+        defaultFromAfterCurrent: "#ffffff",
+        defaultTo: "#000000",
+      },
+    ],
   },
   {
-    type: 'display',
-    label: 'Display',
-    properties: [{
-      key: 'display',
-      unit: '',
-      defaultFrom: null,
-      defaultFromAfterCurrent: 'visible',
-      defaultTo: 'hidden',
-      options: [
-        { value: 'visible', label: 'Visible' },
-        { value: 'hidden', label: 'Hidden' },
-      ],
-    }],
+    type: "display",
+    label: "Display",
+    properties: [
+      {
+        key: "display",
+        unit: "",
+        defaultFrom: null,
+        defaultFromAfterCurrent: "visible",
+        defaultTo: "hidden",
+        options: [
+          { value: "visible", label: "Visible" },
+          { value: "hidden", label: "Hidden" },
+        ],
+      },
+    ],
   },
   {
-    type: 'blur',
-    label: 'Blur',
-    properties: [{
-      key: 'filterBlur',
-      unit: 'px',
-      defaultFrom: '0',
-      defaultFromAfterCurrent: '0',
-      defaultTo: '5',
-    }],
+    type: "blur",
+    label: "Blur",
+    properties: [
+      {
+        key: "filterBlur",
+        unit: "px",
+        defaultFrom: "0",
+        defaultFromAfterCurrent: "0",
+        defaultTo: "5",
+      },
+    ],
   },
   {
-    type: 'brightness',
-    label: 'Brightness',
-    properties: [{
-      key: 'filterBrightness',
-      unit: '',
-      defaultFrom: '1',
-      defaultFromAfterCurrent: '1',
-      defaultTo: '1.15',
-    }],
+    type: "brightness",
+    label: "Brightness",
+    properties: [
+      {
+        key: "filterBrightness",
+        unit: "",
+        defaultFrom: "1",
+        defaultFromAfterCurrent: "1",
+        defaultTo: "1.15",
+      },
+    ],
   },
   {
-    type: 'grayscale',
-    label: 'Grayscale',
-    properties: [{
-      key: 'filterGrayscale',
-      unit: '%',
-      defaultFrom: '0',
-      defaultFromAfterCurrent: '0',
-      defaultTo: '100',
-    }],
+    type: "grayscale",
+    label: "Grayscale",
+    properties: [
+      {
+        key: "filterGrayscale",
+        unit: "%",
+        defaultFrom: "0",
+        defaultFromAfterCurrent: "0",
+        defaultTo: "100",
+      },
+    ],
   },
 ];
 
 /** Keys whose values participate in the combined CSS `filter` property */
-export const FILTER_PROPERTY_KEYS = ['filterBlur', 'filterBrightness', 'filterGrayscale'] as const;
-export type FilterPropertyKey = typeof FILTER_PROPERTY_KEYS[number];
+export const FILTER_PROPERTY_KEYS = [
+  "filterBlur",
+  "filterBrightness",
+  "filterGrayscale",
+] as const;
+export type FilterPropertyKey = (typeof FILTER_PROPERTY_KEYS)[number];
 
 /** Map a filter sub-property key to its CSS function name */
 const FILTER_CSS_FUNCTIONS: Record<FilterPropertyKey, string> = {
-  filterBlur: 'blur',
-  filterBrightness: 'brightness',
-  filterGrayscale: 'grayscale',
+  filterBlur: "blur",
+  filterBrightness: "brightness",
+  filterGrayscale: "grayscale",
 };
 
 /** Check if a tween property key contributes to the combined CSS `filter` property */
@@ -382,62 +456,70 @@ export function isFilterPropertyKey(key: string): key is FilterPropertyKey {
  * Build the CSS `filter` string from a set of sub-property values.
  * Only includes defined functions; returns `null` if none are set.
  */
-export function buildFilterString(values: Partial<Record<FilterPropertyKey, string | null | undefined>>): string | null {
+export function buildFilterString(
+  values: Partial<Record<FilterPropertyKey, string | null | undefined>>,
+): string | null {
   const parts: string[] = [];
   for (const key of FILTER_PROPERTY_KEYS) {
     const raw = values[key];
-    if (raw === null || raw === undefined || raw === '') continue;
-    const cfg = PROPERTY_OPTIONS
-      .flatMap((opt) => opt.properties)
-      .find((p) => p.key === key);
+    if (raw === null || raw === undefined || raw === "") continue;
+    const cfg = PROPERTY_OPTIONS.flatMap((opt) => opt.properties).find(
+      (p) => p.key === key,
+    );
     if (!cfg) continue;
     const cssVal = resolveCssValue(raw, cfg);
     parts.push(`${FILTER_CSS_FUNCTIONS[key]}(${cssVal})`);
   }
-  return parts.length > 0 ? parts.join(' ') : null;
+  return parts.length > 0 ? parts.join(" ") : null;
 }
 
 export const TRIGGER_LABELS: Record<TriggerType, string> = {
-  'click': 'Click',
-  'hover': 'Hover',
-  'scroll-into-view': 'Scroll into view',
-  'while-scrolling': 'While scrolling',
-  'load': 'Page load',
+  click: "Click",
+  hover: "Hover",
+  "scroll-into-view": "Scroll into view",
+  "while-scrolling": "While scrolling",
+  load: "Page load",
 };
 
-export const START_POSITION_OPTIONS: Record<string, { short: string; long: string }> = {
-  '>': { short: 'After previous', long: 'After previous animation ends' },
-  '<': { short: 'With previous', long: 'With the previous animation' },
-  'at': { short: 'At', long: 'At a specific time' },
+export const START_POSITION_OPTIONS: Record<
+  string,
+  { short: string; long: string }
+> = {
+  ">": { short: "After previous", long: "After previous animation ends" },
+  "<": { short: "With previous", long: "With the previous animation" },
+  at: { short: "At", long: "At a specific time" },
 };
 
 export const TOGGLE_ACTION_OPTIONS = [
-  { value: 'play', label: 'Play' },
-  { value: 'pause', label: 'Pause' },
-  { value: 'resume', label: 'Resume' },
-  { value: 'reverse', label: 'Reverse' },
-  { value: 'restart', label: 'Restart' },
-  { value: 'reset', label: 'Reset' },
-  { value: 'complete', label: 'Complete' },
-  { value: 'none', label: 'Ignore' },
+  { value: "play", label: "Play" },
+  { value: "pause", label: "Pause" },
+  { value: "resume", label: "Resume" },
+  { value: "reverse", label: "Reverse" },
+  { value: "restart", label: "Restart" },
+  { value: "reset", label: "Reset" },
+  { value: "complete", label: "Complete" },
+  { value: "none", label: "Ignore" },
 ];
 
 export const EASE_OPTIONS = [
-  { value: 'none', label: 'Linear', icon: 'ease-linear' },
-  { value: 'power1.in', label: 'Ease in', icon: 'ease-in' },
-  { value: 'power1.inOut', label: 'Ease in out', icon: 'ease-in-out' },
-  { value: 'power1.out', label: 'Ease out', icon: 'ease-out' },
-  { value: 'back.in', label: 'Back in', icon: 'ease-back-in' },
-  { value: 'back.inOut', label: 'Back in out', icon: 'ease-back-in-out' },
-  { value: 'back.out', label: 'Back out', icon: 'ease-back-out' },
+  { value: "none", label: "Linear", icon: "ease-linear" },
+  { value: "power1.in", label: "Ease in", icon: "ease-in" },
+  { value: "power1.inOut", label: "Ease in out", icon: "ease-in-out" },
+  { value: "power1.out", label: "Ease out", icon: "ease-out" },
+  { value: "back.in", label: "Back in", icon: "ease-back-in" },
+  { value: "back.inOut", label: "Back in out", icon: "ease-back-in-out" },
+  { value: "back.out", label: "Back out", icon: "ease-back-out" },
 ] as const;
 
 // Utility functions
 
 /** Calculate the actual start time in seconds for a tween */
-export function calculateTweenStartTime(tweens: InteractionTween[], index: number): number {
+export function calculateTweenStartTime(
+  tweens: InteractionTween[],
+  index: number,
+): number {
   const tween = tweens[index];
-  if (typeof tween.position === 'number') {
+  if (typeof tween.position === "number") {
     return tween.position;
   }
   if (index === 0) {
@@ -448,10 +530,10 @@ export function calculateTweenStartTime(tweens: InteractionTween[], index: numbe
   const prevDuration = prevTween.duration;
   // Include stagger amount if splitText is enabled on the previous tween
   const prevStaggerAmount = prevTween.splitText?.stagger?.amount || 0;
-  if (tween.position === '>') {
+  if (tween.position === ">") {
     return prevStart + prevDuration + prevStaggerAmount;
   }
-  if (tween.position === '<') {
+  if (tween.position === "<") {
     return prevStart;
   }
   return 0;
@@ -470,12 +552,15 @@ export function resolveCssValue(value: string, prop: PropertyConfig): string {
 }
 
 /** Convert a property value to GSAP-compatible format */
-export function toGsapValue(value: string | null | undefined, prop: PropertyConfig): string | number | undefined {
+export function toGsapValue(
+  value: string | null | undefined,
+  prop: PropertyConfig,
+): string | number | undefined {
   if (value === null || value === undefined) return undefined;
-  if (prop.key === 'autoAlpha') {
+  if (prop.key === "autoAlpha") {
     return Number(value) / 100;
   }
-  if (prop.key === 'backgroundColor') {
+  if (prop.key === "backgroundColor") {
     return colorToCss(value);
   }
   return resolveCssValue(value, prop);
@@ -485,24 +570,29 @@ export function toGsapValue(value: string | null | undefined, prop: PropertyConf
 export function getTweenProperties(tween: InteractionTween): PropertyOption[] {
   return PROPERTY_OPTIONS.filter((opt) =>
     opt.properties.some((p) => {
-      const hasFrom = tween.from[p.key] !== undefined && tween.from[p.key] !== null;
+      const hasFrom =
+        tween.from[p.key] !== undefined && tween.from[p.key] !== null;
       const hasTo = tween.to[p.key] !== undefined && tween.to[p.key] !== null;
       return hasFrom || hasTo;
-    })
+    }),
   );
 }
 
 /** Check if a property type is already added to a tween */
-export function isPropertyInTween(tween: InteractionTween, propertyType: PropertyType): boolean {
+export function isPropertyInTween(
+  tween: InteractionTween,
+  propertyType: PropertyType,
+): boolean {
   // Special handling for split-text
-  if (propertyType === 'split-text') {
+  if (propertyType === "split-text") {
     return !!tween.splitText;
   }
 
   const propertyOption = PROPERTY_OPTIONS.find((p) => p.type === propertyType);
   if (!propertyOption) return false;
   return propertyOption.properties.some((p) => {
-    const hasFrom = tween.from[p.key] !== undefined && tween.from[p.key] !== null;
+    const hasFrom =
+      tween.from[p.key] !== undefined && tween.from[p.key] !== null;
     const hasTo = tween.to[p.key] !== undefined && tween.to[p.key] !== null;
     return hasFrom || hasTo;
   });
@@ -511,8 +601,12 @@ export function isPropertyInTween(tween: InteractionTween, propertyType: Propert
 export interface GsapAnimationProps {
   from: Record<string, string | number>;
   to: Record<string, string | number>;
-  displayStart: string | null; /** Display value to set at the START of animation (when showing) */
-  displayEnd: string | null; /** Display value to set at the END of animation (when hiding) */
+  displayStart:
+    | string
+    | null; /** Display value to set at the START of animation (when showing) */
+  displayEnd:
+    | string
+    | null; /** Display value to set at the END of animation (when hiding) */
 }
 
 /**
@@ -551,25 +645,39 @@ export interface EditorHiddenLayerInfo {
  * wrapper). Intro triggers (load/scroll-into-view) reveal permanent content, so
  * their transform/opacity `from` states must NOT hide it in the editor.
  */
-function tweenHidesOnLoad(interaction: LayerInteraction, tween: InteractionTween): boolean {
+function tweenHidesOnLoad(
+  interaction: LayerInteraction,
+  tween: InteractionTween,
+): boolean {
   const { trigger } = interaction;
   const from = tween.from;
   if (!from) return false;
   const apply = tween.apply_styles;
 
-  if (from.display === 'hidden' && getEffectiveApplyStyle(trigger, 'display', apply) === 'on-load') {
+  if (
+    from.display === "hidden" &&
+    getEffectiveApplyStyle(trigger, "display", apply) === "on-load"
+  ) {
     return true;
   }
 
-  if (trigger !== 'hover' && trigger !== 'click') return false;
+  if (trigger !== "hover" && trigger !== "click") return false;
 
-  const isOnLoad = (key: TweenPropertyKey) => getEffectiveApplyStyle(trigger, key, apply) === 'on-load';
-  const num = (v: unknown) => (v === null || v === undefined ? NaN : parseFloat(String(v)));
+  const isOnLoad = (key: TweenPropertyKey) =>
+    getEffectiveApplyStyle(trigger, key, apply) === "on-load";
+  const num = (v: unknown) =>
+    v === null || v === undefined ? NaN : parseFloat(String(v));
 
-  if (from.autoAlpha != null && isOnLoad('autoAlpha') && num(from.autoAlpha) === 0) return true;
-  if (from.scale != null && isOnLoad('scale') && num(from.scale) === 0) return true;
-  if (from.x != null && isOnLoad('x') && num(from.x) !== 0) return true;
-  if (from.y != null && isOnLoad('y') && num(from.y) !== 0) return true;
+  if (
+    from.autoAlpha != null &&
+    isOnLoad("autoAlpha") &&
+    num(from.autoAlpha) === 0
+  )
+    return true;
+  if (from.scale != null && isOnLoad("scale") && num(from.scale) === 0)
+    return true;
+  if (from.x != null && isOnLoad("x") && num(from.x) !== 0) return true;
+  if (from.y != null && isOnLoad("y") && num(from.y) !== 0) return true;
 
   return false;
 }
@@ -580,7 +688,9 @@ function tweenHidesOnLoad(interaction: LayerInteraction, tween: InteractionTween
  * revealed only when selected. Returns a Map of layerId -> breakpoints
  * (empty = all breakpoints).
  */
-export function collectEditorHiddenLayerIds(layers: Layer[]): Map<string, Breakpoint[]> {
+export function collectEditorHiddenLayerIds(
+  layers: Layer[],
+): Map<string, Breakpoint[]> {
   const hiddenLayerMap = new Map<string, Breakpoint[]>();
 
   const traverse = (layerList: Layer[]) => {
@@ -627,13 +737,16 @@ export function collectEditorHiddenLayerIds(layers: Layer[]): Map<string, Breakp
 export function isLayerOrAncestorSelected(
   layerId: string,
   selectedLayerId: string | null,
-  layers: Layer[]
+  layers: Layer[],
 ): boolean {
   if (!selectedLayerId) return false;
   if (layerId === selectedLayerId) return true;
 
   // Check if selectedLayerId is a descendant of layerId
-  const findLayerById = (layerList: Layer[], targetId: string): Layer | null => {
+  const findLayerById = (
+    layerList: Layer[],
+    targetId: string,
+  ): Layer | null => {
     for (const layer of layerList) {
       if (layer.id === targetId) return layer;
       if (layer.children) {
@@ -644,7 +757,11 @@ export function isLayerOrAncestorSelected(
     return null;
   };
 
-  const isDescendant = (parentId: string, childId: string, layerList: Layer[]): boolean => {
+  const isDescendant = (
+    parentId: string,
+    childId: string,
+    layerList: Layer[],
+  ): boolean => {
     const parent = findLayerById(layerList, parentId);
     if (!parent || !parent.children) return false;
 
@@ -667,27 +784,29 @@ export function isLayerOrAncestorSelected(
  * Generate a media query for a set of breakpoints
  * Returns null if no restriction (all breakpoints), or the appropriate media query
  */
-function getMediaQueryForBreakpoints(breakpoints: Breakpoint[] | undefined): string | null {
+function getMediaQueryForBreakpoints(
+  breakpoints: Breakpoint[] | undefined,
+): string | null {
   // No restriction - apply to all breakpoints
   if (!breakpoints || breakpoints.length === 0 || breakpoints.length === 3) {
     return null;
   }
 
-  const hasMobile = breakpoints.includes('mobile');
-  const hasTablet = breakpoints.includes('tablet');
-  const hasDesktop = breakpoints.includes('desktop');
+  const hasMobile = breakpoints.includes("mobile");
+  const hasTablet = breakpoints.includes("tablet");
+  const hasDesktop = breakpoints.includes("desktop");
 
   // Single breakpoint cases
   if (breakpoints.length === 1) {
-    if (hasMobile) return '@media (max-width: 767px)';
-    if (hasTablet) return '@media (min-width: 768px) and (max-width: 1023px)';
-    if (hasDesktop) return '@media (min-width: 1024px)';
+    if (hasMobile) return "@media (max-width: 767px)";
+    if (hasTablet) return "@media (min-width: 768px) and (max-width: 1023px)";
+    if (hasDesktop) return "@media (min-width: 1024px)";
   }
 
   // Two breakpoint cases
   if (breakpoints.length === 2) {
-    if (hasMobile && hasTablet) return '@media (max-width: 1023px)';
-    if (hasTablet && hasDesktop) return '@media (min-width: 768px)';
+    if (hasMobile && hasTablet) return "@media (max-width: 1023px)";
+    if (hasTablet && hasDesktop) return "@media (min-width: 768px)";
     // Mobile + Desktop is a weird case - we'd need two separate rules
     // For now, return null and apply everywhere (better than breaking)
     if (hasMobile && hasDesktop) return null;
@@ -702,7 +821,9 @@ function getMediaQueryForBreakpoints(breakpoints: Breakpoint[] | undefined): str
  * Now checks per-property apply_styles on each tween.
  * Respects breakpoint restrictions on animations.
  */
-export function generateInitialAnimationCSS(layers: Layer[]): InitialAnimationResult {
+export function generateInitialAnimationCSS(
+  layers: Layer[],
+): InitialAnimationResult {
   const cssRules: string[] = [];
   const hiddenLayerInfo: HiddenLayerInfo[] = [];
 
@@ -713,17 +834,26 @@ export function generateInitialAnimationCSS(layers: Layer[]): InitialAnimationRe
   // Global (all breakpoints)
   cssRules.push('[data-gsap-hidden=""] { display: none !important; }');
   // Per-breakpoint rules
-  cssRules.push('@media (max-width: 767px) { [data-gsap-hidden~="mobile"] { display: none !important; } }');
-  cssRules.push('@media (min-width: 768px) and (max-width: 1023px) { [data-gsap-hidden~="tablet"] { display: none !important; } }');
-  cssRules.push('@media (min-width: 1024px) { [data-gsap-hidden~="desktop"] { display: none !important; } }');
+  cssRules.push(
+    '@media (max-width: 767px) { [data-gsap-hidden~="mobile"] { display: none !important; } }',
+  );
+  cssRules.push(
+    '@media (min-width: 768px) and (max-width: 1023px) { [data-gsap-hidden~="tablet"] { display: none !important; } }',
+  );
+  cssRules.push(
+    '@media (min-width: 1024px) { [data-gsap-hidden~="desktop"] { display: none !important; } }',
+  );
 
   const collectStyles = (layerList: Layer[]) => {
     layerList.forEach((layer) => {
       if (layer.interactions) {
         layer.interactions.forEach((interaction) => {
           // Get the media query for this interaction's breakpoints
-          const mediaQuery = getMediaQueryForBreakpoints(interaction.timeline?.breakpoints);
-          const breakpointValue = interaction.timeline?.breakpoints?.join(' ') || null;
+          const mediaQuery = getMediaQueryForBreakpoints(
+            interaction.timeline?.breakpoints,
+          );
+          const breakpointValue =
+            interaction.timeline?.breakpoints?.join(" ") || null;
 
           (interaction.tweens || []).forEach((tween) => {
             // SplitText tweens target child elements (.word/.char/.line) created at
@@ -739,7 +869,14 @@ export function generateInitialAnimationCSS(layers: Layer[]): InitialAnimationRe
             // Intro triggers (load, scroll-into-view) are implicitly on-load to prevent flicker.
             PROPERTY_OPTIONS.forEach((opt) => {
               opt.properties.forEach((prop) => {
-                if (getEffectiveApplyStyle(interaction.trigger, prop.key, tween.apply_styles) !== 'on-load') return;
+                if (
+                  getEffectiveApplyStyle(
+                    interaction.trigger,
+                    prop.key,
+                    tween.apply_styles,
+                  ) !== "on-load"
+                )
+                  return;
 
                 const value = tween.from[prop.key];
                 if (value === null || value === undefined) return;
@@ -747,36 +884,36 @@ export function generateInitialAnimationCSS(layers: Layer[]): InitialAnimationRe
                 const cssVal = resolveCssValue(value, prop);
 
                 // Convert to CSS property - collect transforms separately to combine them
-                if (prop.key === 'x') {
+                if (prop.key === "x") {
                   transforms.push(`translateX(${cssVal})`);
-                } else if (prop.key === 'y') {
+                } else if (prop.key === "y") {
                   transforms.push(`translateY(${cssVal})`);
-                } else if (prop.key === 'rotation') {
+                } else if (prop.key === "rotation") {
                   transforms.push(`rotate(${cssVal})`);
-                } else if (prop.key === 'scale') {
+                } else if (prop.key === "scale") {
                   transforms.push(`scale(${value})`);
-                } else if (prop.key === 'skewX') {
+                } else if (prop.key === "skewX") {
                   transforms.push(`skewX(${cssVal})`);
-                } else if (prop.key === 'skewY') {
+                } else if (prop.key === "skewY") {
                   transforms.push(`skewY(${cssVal})`);
-                } else if (prop.key === 'autoAlpha') {
+                } else if (prop.key === "autoAlpha") {
                   const opacity = Number(value) / 100;
                   styles.push(`opacity: ${opacity}`);
                   if (opacity === 0) {
                     styles.push(`visibility: hidden`);
                   }
-                } else if (prop.key === 'width') {
+                } else if (prop.key === "width") {
                   styles.push(`width: ${cssVal}`);
-                } else if (prop.key === 'height') {
+                } else if (prop.key === "height") {
                   styles.push(`height: ${cssVal}`);
-                } else if (prop.key === 'backgroundColor') {
+                } else if (prop.key === "backgroundColor") {
                   styles.push(`background-color: ${colorToCss(value)}`);
                 } else if (isFilterPropertyKey(prop.key)) {
                   // Accumulate; combined into a single `filter` declaration below
                   filterValues[prop.key] = value;
-                } else if (prop.key === 'display') {
+                } else if (prop.key === "display") {
                   // Track elements that should start hidden using data attribute
-                  if (value === 'hidden') {
+                  if (value === "hidden") {
                     hiddenLayerInfo.push({
                       layerId: tween.layer_id,
                       breakpoints: breakpointValue,
@@ -788,7 +925,7 @@ export function generateInitialAnimationCSS(layers: Layer[]): InitialAnimationRe
 
             // Combine all transforms into a single property
             if (transforms.length > 0) {
-              styles.push(`transform: ${transforms.join(' ')}`);
+              styles.push(`transform: ${transforms.join(" ")}`);
             }
 
             // Combine accumulated filter sub-properties into a single CSS declaration
@@ -798,7 +935,7 @@ export function generateInitialAnimationCSS(layers: Layer[]): InitialAnimationRe
             }
 
             if (styles.length > 0) {
-              const rule = `[data-layer-id="${tween.layer_id}"] { ${styles.join('; ')}; }`;
+              const rule = `[data-layer-id="${tween.layer_id}"] { ${styles.join("; ")}; }`;
 
               // Group by media query
               if (!rulesByMediaQuery.has(mediaQuery)) {
@@ -822,14 +959,14 @@ export function generateInitialAnimationCSS(layers: Layer[]): InitialAnimationRe
   rulesByMediaQuery.forEach((rules, mediaQuery) => {
     if (mediaQuery) {
       // Wrap in media query
-      cssRules.push(`${mediaQuery} { ${rules.join(' ')} }`);
+      cssRules.push(`${mediaQuery} { ${rules.join(" ")} }`);
     } else {
       // No media query - add directly
       cssRules.push(...rules);
     }
   });
 
-  return { css: cssRules.join('\n'), hiddenLayerInfo };
+  return { css: cssRules.join("\n"), hiddenLayerInfo };
 }
 
 export function buildGsapProps(tween: InteractionTween): GsapAnimationProps {
@@ -841,9 +978,9 @@ export function buildGsapProps(tween: InteractionTween): GsapAnimationProps {
   PROPERTY_OPTIONS.forEach((opt) => {
     opt.properties.forEach((prop) => {
       // Handle display separately via data-gsap-hidden attribute
-      if (prop.key === 'display') {
-        displayStart = tween.from.display || 'visible';
-        displayEnd = tween.to.display || 'visible';
+      if (prop.key === "display") {
+        displayStart = tween.from.display || "visible";
+        displayEnd = tween.to.display || "visible";
         return;
       }
 
@@ -890,7 +1027,7 @@ export interface SeparatedAnimationProps {
 /** Separates animation properties into fromTo, fromOnly, and toOnly groups */
 export function separateAnimationProps(
   from: Record<string, unknown>,
-  to: Record<string, unknown>
+  to: Record<string, unknown>,
 ): SeparatedAnimationProps {
   const fromToFrom: Record<string, unknown> = {};
   const fromToTo: Record<string, unknown> = {};
@@ -934,7 +1071,7 @@ export interface AddTweenOptions {
   position: number | string;
   onComplete?: () => void;
   splitText?: {
-    type: 'chars' | 'words' | 'lines';
+    type: "chars" | "words" | "lines";
     stagger: { amount: number }; // GSAP stagger config
   };
   /** Pre-split elements from SplitText instance (chars, words, or lines array) */
@@ -945,10 +1082,12 @@ export interface AddTweenOptions {
  * Updates a specific interaction in a list by ID
  */
 export function updateInteractionById(
-  interactions: import('@/types').LayerInteraction[],
+  interactions: import("@/types/funnel").LayerInteraction[],
   interactionId: string,
-  updateFn: (interaction: import('@/types').LayerInteraction) => import('@/types').LayerInteraction
-): import('@/types').LayerInteraction[] {
+  updateFn: (
+    interaction: import("@/types/funnel").LayerInteraction,
+  ) => import("@/types/funnel").LayerInteraction,
+): import("@/types/funnel").LayerInteraction[] {
   return interactions.map((interaction) => {
     if (interaction.id !== interactionId) return interaction;
     return updateFn(interaction);
@@ -959,9 +1098,11 @@ export function updateInteractionById(
  * Updates tweens within a specific interaction
  */
 export function updateInteractionTweens(
-  interaction: import('@/types').LayerInteraction,
-  updateFn: (tweens: import('@/types').LayerInteraction['tweens']) => import('@/types').LayerInteraction['tweens']
-): import('@/types').LayerInteraction {
+  interaction: import("@/types/funnel").LayerInteraction,
+  updateFn: (
+    tweens: import("@/types/funnel").LayerInteraction["tweens"],
+  ) => import("@/types/funnel").LayerInteraction["tweens"],
+): import("@/types/funnel").LayerInteraction {
   return {
     ...interaction,
     tweens: updateFn(interaction.tweens),
@@ -972,10 +1113,12 @@ export function updateInteractionTweens(
  * Updates a specific tween within tweens array
  */
 export function updateTweenById(
-  tweens: import('@/types').LayerInteraction['tweens'],
+  tweens: import("@/types/funnel").LayerInteraction["tweens"],
   tweenId: string,
-  updateFn: (tween: import('@/types').LayerInteraction['tweens'][number]) => import('@/types').LayerInteraction['tweens'][number]
-): import('@/types').LayerInteraction['tweens'] {
+  updateFn: (
+    tween: import("@/types/funnel").LayerInteraction["tweens"][number],
+  ) => import("@/types/funnel").LayerInteraction["tweens"][number],
+): import("@/types/funnel").LayerInteraction["tweens"] {
   return tweens.map((tween) => {
     if (tween.id !== tweenId) return tween;
     return updateFn(tween);
@@ -985,9 +1128,19 @@ export function updateTweenById(
 /** Adds a tween to a GSAP timeline, handling mixed from/to/fromTo properties */
 export function addTweenToTimeline(
   timeline: gsap.core.Timeline,
-  options: AddTweenOptions
+  options: AddTweenOptions,
 ): void {
-  const { element, from, to, duration, ease, position, onComplete, splitText, splitElements: providedSplitElements } = options;
+  const {
+    element,
+    from,
+    to,
+    duration,
+    ease,
+    position,
+    onComplete,
+    splitText,
+    splitElements: providedSplitElements,
+  } = options;
   const safeDur = safeDuration(duration);
 
   // If splitText is enabled, we need to target child elements created by GSAP's SplitText
@@ -997,12 +1150,20 @@ export function addTweenToTimeline(
 
     if (!splitElements || splitElements.length === 0) {
       // Fallback: Try to find elements by class (GSAP SplitText creates these)
-      const splitClass = splitText.type === 'chars' ? '.char' : splitText.type === 'words' ? '.word' : '.line';
-      splitElements = Array.from(element.querySelectorAll(splitClass)) as HTMLElement[];
+      const splitClass =
+        splitText.type === "chars"
+          ? ".char"
+          : splitText.type === "words"
+            ? ".word"
+            : ".line";
+      splitElements = Array.from(
+        element.querySelectorAll(splitClass),
+      ) as HTMLElement[];
     }
 
     if (splitElements.length > 0) {
-      const { fromTo, fromOnly, toOnly, hasFromTo, hasFromOnly, hasToOnly } = separateAnimationProps(from, to);
+      const { fromTo, fromOnly, toOnly, hasFromTo, hasFromOnly, hasToOnly } =
+        separateAnimationProps(from, to);
 
       // Use GSAP's stagger configuration directly
       // Can be a number (fixed delay) or { amount: duration } (total time to distribute)
@@ -1010,7 +1171,10 @@ export function addTweenToTimeline(
 
       // Prevent immediate render for split text to avoid "from" state conflicts
       // when multiple tweens animate the same split elements in sequence
-      const shouldDelayRender = position === '>' || position === '<' || (typeof position === 'number' && position > 0);
+      const shouldDelayRender =
+        position === ">" ||
+        position === "<" ||
+        (typeof position === "number" && position > 0);
 
       if (hasFromTo) {
         timeline.fromTo(
@@ -1022,9 +1186,9 @@ export function addTweenToTimeline(
             ease,
             stagger: staggerConfig,
             immediateRender: !shouldDelayRender,
-            onComplete: !hasFromOnly && !hasToOnly ? onComplete : undefined
+            onComplete: !hasFromOnly && !hasToOnly ? onComplete : undefined,
           },
-          position
+          position,
         );
       }
 
@@ -1037,9 +1201,9 @@ export function addTweenToTimeline(
             ease,
             stagger: staggerConfig,
             immediateRender: !shouldDelayRender && !hasFromTo,
-            onComplete: !hasToOnly ? onComplete : undefined
+            onComplete: !hasToOnly ? onComplete : undefined,
           },
-          hasFromTo ? '<' : position
+          hasFromTo ? "<" : position,
         );
       }
 
@@ -1051,9 +1215,9 @@ export function addTweenToTimeline(
             duration: safeDur,
             ease,
             stagger: staggerConfig,
-            onComplete
+            onComplete,
           },
-          hasFromTo || hasFromOnly ? '<' : position
+          hasFromTo || hasFromOnly ? "<" : position,
         );
       }
       return;
@@ -1061,14 +1225,21 @@ export function addTweenToTimeline(
 
     // If splitText is enabled but no split elements were found, fall back to regular animation
     // This can happen if the element has no text content or SplitText wasn't applied correctly
-    console.warn(`SplitText enabled but no ${splitText.type} elements found for element:`, element);
+    console.warn(
+      `SplitText enabled but no ${splitText.type} elements found for element:`,
+      element,
+    );
   }
 
   // Regular animation without split text
-  const { fromTo, fromOnly, toOnly, hasFromTo, hasFromOnly, hasToOnly } = separateAnimationProps(from, to);
+  const { fromTo, fromOnly, toOnly, hasFromTo, hasFromOnly, hasToOnly } =
+    separateAnimationProps(from, to);
 
   // Prevent immediate render to avoid "from" state conflicts in timelines
-  const shouldDelayRender = position === '>' || position === '<' || (typeof position === 'number' && position > 0);
+  const shouldDelayRender =
+    position === ">" ||
+    position === "<" ||
+    (typeof position === "number" && position > 0);
 
   // Add tweens - use '<' to run simultaneously with the first one
   if (hasFromTo) {
@@ -1080,9 +1251,9 @@ export function addTweenToTimeline(
         duration: safeDur,
         ease,
         immediateRender: !shouldDelayRender,
-        onComplete: !hasFromOnly && !hasToOnly ? onComplete : undefined
+        onComplete: !hasFromOnly && !hasToOnly ? onComplete : undefined,
       },
-      position
+      position,
     );
   }
 
@@ -1094,9 +1265,9 @@ export function addTweenToTimeline(
         duration: safeDur,
         ease,
         immediateRender: !shouldDelayRender && !hasFromTo,
-        onComplete: !hasToOnly ? onComplete : undefined
+        onComplete: !hasToOnly ? onComplete : undefined,
       },
-      hasFromTo ? '<' : position
+      hasFromTo ? "<" : position,
     );
   }
 
@@ -1104,7 +1275,7 @@ export function addTweenToTimeline(
     timeline.to(
       element,
       { ...toOnly, duration: safeDur, ease, onComplete },
-      hasFromTo || hasFromOnly ? '<' : position
+      hasFromTo || hasFromOnly ? "<" : position,
     );
   }
 

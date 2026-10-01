@@ -24,8 +24,6 @@ import type {
   DynamicTextVariable,
   DynamicRichTextVariable,
 } from "@/types/funnel";
-import type { UseLiveLayerUpdatesReturn } from "@/hooks/use-live-layer-updates";
-import type { UseLiveComponentUpdatesReturn } from "@/hooks/use-live-component-updates";
 import {
   getLayerHtmlTag,
   getClassesString,
@@ -123,10 +121,10 @@ import {
 } from "@/lib/tiptap-utils";
 
 import { useCollectionLayerStore } from "@/stores/useCollectionLayerStore";
-import { useFilterStore } from "@/stores/useFilterStore";
-import { useCollectionsStore } from "@/stores/useCollectionsStore";
-import { useAssetsStore } from "@/stores/useAssetsStore";
-import { useColorVariablesStore } from "@/stores/useColorVariablesStore";
+import { useFilterStore } from "@/stores/editor/useFilterStore";
+import { useCollectionsStore } from "@/stores/editor/useCollectionsStore";
+import { useAssetsStore } from "@/stores/editor/useAssetsStore";
+import { useColorVariablesStore } from "@/stores/editor/useColorVariablesStore";
 import { useGlobalsStore } from "@/stores/useGlobalsStore";
 import { ShimmerSkeleton } from "@/components/ui/shimmer-skeleton";
 import {
@@ -138,8 +136,8 @@ import PaginatedCollection from "@/components/PaginatedCollection";
 import LoadMoreCollection from "@/components/LoadMoreCollection";
 import FilterableCollection from "@/components/FilterableCollection";
 import LocaleSelector from "@/components/layers/LocaleSelector";
-import { usePagesStore } from "@/stores/usePagesStore";
-import { useSettingsStore } from "@/stores/useSettingsStore";
+import { usePagesStore } from "@/stores/editor/usePagesStore";
+import { useSettingsStore } from "@/stores/editor/useSettingsStore";
 import {
   generateLinkHref,
   resolveLinkAttrs,
@@ -210,8 +208,6 @@ interface LayerRendererProps {
   currentLocale?: Locale | null;
   availableLocales?: Locale[];
   localeSelectorFormat?: "locale" | "code"; // Format for locale selector label (inherited from parent)
-  liveLayerUpdates?: UseLiveLayerUpdatesReturn | null; // For collaboration broadcasts
-  liveComponentUpdates?: UseLiveComponentUpdatesReturn | null; // For component collaboration broadcasts
   parentComponentLayerId?: string; // ID of the parent component layer (if rendering inside a component)
   parentComponentId?: string; // ID of the parent component (mirror of parentComponentLayerId for double-click-to-edit)
   parentComponentOverrides?: Layer["componentOverrides"]; // Override values from parent component instance
@@ -278,8 +274,6 @@ const LayerRenderer: React.FC<LayerRendererProps> = ({
   currentLocale,
   availableLocales = [],
   localeSelectorFormat,
-  liveLayerUpdates,
-  liveComponentUpdates,
   parentComponentLayerId,
   parentComponentId,
   parentComponentOverrides,
@@ -444,8 +438,6 @@ const LayerRenderer: React.FC<LayerRendererProps> = ({
         currentLocale={currentLocale}
         availableLocales={availableLocales}
         localeSelectorFormat={localeSelectorFormat}
-        liveLayerUpdates={liveLayerUpdates}
-        liveComponentUpdates={liveComponentUpdates}
         parentComponentLayerId={parentComponentLayerId}
         parentComponentId={parentComponentId}
         parentComponentOverrides={parentComponentOverrides}
@@ -508,8 +500,6 @@ const LayerItemImpl: React.FC<{
   currentLocale?: Locale | null;
   availableLocales?: Locale[];
   localeSelectorFormat?: "locale" | "code";
-  liveLayerUpdates?: UseLiveLayerUpdatesReturn | null;
-  liveComponentUpdates?: UseLiveComponentUpdatesReturn | null;
   parentComponentLayerId?: string; // ID of the parent component layer (if this layer is inside a component)
   parentComponentId?: string; // ID of the parent component (mirrors parentComponentLayerId)
   parentComponentOverrides?: Layer["componentOverrides"]; // Override values from parent component instance
@@ -566,8 +556,6 @@ const LayerItemImpl: React.FC<{
   currentLocale,
   availableLocales,
   localeSelectorFormat,
-  liveLayerUpdates,
-  liveComponentUpdates,
   parentComponentLayerId,
   parentComponentId,
   parentComponentOverrides,
@@ -618,20 +606,6 @@ const LayerItemImpl: React.FC<{
     return sel ? containsLayerId(layer, sel) : false;
   });
 
-  const isEditor = useAuthStore((state) => state.role === "editor");
-
-  // Collaboration layer locking - use unified resource lock system
-  const currentUserId = useAuthStore((state) => state.user?.id);
-  const lockKey = getResourceLockKey(RESOURCE_TYPES.LAYER, layer.id);
-  const lock = useCollaborationPresenceStore(
-    (state) => state.resourceLocks[lockKey],
-  );
-  // Check if locked by another user (only compute when lock exists)
-  const isLockedByOther = !!(
-    lock &&
-    lock.user_id !== currentUserId &&
-    Date.now() <= lock.expires_at
-  );
   const classesString = getClassesString(layer);
   // Collection layer data (from repeaters/loops) - separate from page collection data
   // Use layer's pre-resolved values if present (from SSR), otherwise use prop from parent
@@ -723,8 +697,6 @@ const LayerItemImpl: React.FC<{
       currentLocale,
       availableLocales,
       localeSelectorFormat,
-      liveLayerUpdates,
-      liveComponentUpdates,
       isInsideForm,
       isInsideLink,
       parentFormSettings,
@@ -762,8 +734,6 @@ const LayerItemImpl: React.FC<{
       currentLocale,
       availableLocales,
       localeSelectorFormat,
-      liveLayerUpdates,
-      liveComponentUpdates,
       isInsideForm,
       isInsideLink,
       parentFormSettings,
@@ -1248,7 +1218,7 @@ const LayerItemImpl: React.FC<{
 
   const paginationLinkedCollectionLayer = usePagesStore((state) => {
     if (!paginationContextTarget || !pageId) return null;
-    const draft = state.draftsByPageId[pageId];
+    const draft = state.pages.find((p) => p.id === pageId);
     if (!draft) return null;
     return findLayerById(
       draft.layers,
@@ -2086,7 +2056,7 @@ const LayerItemImpl: React.FC<{
   const sortByInputDefaultValue = usePagesStore((state) => {
     const inputLayerId = collectionVariable?.sort_by_inputLayerId;
     if (!inputLayerId || !pageId) return undefined;
-    const draft = state.draftsByPageId[pageId];
+    const draft = state.pages.find((p) => p.id === pageId);
     if (!draft) return undefined;
     const found = findLayerById(draft.layers, inputLayerId);
     return found?.attributes?.value;
@@ -2095,7 +2065,7 @@ const LayerItemImpl: React.FC<{
   const sortOrderInputDefaultValue = usePagesStore((state) => {
     const inputLayerId = collectionVariable?.sort_order_inputLayerId;
     if (!inputLayerId || !pageId) return undefined;
-    const draft = state.draftsByPageId[pageId];
+    const draft = state.pages.find((p) => p.id === pageId);
     if (!draft) return undefined;
     const found = findLayerById(draft.layers, inputLayerId);
     return found?.attributes?.value;
@@ -2255,8 +2225,9 @@ const LayerItemImpl: React.FC<{
       return baseChildren;
     const currentPageId = useEditorStore.getState().currentPageId;
     if (!currentPageId) return baseChildren;
-    const allLayers =
-      usePagesStore.getState().draftsByPageId[currentPageId]?.layers;
+    const allLayers = usePagesStore
+      .getState()
+      .pages.find((p) => p.id === currentPageId)?.layers;
     if (!allLayers) return baseChildren;
     const slider = findAncestorByName(allLayers, layer.id, "slider");
     if (!slider) return baseChildren;
@@ -2338,7 +2309,6 @@ const LayerItemImpl: React.FC<{
       disabled:
         !enableDragDrop ||
         isEditing ||
-        isLockedByOther ||
         !!(currentLocale && !currentLocale.is_default),
       data: {
         layer,
@@ -2356,7 +2326,7 @@ const LayerItemImpl: React.FC<{
 
   const startEditing = (clickX?: number, clickY?: number) => {
     // Enable inline editing for text layers (both rich text and plain text)
-    if (textEditable && isEditMode && !isLockedByOther && !isLocalizingLayer) {
+    if (textEditable && isEditMode && !isLocalizingLayer) {
       setEditingLayerId(layer.id);
       // Clear sublayer selection when entering edit mode
       useEditorStore.getState().setActiveSublayerIndex(null);
@@ -2378,7 +2348,7 @@ const LayerItemImpl: React.FC<{
 
   // Open file manager for image layers on double-click
   const openImageFileManager = useCallback(() => {
-    if (!isEditMode || isLockedByOther || !onLayerUpdate) return;
+    if (!isEditMode || !onLayerUpdate) return;
 
     // Get current asset ID for highlighting in file manager
     const currentAssetId = isAssetVariable(layer.variables?.image?.src)
@@ -2416,7 +2386,7 @@ const LayerItemImpl: React.FC<{
       currentAssetId,
       [ASSET_CATEGORIES.IMAGES, ASSET_CATEGORIES.ICONS],
     );
-  }, [isEditMode, isLockedByOther, onLayerUpdate, layer, openFileManager]);
+  }, [isEditMode, onLayerUpdate, layer, openFileManager]);
 
   const finishEditing = useCallback(() => {
     if (editingLayerId === layer.id) {
@@ -2522,11 +2492,10 @@ const LayerItemImpl: React.FC<{
         isSlideChild && "swiper-slide",
         buttonNeedsFit && "w-fit",
         buttonNeedsTextCenter && "text-center",
-        enableDragDrop && !isEditing && !isLockedByOther && "cursor-default",
+        enableDragDrop && !isEditing && "cursor-default",
         isDragging && "opacity-30",
         showProjection &&
           "outline outline-1 outline-dashed outline-blue-400 bg-blue-50/10",
-        isLockedByOther && "opacity-90 pointer-events-none select-none",
         isPaginationWrapperEmpty && "hidden",
         "ycode-layer",
       )
@@ -2828,7 +2797,7 @@ const LayerItemImpl: React.FC<{
       "data-layer-type": htmlTag,
       "data-is-empty": isEmpty ? "true" : "false",
       ...(hasVisualStyle && { "data-has-visual": "true" }),
-      ...(enableDragDrop && !isEditing && !isLockedByOther
+      ...(enableDragDrop && !isEditing
         ? { ...normalizedAttributes, ...listeners }
         : normalizedAttributes),
       ...(!isEditMode && { suppressHydrationWarning: true }),
@@ -3011,13 +2980,6 @@ const LayerItemImpl: React.FC<{
             return;
           }
         }
-        // Block click if locked by another user
-        if (isLockedByOther) {
-          e.stopPropagation();
-          e.preventDefault();
-          console.warn(`Layer ${layer.id} is locked by another user`);
-          return;
-        }
         // Only handle if not a context menu trigger
         if (e.button !== 2) {
           e.stopPropagation();
@@ -3042,7 +3004,6 @@ const LayerItemImpl: React.FC<{
         }
       };
       elementProps.onDoubleClick = (e: React.MouseEvent) => {
-        if (isLockedByOther) return;
         e.stopPropagation();
 
         // Component instance (or any layer inside one): open the master
@@ -3131,7 +3092,7 @@ const LayerItemImpl: React.FC<{
       if (onLayerHover) {
         elementProps.onMouseEnter = (e: React.MouseEvent) => {
           e.stopPropagation();
-          if (!isEditing && !isLockedByOther && layer.id !== "body") {
+          if (!isEditing && layer.id !== "body") {
             // If this layer is inside a component, hover the component layer instead
             const layerIdToHover = parentComponentLayerId || layer.id;
             onLayerHover(layerIdToHover);
@@ -3681,7 +3642,7 @@ const LayerItemImpl: React.FC<{
       const cvList =
         colorVariables.length > 0
           ? colorVariables
-          : (serverSettings?.color_variables as import("@/types").ColorVariable[]) ||
+          : (serverSettings?.color_variables as import("@/types/funnel").ColorVariable[]) ||
             [];
       const resolvedSettings = {
         ...mapSettings,
@@ -4001,7 +3962,6 @@ const LayerItemImpl: React.FC<{
                   ? layer.settings?.locale?.format || "locale"
                   : localeSelectorFormat
               }
-              liveLayerUpdates={liveLayerUpdates}
               isInsideForm={isInsideForm}
               isInsideLink={isInsideLink}
               parentFormSettings={parentFormSettings}
@@ -4385,7 +4345,6 @@ const LayerItemImpl: React.FC<{
                     editorBreakpoint={editorBreakpoint}
                     currentLocale={currentLocale}
                     availableLocales={availableLocales}
-                    liveLayerUpdates={liveLayerUpdates}
                     parentComponentLayerId={childParentComponentLayerId}
                     parentComponentId={childParentComponentId}
                     parentComponentOverrides={parentComponentOverrides}
@@ -4476,7 +4435,6 @@ const LayerItemImpl: React.FC<{
               currentLocale={currentLocale}
               availableLocales={availableLocales}
               localeSelectorFormat={format}
-              liveLayerUpdates={liveLayerUpdates}
               parentComponentLayerId={childParentComponentLayerId}
               parentComponentId={childParentComponentId}
               parentComponentOverrides={parentComponentOverrides}
@@ -4510,17 +4468,6 @@ const LayerItemImpl: React.FC<{
     // Regular elements with text and/or children
     return (
       <Tag {...elementProps}>
-        {/* Collaboration indicators - only show in edit mode */}
-        {isEditMode && isLockedByOther && (
-          <LayerLockIndicator layerId={layer.id} layerName={layer.name} />
-        )}
-        {isEditMode && isSelected && !isLockedByOther && (
-          <EditingIndicator
-            layerId={layer.id}
-            className="absolute -top-8 right-0 z-20"
-          />
-        )}
-
         {textContent && textContent}
 
         {/* Render children */}
@@ -4550,7 +4497,6 @@ const LayerItemImpl: React.FC<{
             currentLocale={currentLocale}
             availableLocales={availableLocales}
             localeSelectorFormat={localeSelectorFormat}
-            liveLayerUpdates={liveLayerUpdates}
             parentComponentLayerId={childParentComponentLayerId}
             parentComponentId={childParentComponentId}
             parentComponentOverrides={parentComponentOverrides}
@@ -4646,9 +4592,7 @@ const LayerItemImpl: React.FC<{
         pageId={pageId}
         isLocked={isLocked}
         onLayerSelect={onLayerClick}
-        liveLayerUpdates={liveLayerUpdates}
-        liveComponentUpdates={liveComponentUpdates}
-        readOnly={isEditor}
+        readOnly={false}
       >
         {content}
       </LayerContextMenu>

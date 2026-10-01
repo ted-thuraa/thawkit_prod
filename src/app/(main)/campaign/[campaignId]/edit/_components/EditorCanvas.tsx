@@ -7,7 +7,14 @@ import React, {
   useCallback,
 } from "react";
 
-import type { Layer, Page, CollectionField, Asset } from "@/types/funnel";
+import type {
+  Layer,
+  ComponentVariable,
+  CollectionField,
+  CollectionItemWithValues,
+  Asset,
+  Translation,
+} from "@/types/funnel";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,6 +55,8 @@ import {
   updateLayerProps,
 } from "@/lib/layer-utils";
 import { useLocalisationStore } from "@/stores/editor/useLocalisationStore";
+import { useCollectionsStore } from "@/stores/editor/useCollectionsStore";
+import { useAssetsStore } from "@/stores/editor/useAssetsStore";
 import { useZoom } from "@/hooks/use-zoom";
 import { useCanvasPan } from "@/hooks/use-canvas-pan";
 import { toast } from "sonner";
@@ -65,7 +74,6 @@ import {
 } from "@/components/ui/empty";
 import Icon from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
-import CanvasBuildSkeleton from "./CanvasBuildSkeleton";
 import { clearDragCursor, setDragCursor } from "@/lib/drag-cursor";
 
 type ViewportMode = "desktop" | "tablet" | "mobile";
@@ -597,7 +605,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
   const updateLayer = usePagesStore((state) => state.updateLayer);
   const deleteLayer = usePagesStore((state) => state.deleteLayer);
   const deleteLayers = usePagesStore((state) => state.deleteLayers);
-  //const setDraftLayers = usePagesStore((state) => state.setDraftLayers);
+  const setLayers = usePagesStore((state) => state.setLayers);
   const pages = usePagesStore((state) => state.pages);
   const setSelectedLayerId = useEditorStore(
     (state) => state.setSelectedLayerId,
@@ -643,7 +651,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
     (state) => state.activeListItemIndex,
   );
   const elementPicker = useEditorStore((state) => state.elementPicker);
-  // Get current page
+  // Get current page (the single source of truth: `usePagesStore.pages`)
   const currentPage = useMemo(
     () => pages.find((p) => p.id === currentPageId),
     [pages, currentPageId],
@@ -651,7 +659,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
 
   // Get collection ID from current page if it's dynamic
   const collectionId = useMemo(() => {
-    if (!currentPage?.is_dynamic) return null;
+    if (!currentPage?.isDynamic) return null;
     return currentPage.settings?.cms?.collection_id || null;
   }, [currentPage]);
   const selectedLocaleId = useLocalisationStore(
@@ -668,6 +676,45 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
         ? (locales.find((l) => l.id === selectedLocaleId) ?? null)
         : null,
     [selectedLocaleId, locales],
+  );
+
+  // ── Canvas data props ────────────────────────────────────────────────────
+  // Collection data is read straight from the collections store; nothing else
+  // is layered on top of it, so the "merged" items ARE the store items.
+  const mergedCollectionItems: Record<string, CollectionItemWithValues[]> =
+    useCollectionsStore((state) => state.items);
+  const collectionFieldsFromStore: Record<string, CollectionField[]> =
+    useCollectionsStore((state) => state.fields);
+  const assetsMap: Record<string, Asset> = useAssetsStore(
+    (state) => state.assetsById,
+  );
+
+  // Fields + preview item for a dynamic (CMS-driven) page. The first item of
+  // the page's collection is used as the preview record. Canvas applies CMS
+  // translations to it internally, so it is passed through untranslated.
+  const pageCollectionFields = useMemo<CollectionField[]>(
+    () => (collectionId ? (collectionFieldsFromStore[collectionId] ?? []) : []),
+    [collectionId, collectionFieldsFromStore],
+  );
+  const translatedPageCollectionItem = useMemo<CollectionItemWithValues | null>(
+    () =>
+      collectionId ? (mergedCollectionItems[collectionId]?.[0] ?? null) : null,
+    [collectionId, mergedCollectionItems],
+  );
+
+  // Translation map for the active locale (keyed by translatable key).
+  const localeTranslations = useMemo<Record<string, Translation> | null>(
+    () => (selectedLocaleId ? (translations[selectedLocaleId] ?? null) : null),
+    [selectedLocaleId, translations],
+  );
+
+  // ── Component-editing stubs ─────────────────────────────────────────────
+  // Component editing is not wired into this route yet (no components store).
+  // Typed no-ops keep Canvas's contract satisfied until that wiring exists.
+  const editingComponentVariables: ComponentVariable[] | undefined = undefined;
+  const handleCanvasComponentEdit = useCallback(
+    (_componentId: string, _instanceLayerId: string): void => {},
+    [],
   );
 
   // Re-scroll when content height changes during initial load (images loading shifts layout)
@@ -763,14 +810,14 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
     return () => resizeObserver.disconnect();
   }, [isPreviewMode]);
 
-  const layers = useMemo(() => {
-    // Otherwise show page layers
+  const layers = useMemo<Layer[]>(() => {
+    // Page layers come only from `usePagesStore.pages`
     if (!currentPageId) {
       return [];
     }
 
     return currentPage ? currentPage.layers : [];
-  }, [editingComponentId, currentPageId]);
+  }, [currentPage, editingComponentId, currentPageId]);
 
   // Check if canvas is empty (only Body layer with no children)
   const isCanvasEmpty = useMemo(() => {
@@ -843,10 +890,6 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
       closeRichTextSheet();
     }
   }, [richTextSheetLayerId, selectedLayerId, closeRichTextSheet]);
-
-  // Draft loading is owned by LeftSidebar (wrapped in startTransition).
-  // The store-level in-flight guard in loadDraft makes any concurrent call
-  // a no-op if LeftSidebar is not mounted.
 
   // Reset content height when page changes to force Canvas to recalculate
   useEffect(() => {
@@ -1192,7 +1235,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
   // Track the current value locally so the value prop always matches the editor's
   // internal state. This prevents the editor's sync effect from resetting content
   // when other deps (fields, allFields) change.
-  const [richTextSheetValue, setRichTextSheetValue] = useState<any>(null);
+  const [richTextSheetValue, setRichTextSheetValue] = useState<unknown>(null);
 
   // Translation context for the rich-text sheet. When the user is browsing the
   // canvas in a non-default locale and a rich-text layer is the sheet target,
@@ -1217,20 +1260,13 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
     // surface the default-locale source inside the editor — the user types the
     // translation from scratch (the source is visible on the canvas).
 
-    const compId = useEditorStore.getState().editingComponentId;
-    const variantId = useEditorStore.getState().editingComponentVariantId;
-    const source = (() => {
-      return (
-        usePagesStore.getState().draftsByPageId[currentPageId ?? ""]?.layers ??
-        null
-      );
-    })();
-    const layer = source
-      ? findLayerById(source as Layer[], richTextSheetLayerId)
-      : null;
+    const source: Layer[] | null =
+      usePagesStore.getState().pages.find((p) => p.id === currentPageId)
+        ?.layers ?? null;
+    const layer = source ? findLayerById(source, richTextSheetLayerId) : null;
     setRichTextSheetValue(getRichTextValue(layer?.variables));
     // Only re-derive when the sheet target layer (or translation context) changes,
-    // not on every draft update.
+    // not on every layer update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [richTextSheetLayerId, richTextTranslationContext, selectedLocaleId]);
 
@@ -1258,7 +1294,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
   }, [flushRichTextTranslationSave]);
 
   const handleRichTextSheetChange = useCallback(
-    (value: any) => {},
+    (_value: unknown): void => {},
     [
       richTextSheetLayerId,
       updateLayer,
@@ -1313,15 +1349,12 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
     (newLayers: Layer[]) => {
       if (!currentPageId) return;
 
-      // If editing component, would need to update component draft instead
-      if (editingComponentId) {
-        // TODO: Support component editing
-        return;
-      }
+      // Component editing is not supported on this route yet.
+      if (editingComponentId) return;
 
-      setDraftLayers(currentPageId, newLayers);
+      setLayers(currentPageId, newLayers);
     },
-    [currentPageId, editingComponentId, setDraftLayers],
+    [currentPageId, editingComponentId, setLayers],
   );
 
   // Use the canvas sibling reorder hook for drag-to-reorder within same parent
@@ -1341,10 +1374,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
   const parentLayerId = useMemo(() => {
     if (!selectedLayerId || !currentPageId) return null;
 
-    // Get layers from either the active variant draft or page draft
-    let layersToSearch: Layer[] = [];
-
-    layersToSearch = currentPage ? currentPage.layers : [];
+    const layersToSearch: Layer[] = currentPage ? currentPage.layers : [];
 
     if (!layersToSearch.length) return null;
 
@@ -1393,16 +1423,6 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
         ref={canvasContainerRef}
         className="flex-1 relative overflow-hidden bg-neutral-50 dark:bg-neutral-950/80 select-none"
       >
-        {/* Loading skeleton overlay when draft is being fetched */}
-        {/* {isDraftLoading && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-neutral-50/80 dark:bg-neutral-950/80 backdrop-blur-sm">
-            <div className="flex flex-col items-center gap-3 text-muted-foreground">
-              <div className="w-8 h-8 border-2 border-current border-t-transparent rounded-full animate-spin" />
-              <span className="text-sm">Loading page...</span>
-            </div>
-          </div>
-        )} */}
-
         {/* Selection overlay - renders outlines on top of the iframe */}
         {!isPreviewMode &&
           activeSidebarTab !== "pages" &&
@@ -1417,17 +1437,6 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
               activeListItemIndex={activeListItemIndex}
             />
           )}
-
-        {/* AI activity overlay - shimmering outlines on layers the agent is editing */}
-        {/* {!isPreviewMode &&
-          activeSidebarTab !== "pages" &&
-          canvasIframeElement && (
-            <AiActivityOverlay
-              iframeElement={canvasIframeElement}
-              containerElement={scrollContainerRef.current}
-              zoom={zoom}
-            />
-          )} */}
 
         {/* Drag capture overlay - prevents iframe from swallowing mouse events during drag */}
         {!isPreviewMode && <DragCaptureOverlay />}
@@ -1449,7 +1458,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
           ref={scrollContainerRef}
           className={cn(
             "absolute inset-0 z-0 overflow-auto",
-            (elementPicker?.active || isAiLayerPicking) && "cursor-crosshair",
+            elementPicker?.active && "cursor-crosshair",
           )}
           style={{
             opacity: isCanvasReady && !isComponentCanvasSettling ? 1 : 0,
@@ -1613,10 +1622,6 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
                           iframeElement={canvasIframeElement}
                         />
 
-                        {/* Build skeleton: instant placeholder while the AI assembles
-                          the page, shown until the first real layers stream in. */}
-                        {isCanvasEmpty && <CanvasBuildSkeleton />}
-
                         {/* Empty overlay when only Body with no children */}
                         {isCanvasEmpty && (
                           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
@@ -1706,50 +1711,11 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
                                   <Button
                                     onClick={() => {
                                       // Always add inside Body container
-                                      const result = addLayerFromTemplate(
+                                      addLayerFromTemplate(
                                         currentPageId,
                                         "body",
                                         "div",
                                       );
-                                      if (result) {
-                                        // Get FRESH state and find actual parent
-                                        const freshDraft =
-                                          usePagesStore.getState()
-                                            .draftsByPageId[currentPageId];
-                                        if (freshDraft) {
-                                          const findLayerWithParent = (
-                                            layers: Layer[],
-                                            id: string,
-                                            parent: Layer | null = null,
-                                          ): {
-                                            layer: Layer;
-                                            parent: Layer | null;
-                                          } | null => {
-                                            for (const l of layers) {
-                                              if (l.id === id)
-                                                return { layer: l, parent };
-                                              if (l.children) {
-                                                const found =
-                                                  findLayerWithParent(
-                                                    l.children,
-                                                    id,
-                                                    l,
-                                                  );
-                                                if (found) return found;
-                                              }
-                                            }
-                                            return null;
-                                          };
-                                          const found = findLayerWithParent(
-                                            freshDraft.layers,
-                                            result.newLayerId,
-                                          );
-                                          if (found?.layer) {
-                                            const actualParentId =
-                                              found.parent?.id || null;
-                                          }
-                                        }
-                                      }
                                       setShowAddBlockPanel(false);
                                     }}
                                     variant="ghost"
@@ -1774,50 +1740,11 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
                                   <Button
                                     onClick={() => {
                                       // Always add inside Body container
-                                      const result = addLayerFromTemplate(
+                                      addLayerFromTemplate(
                                         currentPageId,
                                         "body",
                                         "heading",
                                       );
-                                      if (result) {
-                                        // Get FRESH state and find actual parent
-                                        const freshDraft =
-                                          usePagesStore.getState()
-                                            .draftsByPageId[currentPageId];
-                                        if (freshDraft) {
-                                          const findLayerWithParent = (
-                                            layers: Layer[],
-                                            id: string,
-                                            parent: Layer | null = null,
-                                          ): {
-                                            layer: Layer;
-                                            parent: Layer | null;
-                                          } | null => {
-                                            for (const l of layers) {
-                                              if (l.id === id)
-                                                return { layer: l, parent };
-                                              if (l.children) {
-                                                const found =
-                                                  findLayerWithParent(
-                                                    l.children,
-                                                    id,
-                                                    l,
-                                                  );
-                                                if (found) return found;
-                                              }
-                                            }
-                                            return null;
-                                          };
-                                          const found = findLayerWithParent(
-                                            freshDraft.layers,
-                                            result.newLayerId,
-                                          );
-                                          if (found?.layer) {
-                                            const actualParentId =
-                                              found.parent?.id || null;
-                                          }
-                                        }
-                                      }
                                       setShowAddBlockPanel(false);
                                     }}
                                     variant="ghost"
@@ -1842,50 +1769,11 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
                                   <Button
                                     onClick={() => {
                                       // Always add inside Body container
-                                      const result = addLayerFromTemplate(
+                                      addLayerFromTemplate(
                                         currentPageId,
                                         "body",
                                         "text",
                                       );
-                                      if (result) {
-                                        // Get FRESH state and find actual parent
-                                        const freshDraft =
-                                          usePagesStore.getState()
-                                            .draftsByPageId[currentPageId];
-                                        if (freshDraft) {
-                                          const findLayerWithParent = (
-                                            layers: Layer[],
-                                            id: string,
-                                            parent: Layer | null = null,
-                                          ): {
-                                            layer: Layer;
-                                            parent: Layer | null;
-                                          } | null => {
-                                            for (const l of layers) {
-                                              if (l.id === id)
-                                                return { layer: l, parent };
-                                              if (l.children) {
-                                                const found =
-                                                  findLayerWithParent(
-                                                    l.children,
-                                                    id,
-                                                    l,
-                                                  );
-                                                if (found) return found;
-                                              }
-                                            }
-                                            return null;
-                                          };
-                                          const found = findLayerWithParent(
-                                            freshDraft.layers,
-                                            result.newLayerId,
-                                          );
-                                          if (found?.layer) {
-                                            const actualParentId =
-                                              found.parent?.id || null;
-                                          }
-                                        }
-                                      }
                                       setShowAddBlockPanel(false);
                                     }}
                                     variant="ghost"

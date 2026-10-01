@@ -1,11 +1,10 @@
-// path: src/stores/use-pages-store.ts
+// path: src/stores/editor/usePagesStore.ts
 
 "use client";
 
 import { create } from "zustand";
 import { cloneDeep } from "lodash";
 import type { Layer, Page } from "@/types/funnel";
-import type { PageRow } from "@/lib/editor/resolve-editor-bootstrap";
 import {
   canHaveChildren,
   canMoveLayer,
@@ -25,40 +24,41 @@ import {
   type EditorElementType,
 } from "@/lib/editor/element-templates";
 import {
+  cleanLayersForComponentCreation,
+  createComponentViaApi,
+  replaceLayerWithComponentInstance,
   resetBindingsForDeletedCollection,
   resetBindingsForDeletedField,
 } from "@/lib/layer-utils";
-
-export interface PageLayers {
-  id: string;
-  page_id: string;
-  layers: Layer[];
-  content_hash?: string; // SHA-256 hash of layers and CSS for change detection
-  is_published: boolean;
-  created_at: string;
-  updated_at?: string;
-  deleted_at: string | null; // Soft delete timestamp
-  generated_css?: string; // Extracted CSS from Play CDN for published pages
-}
+import {
+  triggerThumbnailGeneration,
+  useComponentsStore,
+} from "./useComponentsStore";
+import {
+  detachComponentFromLayers,
+  updateLayersWithComponent,
+} from "@/lib/component-utils";
 
 interface PagesState {
+  /** Single source of truth for every page's layer tree (`page.layers`). */
   pages: Page[];
-  draftsByPageId: Record<string, PageLayers>;
   isLoading: boolean;
   error: string | null;
 }
 
 interface PagesActions {
-  setPages: (pages: PageRow[]) => void;
+  setPages: (pages: Page[]) => void;
   setError: (error: string | null) => void;
 
-  /** Replace the store's page list wholesale from a fresh bootstrap — see CampaignEditorMain.tsx's hydration effect. */
-  hydrateFromBootstrap: (pages: PageRow[]) => void;
+  /** Replace the store's page list wholesale from a fresh bootstrap — see CampaignEditorMain.tsx's hydration effect. Callers map raw rows with `pagesFromRows` first. */
+  hydrateFromBootstrap: (pages: Page[]) => void;
+  /** Clear all page data (called by `useEditorStore.resetForNewCampaign`). */
+  reset: () => void;
 
-  updatePageLocal: (pageId: string, updates: Partial<PageRow>) => void;
+  updatePageLocal: (pageId: string, updates: Partial<Omit<Page, "id">>) => void;
   removePageLocal: (pageId: string) => void;
 
-  getPageById: (pageId: string) => PageRow | undefined;
+  getPageById: (pageId: string) => Page | undefined;
 
   setLayers: (pageId: string, layers: Layer[]) => void;
   addLayerWithId: (
@@ -99,6 +99,15 @@ interface PagesActions {
   cleanupDeletedCollection: (collectionId: string) => void;
   cleanupDeletedField: (fieldId: string) => void;
 
+  // Component Actions
+  createComponentFromLayer: (
+    pageId: string,
+    layerId: string,
+    componentName: string,
+  ) => Promise<string | null>;
+  updateComponentOnLayers: (componentId: string) => void;
+  detachComponentFromAllLayers: (componentId: string) => void;
+
   pasteInside: (
     pageId: string,
     targetLayerId: string,
@@ -110,22 +119,22 @@ type PagesStore = PagesState & PagesActions;
 
 /** Update `pageId`'s `layers` in place within the `pages` array. Every mutation below funnels through this. */
 function withUpdatedLayers(
-  pages: PageRow[],
+  pages: Page[],
   pageId: string,
   layers: Layer[],
-): PageRow[] {
+): Page[] {
   return pages.map((page) => (page.id === pageId ? { ...page, layers } : page));
 }
 
 export const usePagesStore = create<PagesStore>((set, get) => ({
   pages: [],
-  draftsByPageId: {},
   isLoading: false,
   error: null,
 
   setPages: (pages) => set({ pages }),
   setError: (error) => set({ error }),
   hydrateFromBootstrap: (pages) => set({ pages, error: null }),
+  reset: () => set({ pages: [], isLoading: false, error: null }),
 
   updatePageLocal: (pageId, updates) => {
     set((state) => ({
@@ -168,17 +177,19 @@ export const usePagesStore = create<PagesStore>((set, get) => ({
     const template = createElementFromTemplate(elementType);
     if (!page || !template) return null;
 
+    // `name` is the element type ("section", "div", ...) and drives every
+    // structural check below — it must stay lowercase. Only the display
+    // `customName` is capitalised, and plain divs are left unnamed.
+    const templateName = template?.name ?? "div";
+    const displayName =
+      templateName === "div"
+        ? undefined
+        : templateName.charAt(0).toUpperCase() + templateName.slice(1);
     const newLayer: Layer = {
       ...template,
       id: generateLayerId("lyr"),
-      name:
-        template.name === "div"
-          ? undefined
-          : template.name.charAt(0).toUpperCase() + template.name.slice(1),
-      customName:
-        template.name === "div"
-          ? undefined
-          : template.name.charAt(0).toUpperCase() + template.name.slice(1),
+      name: templateName,
+      customName: displayName,
     };
 
     const targetId =
@@ -418,43 +429,145 @@ export const usePagesStore = create<PagesStore>((set, get) => ({
   },
 
   /**
-   * Reset CMS bindings referencing a deleted collection across all page drafts.
-   * Clears collection sources and field variables that reference the collection.
+   * Create a component from a layer
+   * Extracts the layer tree and creates a component
+   * Then replaces the original layer with a component instance
+   *
+   * IMPORTANT: componentId is preserved in nested layers to support nested components
+   */
+  createComponentFromLayer: async (pageId, layerId, componentName) => {
+    const { pages, copyLayer } = get();
+    const draft = pages[pageId];
+    if (!draft) return null;
+
+    const layerToCopy = copyLayer(pageId, layerId);
+    if (!layerToCopy) return null;
+
+    // Regenerate IDs so the component's internal layers don't collide with the
+    // instance layer that keeps the original id in the page tree.
+    const regeneratedLayer = regenerateIdsWithInteractionRemapping(layerToCopy);
+    // Strip CMS bindings that won't be valid inside a standalone component
+    const cleanedLayers = cleanLayersForComponentCreation([regeneratedLayer]);
+    const newComponent = await createComponentViaApi(
+      componentName,
+      cleanedLayers,
+    );
+    if (!newComponent) return null;
+
+    // Add to components store
+    const { useComponentsStore } = await import("./useComponentsStore");
+    const componentsState = useComponentsStore.getState();
+    componentsState.setComponents([
+      newComponent,
+      ...componentsState.components,
+    ]);
+
+    // Replace layer with component instance
+    const newLayers = replaceLayerWithComponentInstance(
+      draft.layers,
+      layerId,
+      newComponent.id,
+    );
+
+    set({
+      pages: {
+        ...pages,
+        [pageId]: { ...draft, layers: newLayers },
+      },
+    });
+
+    // Generate thumbnail in the background (fire-and-forget)
+    triggerThumbnailGeneration(
+      newComponent.id,
+      newComponent.layers,
+      componentsState.components,
+    );
+
+    return newComponent.id;
+  },
+
+  /**
+   * Update all layers using a specific component across all pages
+   * Used when a component is updated
+   */
+  updateComponentOnLayers: (componentId) => {
+    const { pages } = get();
+
+    let mutated = false;
+    const updatedDrafts: typeof pages = { ...pages };
+
+    Object.keys(pages).forEach((pageId) => {
+      const draft = pages[pageId];
+      const nextLayers = updateLayersWithComponent(draft.layers, componentId);
+      if (nextLayers !== draft.layers) {
+        mutated = true;
+        updatedDrafts[pageId] = { ...draft, layers: nextLayers };
+      }
+    });
+
+    if (mutated) {
+      set({ pages: updatedDrafts });
+    }
+  },
+
+  /**
+   * Detach a component from all layers across all pages
+   * Used when a component is deleted
+   * Replaces component instances with the component's actual children layers
+   */
+  detachComponentFromAllLayers: (componentId) => {
+    const { pages } = get();
+    const { getComponentById } = useComponentsStore.getState();
+
+    // Get the component data to extract its layers
+    const component = getComponentById(componentId);
+
+    const updatedDrafts = { ...pages };
+
+    Object.keys(updatedDrafts).forEach((pageId) => {
+      const draft = updatedDrafts[pageId];
+      updatedDrafts[pageId] = {
+        ...draft,
+        layers: detachComponentFromLayers(
+          draft.layers,
+          componentId,
+          component || undefined,
+        ),
+      };
+    });
+
+    set({ pages: updatedDrafts });
+  },
+
+  /**
+   * Reset CMS bindings referencing a deleted collection across every page's
+   * layer tree. Clears collection sources and field variables that reference
+   * the collection. Pages whose layers are unchanged keep their identity.
    */
   cleanupDeletedCollection: (collectionId) => {
-    const { draftsByPageId } = get();
-    const updatedDrafts = { ...draftsByPageId };
-
-    Object.keys(updatedDrafts).forEach((pageId) => {
-      const draft = updatedDrafts[pageId];
-      const cleaned = resetBindingsForDeletedCollection(
-        draft.layers,
-        collectionId,
-      );
-      if (cleaned !== draft.layers) {
-        updatedDrafts[pageId] = { ...draft, layers: cleaned };
-      }
-    });
-
-    set({ draftsByPageId: updatedDrafts });
+    set((state) => ({
+      pages: state.pages.map((page) => {
+        const cleaned = resetBindingsForDeletedCollection(
+          page.layers,
+          collectionId,
+        );
+        return cleaned === page.layers ? page : { ...page, layers: cleaned };
+      }),
+    }));
   },
+
   /**
-   * Reset CMS bindings referencing a deleted field across all page drafts.
-   * Clears field variables, inline variables, and design bindings that use the field.
+   * Reset CMS bindings referencing a deleted field across every page's layer
+   * tree. Clears field variables, inline variables, and design bindings that
+   * use the field. Pages whose layers are unchanged keep their identity.
    */
   cleanupDeletedField: (fieldId) => {
-    const { draftsByPageId } = get();
-    const updatedDrafts = { ...draftsByPageId };
-
-    Object.keys(updatedDrafts).forEach((pageId) => {
-      const draft = updatedDrafts[pageId];
-      const cleaned = resetBindingsForDeletedField(draft.layers, fieldId);
-      if (cleaned !== draft.layers) {
-        updatedDrafts[pageId] = { ...draft, layers: cleaned };
-      }
-    });
-
-    set({ draftsByPageId: updatedDrafts });
+    set((state) => ({
+      pages: state.pages.map((page) => {
+        const cleaned = resetBindingsForDeletedField(page.layers, fieldId);
+        return cleaned === page.layers ? page : { ...page, layers: cleaned };
+      }),
+    }));
   },
 
   pasteInside: (pageId, targetLayerId, layerToPaste) => {

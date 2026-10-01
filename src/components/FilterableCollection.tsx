@@ -7,7 +7,7 @@ import React, {
   useCallback,
   useState,
 } from "react";
-import { useFilterStore } from "@/stores/useFilterStore";
+import { useFilterStore } from "@/stores/editor/useFilterStore";
 import { LOAD_MORE_APPENDED_ATTR } from "@/components/LoadMoreCollection";
 import { hasDynamicDateRule } from "@/lib/collection-field-utils";
 import { resolvePaginationString } from "@/lib/pagination-text-utils";

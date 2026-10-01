@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 /**
  * Layer Context Menu Component
@@ -7,37 +7,67 @@
  * Works in both LayersTree sidebar and canvas
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuLabel,
-  ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
-} from '@/components/ui/context-menu';
-import { useCanvasPortalContainer, useCanvasZoom } from '@/lib/canvas-portal-context';
-import { useEditorStore } from '@/stores/useEditorStore';
-import { usePagesStore } from '@/stores/usePagesStore';
-import { useClipboardStore } from '@/stores/useClipboardStore';
-import { useExternalPasteStore } from '@/stores/useExternalPasteStore';
-import { isClipboardReadGranted, readExternalDesignClipboard } from '@/lib/import/clipboard-detect';
-import { useComponentsStore } from '@/stores/useComponentsStore';
-import { canHaveChildren, canPasteIntoParent, LINK_NESTING_ERROR, findLayerById, getClassesString, regenerateInteractionIds, canCopyLayer, canDeleteLayer, regenerateIdsWithInteractionRemapping, removeLayerById, findParentAndIndex, insertLayerAfter, updateLayerProps, canConvertToCollection, isExcludedFromCollection, getCollectionVariable, getTextHeadingConversion, resetBindingsOnCollectionSourceChange } from '@/lib/layer-utils';
-import { getStyleIds } from '@/lib/layer-style-resolve';
-import { getLayerIcon, getLayerName } from '@/lib/layer-display-utils';
-import { cloneDeep } from 'lodash';
-import { toast } from 'sonner';
-import { Icon } from '@/components/ui/icon';
-import { detachSpecificLayerFromComponent, checkCircularReference } from '@/lib/component-utils';
-import type { UseLiveLayerUpdatesReturn } from '@/hooks/use-live-layer-updates';
-import type { UseLiveComponentUpdatesReturn } from '@/hooks/use-live-component-updates';
-import type { Layer } from '@/types';
-import CreateComponentDialog from './CreateComponentDialog';
-import SaveLayoutDialog from './SaveLayoutDialog';
-import ImportHtmlDialog from './ImportHtmlDialog';
-import ExportHtmlDialog from './ExportHtmlDialog';
-import { htmlToLayers, layerToExportHtml } from '@/lib/html-layer-converter';
+} from "@/components/ui/context-menu";
+import {
+  useCanvasPortalContainer,
+  useCanvasZoom,
+} from "@/lib/canvas-portal-context";
+import { useEditorStore } from "@/stores/editor/useEditorStore";
+import { usePagesStore } from "@/stores/editor/usePagesStore";
+import { useClipboardStore } from "@/stores/editor/useClipboardStore";
+import { useExternalPasteStore } from "@/stores/editor/useExternalPasteStore";
+import {
+  isClipboardReadGranted,
+  readExternalDesignClipboard,
+} from "@/lib/import/clipboard-detect";
+import { useComponentsStore } from "@/stores/editor/useComponentsStore";
+import {
+  canHaveChildren,
+  canPasteIntoParent,
+  LINK_NESTING_ERROR,
+  findLayerById,
+  getClassesString,
+  regenerateInteractionIds,
+  canCopyLayer,
+  canDeleteLayer,
+  regenerateIdsWithInteractionRemapping,
+  removeLayerById,
+  findParentAndIndex,
+  insertLayerAfter,
+  updateLayerProps,
+  canConvertToCollection,
+  isExcludedFromCollection,
+  getCollectionVariable,
+  getTextHeadingConversion,
+  resetBindingsOnCollectionSourceChange,
+} from "@/lib/layer-utils";
+import { getStyleIds } from "@/lib/layer-style-resolve";
+import { getLayerIcon, getLayerName } from "@/lib/layer-display-utils";
+import { cloneDeep } from "lodash";
+import { toast } from "sonner";
+import { Icon } from "@/components/ui/icon";
+import {
+  detachSpecificLayerFromComponent,
+  checkCircularReference,
+} from "@/lib/component-utils";
+import type { Layer } from "@/types/funnel";
+import CreateComponentDialog from "./CreateComponentDialog";
+import SaveLayoutDialog from "./SaveLayoutDialog";
+import ImportHtmlDialog from "./ImportHtmlDialog";
+import ExportHtmlDialog from "./ExportHtmlDialog";
+import { htmlToLayers, layerToExportHtml } from "@/lib/html-layer-converter";
 
 interface LayerContextMenuProps {
   layerId: string;
@@ -46,8 +76,6 @@ interface LayerContextMenuProps {
   readOnly?: boolean;
   isLocked?: boolean;
   onLayerSelect?: (layerId: string) => void;
-  liveLayerUpdates?: UseLiveLayerUpdatesReturn | null;
-  liveComponentUpdates?: UseLiveComponentUpdatesReturn | null;
   /** When set, we're editing a component; resolve layer from component draft so "Detach" works for nested instances */
   editingComponentId?: string | null;
 }
@@ -59,7 +87,7 @@ let selectionFromMenu = false;
 function dismissActiveContextMenu() {
   if (activeMenuDocument) {
     activeMenuDocument.dispatchEvent(
-      new PointerEvent('pointerdown', { bubbles: true })
+      new PointerEvent("pointerdown", { bubbles: true }),
     );
     activeMenuDocument = null;
   }
@@ -76,7 +104,10 @@ useEditorStore.subscribe((state, prevState) => {
   }
 });
 
-interface LayerContextMenuInnerProps extends Omit<LayerContextMenuProps, 'children'> {
+interface LayerContextMenuInnerProps extends Omit<
+  LayerContextMenuProps,
+  "children"
+> {
   isComponentDialogOpen: boolean;
   setIsComponentDialogOpen: (open: boolean) => void;
   isLayoutDialogOpen: boolean;
@@ -104,8 +135,6 @@ function LayerContextMenuInner({
   pageId,
   isLocked = false,
   onLayerSelect,
-  liveLayerUpdates,
-  liveComponentUpdates,
   editingComponentId: editingComponentIdProp = null,
   isComponentDialogOpen,
   setIsComponentDialogOpen,
@@ -129,20 +158,28 @@ function LayerContextMenuInner({
   const pasteAfter = usePagesStore((state) => state.pasteAfter);
   const pasteInside = usePagesStore((state) => state.pasteInside);
   const updateLayer = usePagesStore((state) => state.updateLayer);
-  const setDraftLayers = usePagesStore((state) => state.setDraftLayers);
-  const draftsByPageId = usePagesStore((state) => state.draftsByPageId);
-  const createComponentFromLayer = usePagesStore((state) => state.createComponentFromLayer);
+  const setLayers = usePagesStore((state) => state.setLayers);
+  const pages = usePagesStore((state) => state.pages);
+  const createComponentFromLayer = usePagesStore(
+    (state) => state.createComponentFromLayer,
+  );
 
   const loadComponents = useComponentsStore((state) => state.loadComponents);
-  const getComponentById = useComponentsStore((state) => state.getComponentById);
+  const getComponentById = useComponentsStore(
+    (state) => state.getComponentById,
+  );
   const components = useComponentsStore((state) => state.components);
   const componentDrafts = useComponentsStore((state) => state.componentDrafts);
-  const editingComponentVariantId = useEditorStore((state) => state.editingComponentVariantId);
+  const editingComponentVariantId = useEditorStore(
+    (state) => state.editingComponentVariantId,
+  );
   // Prefer the prop (passed by the layers tree) but fall back to the editor
   // store so the canvas context menu also knows when a component is being
   // edited — otherwise "Create component" on the canvas resolves against the
   // page draft and silently fails for layers inside a component.
-  const storeEditingComponentId = useEditorStore((state) => state.editingComponentId);
+  const storeEditingComponentId = useEditorStore(
+    (state) => state.editingComponentId,
+  );
   const editingComponentId = editingComponentIdProp ?? storeEditingComponentId;
   // Resolve the active variant id for the component being edited. When
   // unspecified (or pointing at a missing variant) we fall back to the first
@@ -151,22 +188,35 @@ function LayerContextMenuInner({
     if (!editingComponentId) return null;
     const drafts = componentDrafts[editingComponentId];
     if (!drafts) return editingComponentVariantId || null;
-    if (editingComponentVariantId && drafts[editingComponentVariantId]) return editingComponentVariantId;
+    if (editingComponentVariantId && drafts[editingComponentVariantId])
+      return editingComponentVariantId;
     return Object.keys(drafts)[0] || null;
   }, [editingComponentId, editingComponentVariantId, componentDrafts]);
-  const updateComponentDraft = useComponentsStore((state) => state.updateComponentDraft);
-  const createComponentFromComponentLayer = useComponentsStore((state) => state.createComponentFromLayer);
+  const updateComponentDraft = useComponentsStore(
+    (state) => state.updateComponentDraft,
+  );
+  const createComponentFromComponentLayer = useComponentsStore(
+    (state) => state.createComponentFromLayer,
+  );
 
   const clipboardLayer = useClipboardStore((state) => state.clipboardLayer);
   const clipboardMode = useClipboardStore((state) => state.clipboardMode);
   const copyToClipboard = useClipboardStore((state) => state.copyLayer);
   const cutToClipboard = useClipboardStore((state) => state.cutLayer);
   const copyStyleToClipboard = useClipboardStore((state) => state.copyStyle);
-  const pasteStyleFromClipboard = useClipboardStore((state) => state.pasteStyle);
+  const pasteStyleFromClipboard = useClipboardStore(
+    (state) => state.pasteStyle,
+  );
   const copiedStyle = useClipboardStore((state) => state.copiedStyle);
-  const copyInteractionsToClipboard = useClipboardStore((state) => state.copyInteractions);
-  const pasteInteractionsFromClipboard = useClipboardStore((state) => state.pasteInteractions);
-  const copiedInteractions = useClipboardStore((state) => state.copiedInteractions);
+  const copyInteractionsToClipboard = useClipboardStore(
+    (state) => state.copyInteractions,
+  );
+  const pasteInteractionsFromClipboard = useClipboardStore(
+    (state) => state.pasteInteractions,
+  );
+  const copiedInteractions = useClipboardStore(
+    (state) => state.copiedInteractions,
+  );
 
   // Design-tool clipboard (Webflow/Figma) detected when the menu opened, plus
   // the registered runner that imports it at a chosen placement.
@@ -183,23 +233,32 @@ function LayerContextMenuInner({
   const layers = useMemo(
     () =>
       isComponentContext && editingComponentId && activeVariantId
-        ? (componentDrafts[editingComponentId]?.[activeVariantId] || [])
-        : (draftsByPageId[pageId]?.layers || []),
-    [isComponentContext, editingComponentId, activeVariantId, componentDrafts, draftsByPageId, pageId]
+        ? componentDrafts[editingComponentId]?.[activeVariantId] || []
+        : (pages.find((p) => p.id === pageId)?.layers ?? []),
+    [
+      isComponentContext,
+      editingComponentId,
+      activeVariantId,
+      componentDrafts,
+      pages,
+      pageId,
+    ],
   );
   const layer = findLayerById(layers, layerId);
 
   const isComponentInstance = !!(layer && layer.componentId);
-  const componentName = isComponentInstance && layer?.componentId
-    ? getComponentById(layer.componentId)?.name
-    : null;
+  const componentName =
+    isComponentInstance && layer?.componentId
+      ? getComponentById(layer.componentId)?.name
+      : null;
 
   // Check if the current layer can have children and link nesting is valid
   const canPasteInside = useMemo(() => {
     const targetLayer = findLayerById(layers, layerId);
     if (!targetLayer) return false;
     if (!canHaveChildren(targetLayer)) return false;
-    if (clipboardLayer && !canPasteIntoParent(layers, layerId, clipboardLayer)) return false;
+    if (clipboardLayer && !canPasteIntoParent(layers, layerId, clipboardLayer))
+      return false;
     return true;
   }, [layers, layerId, clipboardLayer]);
 
@@ -211,7 +270,7 @@ function LayerContextMenuInner({
     return canPasteIntoParent(layers, result.parent.id, clipboardLayer);
   }, [layers, layerId, clipboardLayer]);
 
-  const isBody = layerId === 'body';
+  const isBody = layerId === "body";
 
   // Check layer restrictions
   const canCopy = useMemo(() => {
@@ -228,15 +287,12 @@ function LayerContextMenuInner({
   const updateComponentAndBroadcast = (newLayers: Layer[]) => {
     if (!editingComponentId || !activeVariantId) return;
     updateComponentDraft(editingComponentId, activeVariantId, newLayers);
-    if (liveComponentUpdates) {
-      liveComponentUpdates.broadcastComponentLayersUpdate(editingComponentId, newLayers);
-    }
   };
 
   /** Get current variant layers for the editing context */
   const getComponentLayers = () =>
     editingComponentId && activeVariantId
-      ? (componentDrafts[editingComponentId]?.[activeVariantId] || [])
+      ? componentDrafts[editingComponentId]?.[activeVariantId] || []
       : [];
 
   const handleCopy = () => {
@@ -264,7 +320,9 @@ function LayerContextMenuInner({
       const layerToCopy = findLayerById(getComponentLayers(), layerId);
       if (layerToCopy) {
         cutToClipboard(cloneDeep(layerToCopy), pageId);
-        updateComponentAndBroadcast(removeLayerById(getComponentLayers(), layerId));
+        updateComponentAndBroadcast(
+          removeLayerById(getComponentLayers(), layerId),
+        );
 
         if (onLayerSelect) {
           onLayerSelect(null as any);
@@ -277,9 +335,6 @@ function LayerContextMenuInner({
         deleteLayer(pageId, layerId);
 
         // Broadcast delete to other collaborators
-        if (liveLayerUpdates) {
-          liveLayerUpdates.broadcastLayerDelete(pageId, layerId);
-        }
 
         // Clear selection after cut to match keyboard shortcut behavior
         if (onLayerSelect) {
@@ -295,15 +350,21 @@ function LayerContextMenuInner({
     // which detection ignores), so it wins over a stale internal clipboard —
     // matching the keyboard ⌘V behaviour. Import it as a sibling after target.
     if (hasExternal) {
-      if (!isBody) pasteExternalAt?.({ mode: 'after', layerId });
+      if (!isBody) pasteExternalAt?.({ mode: "after", layerId });
       return;
     }
     if (!clipboardLayer) return;
 
     if (isComponentContext && editingComponentId) {
-      const circularError = checkCircularReference(editingComponentId, clipboardLayer, components);
+      const circularError = checkCircularReference(
+        editingComponentId,
+        clipboardLayer,
+        components,
+      );
       if (circularError) {
-        toast.error('Infinite component loop detected', { description: circularError });
+        toast.error("Infinite component loop detected", {
+          description: circularError,
+        });
         return;
       }
 
@@ -311,19 +372,33 @@ function LayerContextMenuInner({
       const result = findParentAndIndex(componentLayers, layerId);
       if (!result) return;
 
-      if (result.parent && !canPasteIntoParent(componentLayers, result.parent.id, clipboardLayer)) {
-        toast.error(LINK_NESTING_ERROR.title, { description: LINK_NESTING_ERROR.description });
+      if (
+        result.parent &&
+        !canPasteIntoParent(componentLayers, result.parent.id, clipboardLayer)
+      ) {
+        toast.error(LINK_NESTING_ERROR.title, {
+          description: LINK_NESTING_ERROR.description,
+        });
         return;
       }
 
-      const newLayer = regenerateIdsWithInteractionRemapping(cloneDeep(clipboardLayer));
-      updateComponentAndBroadcast(insertLayerAfter(componentLayers, result.parent, result.index, newLayer));
+      const newLayer = regenerateIdsWithInteractionRemapping(
+        cloneDeep(clipboardLayer),
+      );
+      updateComponentAndBroadcast(
+        insertLayerAfter(
+          componentLayers,
+          result.parent,
+          result.index,
+          newLayer,
+        ),
+      );
     } else {
       const pastedLayer = pasteAfter(pageId, layerId, clipboardLayer);
-      if (liveLayerUpdates && pastedLayer) {
-        liveLayerUpdates.broadcastLayerAdd(pageId, null, 'paste', pastedLayer);
-      } else if (!pastedLayer) {
-        toast.error(LINK_NESTING_ERROR.title, { description: LINK_NESTING_ERROR.description });
+      if (!pastedLayer) {
+        toast.error(LINK_NESTING_ERROR.title, {
+          description: LINK_NESTING_ERROR.description,
+        });
       }
     }
   };
@@ -331,34 +406,49 @@ function LayerContextMenuInner({
   const handlePasteInside = () => {
     // External clipboard wins over a stale internal one (see handlePasteAfter).
     if (hasExternal) {
-      if (canPasteInside) pasteExternalAt?.({ mode: 'inside', layerId });
+      if (canPasteInside) pasteExternalAt?.({ mode: "inside", layerId });
       return;
     }
     if (!clipboardLayer || !canPasteInside) return;
 
     if (isComponentContext && editingComponentId) {
-      const circularError = checkCircularReference(editingComponentId, clipboardLayer, components);
+      const circularError = checkCircularReference(
+        editingComponentId,
+        clipboardLayer,
+        components,
+      );
       if (circularError) {
-        toast.error('Infinite component loop detected', { description: circularError });
+        toast.error("Infinite component loop detected", {
+          description: circularError,
+        });
         return;
       }
 
       const componentLayers = getComponentLayers();
       if (!canPasteIntoParent(componentLayers, layerId, clipboardLayer)) {
-        toast.error(LINK_NESTING_ERROR.title, { description: LINK_NESTING_ERROR.description });
+        toast.error(LINK_NESTING_ERROR.title, {
+          description: LINK_NESTING_ERROR.description,
+        });
         return;
       }
 
-      const newLayer = regenerateIdsWithInteractionRemapping(cloneDeep(clipboardLayer));
+      const newLayer = regenerateIdsWithInteractionRemapping(
+        cloneDeep(clipboardLayer),
+      );
       updateComponentAndBroadcast(
-        updateLayerProps(componentLayers, layerId, { children: [...(findLayerById(componentLayers, layerId)?.children || []), newLayer] })
+        updateLayerProps(componentLayers, layerId, {
+          children: [
+            ...(findLayerById(componentLayers, layerId)?.children || []),
+            newLayer,
+          ],
+        }),
       );
     } else {
       const pastedLayer = pasteInside(pageId, layerId, clipboardLayer);
-      if (liveLayerUpdates && pastedLayer) {
-        liveLayerUpdates.broadcastLayerAdd(pageId, layerId, 'paste', pastedLayer);
-      } else if (!pastedLayer) {
-        toast.error(LINK_NESTING_ERROR.title, { description: LINK_NESTING_ERROR.description });
+      if (!pastedLayer) {
+        toast.error(LINK_NESTING_ERROR.title, {
+          description: LINK_NESTING_ERROR.description,
+        });
       }
     }
   };
@@ -371,17 +461,23 @@ function LayerContextMenuInner({
       const layerToCopy = findLayerById(componentLayers, layerId);
       if (!layerToCopy) return;
 
-      const newLayer = regenerateIdsWithInteractionRemapping(cloneDeep(layerToCopy));
+      const newLayer = regenerateIdsWithInteractionRemapping(
+        cloneDeep(layerToCopy),
+      );
       const result = findParentAndIndex(componentLayers, layerId);
       if (!result) return;
 
-      updateComponentAndBroadcast(insertLayerAfter(componentLayers, result.parent, result.index, newLayer));
+      updateComponentAndBroadcast(
+        insertLayerAfter(
+          componentLayers,
+          result.parent,
+          result.index,
+          newLayer,
+        ),
+      );
     } else {
       const duplicatedLayer = duplicateLayer(pageId, layerId);
       // Broadcast the duplicated layer
-      if (liveLayerUpdates && duplicatedLayer) {
-        liveLayerUpdates.broadcastLayerAdd(pageId, null, 'duplicate', duplicatedLayer);
-      }
     }
   };
 
@@ -389,7 +485,9 @@ function LayerContextMenuInner({
     if (isLocked || !canDelete) return;
 
     if (isComponentContext && editingComponentId) {
-      updateComponentAndBroadcast(removeLayerById(getComponentLayers(), layerId));
+      updateComponentAndBroadcast(
+        removeLayerById(getComponentLayers(), layerId),
+      );
 
       if (onLayerSelect) {
         onLayerSelect(null as any);
@@ -398,9 +496,6 @@ function LayerContextMenuInner({
       deleteLayer(pageId, layerId);
 
       // Broadcast delete to other collaborators
-      if (liveLayerUpdates) {
-        liveLayerUpdates.broadcastLayerDelete(pageId, layerId);
-      }
 
       // Clear selection after delete to match keyboard shortcut behavior
       if (onLayerSelect) {
@@ -419,7 +514,13 @@ function LayerContextMenuInner({
 
     const classes = getClassesString(layer);
     const ids = getStyleIds(layer);
-    copyStyleToClipboard(classes, layer.design, ids[0], layer.styleOverrides, ids);
+    copyStyleToClipboard(
+      classes,
+      layer.design,
+      ids[0],
+      layer.styleOverrides,
+      ids,
+    );
   };
 
   const handlePasteStyle = () => {
@@ -436,14 +537,17 @@ function LayerContextMenuInner({
     };
 
     if (isComponentContext && editingComponentId) {
-      updateComponentAndBroadcast(updateLayerProps(getComponentLayers(), layerId, styleProps));
+      updateComponentAndBroadcast(
+        updateLayerProps(getComponentLayers(), layerId, styleProps),
+      );
     } else {
       updateLayer(pageId, layerId, styleProps);
     }
   };
 
   const handleCopyInteractions = () => {
-    if (!layer || !layer.interactions || layer.interactions.length === 0) return;
+    if (!layer || !layer.interactions || layer.interactions.length === 0)
+      return;
 
     copyInteractionsToClipboard(layer.interactions, layerId);
   };
@@ -456,10 +560,17 @@ function LayerContextMenuInner({
 
     const layerIdMap = new Map<string, string>();
     layerIdMap.set(sourceLayerId, layerId);
-    const updatedInteractions = regenerateInteractionIds(interactions, layerIdMap);
+    const updatedInteractions = regenerateInteractionIds(
+      interactions,
+      layerIdMap,
+    );
 
     if (isComponentContext && editingComponentId) {
-      updateComponentAndBroadcast(updateLayerProps(getComponentLayers(), layerId, { interactions: updatedInteractions }));
+      updateComponentAndBroadcast(
+        updateLayerProps(getComponentLayers(), layerId, {
+          interactions: updatedInteractions,
+        }),
+      );
     } else {
       updateLayer(pageId, layerId, { interactions: updatedInteractions });
     }
@@ -469,33 +580,40 @@ function LayerContextMenuInner({
     // Use the already-resolved layer (works in both page and component context)
     if (!layer) return;
 
-    const defaultName = layer.customName || layer.name || 'Component';
+    const defaultName = layer.customName || layer.name || "Component";
     setLayerName(defaultName);
     setIsComponentDialogOpen(true);
   };
 
   const handleConfirmCreateComponent = async (componentName: string) => {
     // Use appropriate creation function based on context
-    const componentId = isComponentContext && editingComponentId
-      ? await createComponentFromComponentLayer(editingComponentId, layerId, componentName)
-      : await createComponentFromLayer(pageId, layerId, componentName);
+    const componentId =
+      isComponentContext && editingComponentId
+        ? await createComponentFromComponentLayer(
+            editingComponentId,
+            layerId,
+            componentName,
+          )
+        : await createComponentFromLayer(pageId, layerId, componentName);
 
     if (!componentId) return;
 
     // Broadcast to collaborators
-    if (liveComponentUpdates) {
-      const component = getComponentById(componentId);
-      if (component) {
-        liveComponentUpdates.broadcastComponentCreate(component);
-      }
-    }
   };
 
   const handleEditMasterComponent = async () => {
     if (!layer?.componentId) return;
 
-    const { setEditingComponentId, setSelectedLayerId, setEditingComponentVariantId, editingComponentVariantId, pushComponentNavigation, editingComponentId } = useEditorStore.getState();
-    const { loadComponentDraft, getComponentById, getComponentDraftLayers } = useComponentsStore.getState();
+    const {
+      setEditingComponentId,
+      setSelectedLayerId,
+      setEditingComponentVariantId,
+      editingComponentVariantId,
+      pushComponentNavigation,
+      editingComponentId,
+    } = useEditorStore.getState();
+    const { loadComponentDraft, getComponentById, getComponentDraftLayers } =
+      useComponentsStore.getState();
     const { pages } = usePagesStore.getState();
 
     const component = getComponentById(layer.componentId);
@@ -503,9 +621,13 @@ function LayerContextMenuInner({
 
     // Resolve which variant to open — use the instance's configured variant
     const requestedVariantId = layer.componentVariantId;
-    const targetVariantId = (requestedVariantId && component.variants?.some(v => v.id === requestedVariantId))
-      ? requestedVariantId
-      : (component.variants && component.variants.length > 0 ? component.variants[0].id : null);
+    const targetVariantId =
+      requestedVariantId &&
+      component.variants?.some((v) => v.id === requestedVariantId)
+        ? requestedVariantId
+        : component.variants && component.variants.length > 0
+          ? component.variants[0].id
+          : null;
 
     // Capture the current layer ID BEFORE clearing selection
     const componentInstanceLayerId = layer.id;
@@ -515,7 +637,7 @@ function LayerContextMenuInner({
       const currentComponent = getComponentById(editingComponentId);
       if (currentComponent) {
         pushComponentNavigation({
-          type: 'component',
+          type: "component",
           id: editingComponentId,
           name: currentComponent.name,
           layerId: layer.id,
@@ -526,7 +648,7 @@ function LayerContextMenuInner({
       const currentPage = pages.find((p) => p.id === pageId);
       if (currentPage) {
         pushComponentNavigation({
-          type: 'page',
+          type: "page",
           id: pageId,
           name: currentPage.name,
           layerId: componentInstanceLayerId,
@@ -545,10 +667,14 @@ function LayerContextMenuInner({
     await loadComponentDraft(layer.componentId);
 
     // Select root layer of the target variant's tree
-    const variantLayers = getComponentDraftLayers(layer.componentId, targetVariantId);
+    const variantLayers = getComponentDraftLayers(
+      layer.componentId,
+      targetVariantId,
+    );
     if (variantLayers && variantLayers.length > 0) {
       const currentSelection = useEditorStore.getState().selectedLayerId;
-      const hasValidSelection = currentSelection && findLayerById(variantLayers, currentSelection);
+      const hasValidSelection =
+        currentSelection && findLayerById(variantLayers, currentSelection);
       if (!hasValidSelection) {
         setSelectedLayerId(variantLayers[0].id);
       }
@@ -561,12 +687,16 @@ function LayerContextMenuInner({
     const component = getComponentById(layer.componentId);
 
     // Use the shared utility function for detaching
-    const newLayers = detachSpecificLayerFromComponent(layers, layerId, component || undefined);
+    const newLayers = detachSpecificLayerFromComponent(
+      layers,
+      layerId,
+      component || undefined,
+    );
 
     if (isComponentContext && editingComponentId && activeVariantId) {
       updateComponentDraft(editingComponentId, activeVariantId, newLayers);
     } else {
-      setDraftLayers(pageId, newLayers);
+      setLayers(pageId, newLayers);
     }
 
     if (onLayerSelect) {
@@ -576,21 +706,25 @@ function LayerContextMenuInner({
 
   const handleShowJSON = () => {
     if (!layer) return;
-    console.log('Layer:', layer);
+    console.log("Layer:", layer);
   };
 
   const handleSaveAsLayout = () => {
     if (!layer) return;
 
     // Set default name from layer
-    const defaultName = layer.customName || layer.name || 'Custom Layout';
+    const defaultName = layer.customName || layer.name || "Custom Layout";
     setLayerName(defaultName);
 
     // Open dialog
     setIsLayoutDialogOpen(true);
   };
 
-  const handleConfirmSaveLayout = async (layoutName: string, category: string, imageFile: File | null) => {
+  const handleConfirmSaveLayout = async (
+    layoutName: string,
+    category: string,
+    imageFile: File | null,
+  ) => {
     if (!layer) return;
 
     try {
@@ -601,8 +735,8 @@ function LayerContextMenuInner({
 
         // Check interactions on this layer
         if (l.interactions) {
-          l.interactions.forEach(interaction => {
-            interaction.tweens?.forEach(tween => {
+          l.interactions.forEach((interaction) => {
+            interaction.tweens?.forEach((tween) => {
               if (tween.layer_id) {
                 ids.add(tween.layer_id);
               }
@@ -612,8 +746,8 @@ function LayerContextMenuInner({
 
         // Recursively check children
         if (l.children) {
-          l.children.forEach(child => {
-            collectReferencedLayerIds(child).forEach(id => ids.add(id));
+          l.children.forEach((child) => {
+            collectReferencedLayerIds(child).forEach((id) => ids.add(id));
           });
         }
 
@@ -634,7 +768,9 @@ function LayerContextMenuInner({
         }
 
         if (result.children && Array.isArray(result.children)) {
-          result.children = result.children.map((child: Layer) => stripIds(child));
+          result.children = result.children.map((child: Layer) =>
+            stripIds(child),
+          );
         }
 
         return result;
@@ -643,34 +779,34 @@ function LayerContextMenuInner({
       const template = stripIds(layer);
 
       // Generate layout key from name
-      const layoutKey = layoutName.toLowerCase().replace(/\s+/g, '-');
+      const layoutKey = layoutName.toLowerCase().replace(/\s+/g, "-");
 
       // Use FormData to send file + data
       const formData = new FormData();
-      formData.append('layoutKey', layoutKey);
-      formData.append('layoutName', layoutName);
-      formData.append('category', category);
-      formData.append('template', JSON.stringify(template));
-      formData.append('pageId', pageId);
-      formData.append('layerId', layerId);
+      formData.append("layoutKey", layoutKey);
+      formData.append("layoutName", layoutName);
+      formData.append("category", category);
+      formData.append("template", JSON.stringify(template));
+      formData.append("pageId", pageId);
+      formData.append("layerId", layerId);
 
       if (imageFile) {
-        formData.append('image', imageFile);
+        formData.append("image", imageFile);
       }
 
       // Call API to save layout
-      const response = await fetch('/ycode/api/layouts', {
-        method: 'POST',
+      const response = await fetch("/ycode/api/layouts", {
+        method: "POST",
         body: formData,
       });
 
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.error || 'Failed to save layout');
+        throw new Error(result.error || "Failed to save layout");
       }
     } catch (error) {
-      console.error('Failed to save layout:', error);
+      console.error("Failed to save layout:", error);
       throw error;
     }
   };
@@ -680,12 +816,12 @@ function LayerContextMenuInner({
     try {
       importedLayers = htmlToLayers(html);
     } catch {
-      toast.error('Failed to parse HTML');
+      toast.error("Failed to parse HTML");
       return;
     }
 
     if (importedLayers.length === 0) {
-      toast.error('No valid HTML elements found');
+      toast.error("No valid HTML elements found");
       return;
     }
 
@@ -696,10 +832,10 @@ function LayerContextMenuInner({
 
       const newChildren = [...(targetLayer.children || []), ...importedLayers];
       updateComponentAndBroadcast(
-        updateLayerProps(componentLayers, layerId, { children: newChildren })
+        updateLayerProps(componentLayers, layerId, { children: newChildren }),
       );
     } else {
-      const draft = draftsByPageId[pageId];
+      const draft = pages.find((p) => p.id === pageId);
       if (!draft) return;
 
       const targetLayer = findLayerById(draft.layers, layerId);
@@ -707,13 +843,9 @@ function LayerContextMenuInner({
 
       const newChildren = [...(targetLayer.children || []), ...importedLayers];
       updateLayer(pageId, layerId, { children: newChildren });
-
-      if (liveLayerUpdates) {
-        liveLayerUpdates.broadcastLayerUpdate(layerId, { children: newChildren });
-      }
     }
 
-    toast.success('HTML imported successfully');
+    toast.success("HTML imported successfully");
   };
 
   const handleExportHtml = () => {
@@ -728,18 +860,17 @@ function LayerContextMenuInner({
 
     const updatedVariables = {
       ...layer.variables,
-      collection: { id: '' },
+      collection: { id: "" },
     };
 
     if (isComponentContext && editingComponentId) {
       updateComponentAndBroadcast(
-        updateLayerProps(getComponentLayers(), layerId, { variables: updatedVariables })
+        updateLayerProps(getComponentLayers(), layerId, {
+          variables: updatedVariables,
+        }),
       );
     } else {
       updateLayer(pageId, layerId, { variables: updatedVariables });
-      if (liveLayerUpdates) {
-        liveLayerUpdates.broadcastLayerUpdate(layerId, { variables: updatedVariables });
-      }
     }
   };
 
@@ -751,25 +882,28 @@ function LayerContextMenuInner({
 
     if (isComponentContext && editingComponentId) {
       const componentLayers = getComponentLayers();
-      let newLayers = updateLayerProps(componentLayers, layerId, { variables: updatedVariables });
+      let newLayers = updateLayerProps(componentLayers, layerId, {
+        variables: updatedVariables,
+      });
       newLayers = resetBindingsOnCollectionSourceChange(newLayers, layerId);
       updateComponentAndBroadcast(newLayers);
     } else {
       updateLayer(pageId, layerId, { variables: updatedVariables });
 
       setTimeout(() => {
-        const currentLayers = usePagesStore.getState().draftsByPageId[pageId]?.layers;
+        const currentLayers = usePagesStore
+          .getState()
+          .pages.find((p) => p.id === pageId)?.layers;
         if (!currentLayers) return;
 
-        const cleanedLayers = resetBindingsOnCollectionSourceChange(currentLayers, layerId);
+        const cleanedLayers = resetBindingsOnCollectionSourceChange(
+          currentLayers,
+          layerId,
+        );
         if (cleanedLayers !== currentLayers) {
-          setDraftLayers(pageId, cleanedLayers);
+          setLayers(pageId, cleanedLayers);
         }
       }, 0);
-
-      if (liveLayerUpdates) {
-        liveLayerUpdates.broadcastLayerUpdate(layerId, { variables: updatedVariables });
-      }
     }
   };
 
@@ -780,25 +914,34 @@ function LayerContextMenuInner({
     if (!conversion) return;
 
     if (isComponentContext && editingComponentId) {
-      updateComponentAndBroadcast(updateLayerProps(getComponentLayers(), layerId, conversion));
+      updateComponentAndBroadcast(
+        updateLayerProps(getComponentLayers(), layerId, conversion),
+      );
     } else {
       updateLayer(pageId, layerId, conversion);
-      if (liveLayerUpdates) {
-        liveLayerUpdates.broadcastLayerUpdate(layerId, conversion);
-      }
     }
   };
 
   const textHeadingConversion = layer ? getTextHeadingConversion(layer) : null;
-  const showConvertTextHeading = !!textHeadingConversion && !isComponentInstance;
+  const showConvertTextHeading =
+    !!textHeadingConversion && !isComponentInstance;
 
   const isCollection = !!(layer && getCollectionVariable(layer));
   const canConvert = !!(layer && canConvertToCollection(layer));
-  const showConvertOption = !!(layer && !isCollection && canHaveChildren(layer) && !layer.componentId);
-  const isConvertDisabled = isLocked || isComponentInstance || !!(layer && isExcludedFromCollection(layer));
+  const showConvertOption = !!(
+    layer &&
+    !isCollection &&
+    canHaveChildren(layer) &&
+    !layer.componentId
+  );
+  const isConvertDisabled =
+    isLocked ||
+    isComponentInstance ||
+    !!(layer && isExcludedFromCollection(layer));
 
   // Check if we're on localhost
-  const isLocalhost = typeof window !== 'undefined' && window.location.hostname === 'localhost';
+  const isLocalhost =
+    typeof window !== "undefined" && window.location.hostname === "localhost";
 
   return (
     <>
@@ -810,17 +953,17 @@ function LayerContextMenuInner({
         {canvasPortalContainer && layer && (
           <>
             <ContextMenuLabel className="flex items-center gap-1.5 font-normal text-muted-foreground select-none">
-              <Icon
-                name={getLayerIcon(layer)}
-                className="size-3"
-              />
+              <Icon name={getLayerIcon(layer)} className="size-3" />
               <span className="truncate">{getLayerName(layer)}</span>
             </ContextMenuLabel>
             <ContextMenuSeparator />
           </>
         )}
 
-        <ContextMenuItem onClick={handleCut} disabled={isLocked || !canCopy || !canDelete}>
+        <ContextMenuItem
+          onClick={handleCut}
+          disabled={isLocked || !canCopy || !canDelete}
+        >
           Cut
           <ContextMenuShortcut>⌘X</ContextMenuShortcut>
         </ContextMenuItem>
@@ -834,24 +977,42 @@ function LayerContextMenuInner({
           <ContextMenuSubTrigger>Paste</ContextMenuSubTrigger>
           <ContextMenuSubContent
             container={canvasPortalContainer}
-            style={canvasPortalContainer ? { zoom: 100 / canvasZoom } : undefined}
+            style={
+              canvasPortalContainer ? { zoom: 100 / canvasZoom } : undefined
+            }
           >
-            {hasExternal && (externalKind === 'figma' || externalKind === 'webflow') && (
-              <>
-                <ContextMenuLabel className="flex items-center gap-1.5 font-normal text-muted-foreground select-none">
-                  <Icon name={externalKind === 'figma' ? 'figma' : 'webflow'} className="size-3" />
-                  <span>From {externalKind === 'figma' ? 'Figma' : 'Webflow'}</span>
-                </ContextMenuLabel>
-                <ContextMenuSeparator />
-              </>
-            )}
+            {hasExternal &&
+              (externalKind === "figma" || externalKind === "webflow") && (
+                <>
+                  <ContextMenuLabel className="flex items-center gap-1.5 font-normal text-muted-foreground select-none">
+                    <Icon
+                      name={externalKind === "figma" ? "figma" : "webflow"}
+                      className="size-3"
+                    />
+                    <span>
+                      From {externalKind === "figma" ? "Figma" : "Webflow"}
+                    </span>
+                  </ContextMenuLabel>
+                  <ContextMenuSeparator />
+                </>
+              )}
 
-            <ContextMenuItem onClick={handlePasteAfter} disabled={(!hasClipboard && !hasExternal) || isBody || !canPasteAfterTarget}>
+            <ContextMenuItem
+              onClick={handlePasteAfter}
+              disabled={
+                (!hasClipboard && !hasExternal) ||
+                isBody ||
+                !canPasteAfterTarget
+              }
+            >
               Paste after
               <ContextMenuShortcut>⌘V</ContextMenuShortcut>
             </ContextMenuItem>
 
-            <ContextMenuItem onClick={handlePasteInside} disabled={(!hasClipboard && !hasExternal) || !canPasteInside}>
+            <ContextMenuItem
+              onClick={handlePasteInside}
+              disabled={(!hasClipboard && !hasExternal) || !canPasteInside}
+            >
               Paste inside
               <ContextMenuShortcut>⌘⇧V</ContextMenuShortcut>
             </ContextMenuItem>
@@ -891,46 +1052,75 @@ function LayerContextMenuInner({
               <ContextMenuShortcut>⌥⌘C</ContextMenuShortcut>
             </ContextMenuItem>
 
-            <ContextMenuItem onClick={handlePasteStyle} disabled={!hasStyleClipboard}>
+            <ContextMenuItem
+              onClick={handlePasteStyle}
+              disabled={!hasStyleClipboard}
+            >
               Paste style
               <ContextMenuShortcut>⌥⌘V</ContextMenuShortcut>
             </ContextMenuItem>
 
             <ContextMenuSeparator />
 
-            <ContextMenuItem onClick={handleCopyInteractions} disabled={!layer?.interactions || layer.interactions.length === 0}>
+            <ContextMenuItem
+              onClick={handleCopyInteractions}
+              disabled={!layer?.interactions || layer.interactions.length === 0}
+            >
               Copy interactions
-              <ContextMenuShortcut><Icon name="zap" className="size-3" /></ContextMenuShortcut>
+              <ContextMenuShortcut>
+                <Icon name="zap" className="size-3" />
+              </ContextMenuShortcut>
             </ContextMenuItem>
 
-            <ContextMenuItem onClick={handlePasteInteractions} disabled={!hasInteractionsClipboard}>
+            <ContextMenuItem
+              onClick={handlePasteInteractions}
+              disabled={!hasInteractionsClipboard}
+            >
               Paste interactions
-              <ContextMenuShortcut><Icon name="zap" className="size-3" /></ContextMenuShortcut>
+              <ContextMenuShortcut>
+                <Icon name="zap" className="size-3" />
+              </ContextMenuShortcut>
             </ContextMenuItem>
           </>
         )}
 
         <ContextMenuSeparator />
 
-        <ContextMenuItem onClick={() => setIsImportHtmlOpen(true)} disabled={!canPasteInside}>
+        <ContextMenuItem
+          onClick={() => setIsImportHtmlOpen(true)}
+          disabled={!canPasteInside}
+        >
           Import HTML
-          <ContextMenuShortcut><Icon name="code" className="size-3" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <Icon name="code" className="size-3" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
 
         <ContextMenuItem onClick={handleExportHtml}>
           Export as HTML
-          <ContextMenuShortcut><Icon name="code" className="size-3" /></ContextMenuShortcut>
+          <ContextMenuShortcut>
+            <Icon name="code" className="size-3" />
+          </ContextMenuShortcut>
         </ContextMenuItem>
 
         {showConvertTextHeading && textHeadingConversion && (
           <>
             <ContextMenuSeparator />
 
-            <ContextMenuItem onClick={handleConvertTextHeading} disabled={isLocked}>
-              {textHeadingConversion.name === 'heading' ? 'Convert to heading' : 'Convert to text'}
+            <ContextMenuItem
+              onClick={handleConvertTextHeading}
+              disabled={isLocked}
+            >
+              {textHeadingConversion.name === "heading"
+                ? "Convert to heading"
+                : "Convert to text"}
               <ContextMenuShortcut>
                 <Icon
-                  name={textHeadingConversion.name === 'heading' ? 'heading' : 'text'}
+                  name={
+                    textHeadingConversion.name === "heading"
+                      ? "heading"
+                      : "text"
+                  }
                   className="size-3"
                 />
               </ContextMenuShortcut>
@@ -943,16 +1133,26 @@ function LayerContextMenuInner({
             <ContextMenuSeparator />
 
             {showConvertOption && (
-              <ContextMenuItem onClick={handleConvertToCollection} disabled={isConvertDisabled}>
+              <ContextMenuItem
+                onClick={handleConvertToCollection}
+                disabled={isConvertDisabled}
+              >
                 Convert to collection
-                <ContextMenuShortcut><Icon name="database" className="size-3" /></ContextMenuShortcut>
+                <ContextMenuShortcut>
+                  <Icon name="database" className="size-3" />
+                </ContextMenuShortcut>
               </ContextMenuItem>
             )}
 
             {isCollection && (
-              <ContextMenuItem onClick={handleDetachCollection} disabled={isLocked || isComponentInstance}>
+              <ContextMenuItem
+                onClick={handleDetachCollection}
+                disabled={isLocked || isComponentInstance}
+              >
                 Detach collection
-                <ContextMenuShortcut><Icon name="database" className="size-3" /></ContextMenuShortcut>
+                <ContextMenuShortcut>
+                  <Icon name="database" className="size-3" />
+                </ContextMenuShortcut>
               </ContextMenuItem>
             )}
           </>
@@ -964,34 +1164,45 @@ function LayerContextMenuInner({
           <>
             <ContextMenuItem onClick={handleEditMasterComponent}>
               Edit master component
-              <ContextMenuShortcut><Icon name="edit" className="size-3" /></ContextMenuShortcut>
+              <ContextMenuShortcut>
+                <Icon name="edit" className="size-3" />
+              </ContextMenuShortcut>
             </ContextMenuItem>
 
             <ContextMenuItem onClick={handleDetachFromComponent}>
               Detach component
-              <ContextMenuShortcut><Icon name="detach" className="size-3" /></ContextMenuShortcut>
+              <ContextMenuShortcut>
+                <Icon name="detach" className="size-3" />
+              </ContextMenuShortcut>
             </ContextMenuItem>
           </>
         ) : (
           <ContextMenuItem onClick={handleCreateComponent} disabled={isLocked}>
             Create component
-            <ContextMenuShortcut><Icon name="component" className="size-3" /></ContextMenuShortcut>
+            <ContextMenuShortcut>
+              <Icon name="component" className="size-3" />
+            </ContextMenuShortcut>
           </ContextMenuItem>
         )}
 
         {/* Developer tools: dev build or when NEXT_PUBLIC_DEVELOPER_MODE=true */}
-        {(process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DEVELOPER_MODE === 'true') && (
+        {(process.env.NODE_ENV === "development" ||
+          process.env.NEXT_PUBLIC_DEVELOPER_MODE === "true") && (
           <>
             <ContextMenuSeparator />
 
             <ContextMenuItem onClick={handleShowJSON}>
               Show JSON
-              <ContextMenuShortcut><Icon name="code" className="size-3" /></ContextMenuShortcut>
+              <ContextMenuShortcut>
+                <Icon name="code" className="size-3" />
+              </ContextMenuShortcut>
             </ContextMenuItem>
 
             <ContextMenuItem onClick={handleSaveAsLayout}>
               Save as Layout
-              <ContextMenuShortcut><Icon name="layout" className="size-3" /></ContextMenuShortcut>
+              <ContextMenuShortcut>
+                <Icon name="layout" className="size-3" />
+              </ContextMenuShortcut>
             </ContextMenuItem>
           </>
         )}
@@ -1041,8 +1252,6 @@ function LayerContextMenu({
   readOnly = false,
   isLocked = false,
   onLayerSelect,
-  liveLayerUpdates,
-  liveComponentUpdates,
   editingComponentId = null,
 }: LayerContextMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1050,12 +1259,15 @@ function LayerContextMenu({
   const [isLayoutDialogOpen, setIsLayoutDialogOpen] = useState(false);
   const [isImportHtmlOpen, setIsImportHtmlOpen] = useState(false);
   const [isExportHtmlOpen, setIsExportHtmlOpen] = useState(false);
-  const [exportHtml, setExportHtml] = useState('');
-  const [layerName, setLayerName] = useState('');
+  const [exportHtml, setExportHtml] = useState("");
+  const [layerName, setLayerName] = useState("");
   const canvasPortalContainer = useCanvasPortalContainer();
 
   const anyDialogOpen =
-    isComponentDialogOpen || isLayoutDialogOpen || isImportHtmlOpen || isExportHtmlOpen;
+    isComponentDialogOpen ||
+    isLayoutDialogOpen ||
+    isImportHtmlOpen ||
+    isExportHtmlOpen;
   const needsInner = menuOpen || anyDialogOpen;
 
   const handleOpenChange = useCallback(
@@ -1074,7 +1286,9 @@ function LayerContextMenu({
         useExternalPasteStore.getState().setKind(null);
         void isClipboardReadGranted()
           .then((granted) => (granted ? readExternalDesignClipboard() : null))
-          .then((data) => useExternalPasteStore.getState().setKind(data?.kind ?? null))
+          .then((data) =>
+            useExternalPasteStore.getState().setKind(data?.kind ?? null),
+          )
           .catch(() => useExternalPasteStore.getState().setKind(null));
       }
 
@@ -1103,17 +1317,14 @@ function LayerContextMenu({
         }
       }
     },
-    [canvasPortalContainer, onLayerSelect, layerId]
+    [canvasPortalContainer, onLayerSelect, layerId],
   );
 
   if (readOnly) return <>{children}</>;
 
   return (
     <ContextMenu onOpenChange={handleOpenChange}>
-      <ContextMenuTrigger
-        asChild
-        onContextMenu={(e) => e.stopPropagation()}
-      >
+      <ContextMenuTrigger asChild onContextMenu={(e) => e.stopPropagation()}>
         {children}
       </ContextMenuTrigger>
       {needsInner && (
@@ -1122,8 +1333,6 @@ function LayerContextMenu({
           pageId={pageId}
           isLocked={isLocked}
           onLayerSelect={onLayerSelect}
-          liveLayerUpdates={liveLayerUpdates}
-          liveComponentUpdates={liveComponentUpdates}
           editingComponentId={editingComponentId}
           isComponentDialogOpen={isComponentDialogOpen}
           setIsComponentDialogOpen={setIsComponentDialogOpen}

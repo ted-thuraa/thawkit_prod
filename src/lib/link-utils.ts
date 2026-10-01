@@ -514,7 +514,7 @@ export function resolveCollectionLinkValue(
 
     // Handle dynamic pages with specific collection item
     if (
-      page.is_dynamic &&
+      page.isDynamic &&
       linkValue.page.collection_item_id &&
       collectionItemSlugs
     ) {
@@ -639,7 +639,7 @@ export function generateLinkHref(
         if (page) {
           // Check if this is a dynamic page with a specific collection item
           if (
-            page.is_dynamic &&
+            page.isDynamic &&
             linkSettings.page.collection_item_id &&
             collectionItemSlugs
           ) {
@@ -925,7 +925,7 @@ export function isLinkToCurrentPage(
     // Plain page link (no specific collection item) targeting the current page id
     // is "current". Covers static pages and generic links to dynamic pages, and
     // stays correct even when `pages`/`pageCollectionItemId` are unavailable.
-    if (!page?.is_dynamic || !linkItemId) return true;
+    if (!page?.isDynamic || !linkItemId) return true;
 
     // Item-specific dynamic link: require the resolved item to be the current one.
     if (!context.pageCollectionItemId) return false;

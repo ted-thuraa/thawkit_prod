@@ -266,7 +266,7 @@ export interface CollectionPaginationMeta {
   // re-rendered client-side.
   collectionLayer?: Omit<Layer, "children">;
   // Whether SSR rendered this collection from published data. The client
-  // must fetch load-more items from the same source so draft previews
+  // must fetch load-more items from the same source so unpublished previews
   // don't accidentally append published rows (or vice versa).
   isPublished?: boolean;
   // Sort applied by SSR — load-more must mirror it or offset-based
@@ -1297,25 +1297,28 @@ export type VisibilityOperator =
 
 export type PageType = "landing_page" | "normal_page" | "result_page";
 
+/**
+ * Authoritative editor-side page model. Field names are camelCase and mirror
+ * the Drizzle `pages` row (`InferSelectModel<typeof page>`) so bootstrap rows
+ * can be mapped 1:1 — the only differences are that `settings` is narrowed
+ * from `unknown` to `PageSettings` and `layers` is the recursive `Layer[]` tree.
+ * `usePagesStore.pages` is the single source of truth for `layers`.
+ */
 export interface Page {
   id: string;
   slug: string;
   name: string;
-  funnelId: string; // Reference to page_folders
-  order: number; // Sort order
-  depth: number; // Depth in hierarchy
-  pageType: PageType; // Index of the root or parent folder
-  is_dynamic: boolean; // Dynamic page (CMS-driven)
-  layers: Layer;
-  settings: PageSettings; // Page settings (CMS, auth, seo, custom code)
-  content_hash?: string; // SHA-256 hash of page metadata for change detection
-  is_published: boolean;
-  is_publishable: boolean; // Whether the page goes live on publish (false = draft)
-  has_published_version?: boolean; // Computed (builder listing only): a live row exists
-  is_modified?: boolean; // Computed (builder listing only): draft differs from live
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null; // Soft delete timestamp
+  funnelId: string; // Owning funnel
+  order: number; // Sort order within the funnel
+  depth: number | null; // Depth in hierarchy
+  pageType: PageType;
+  isDynamic: boolean; // Dynamic page (CMS-driven)
+  layers: Layer[]; // Recursive layer tree (root-level array, normally a single `body` layer)
+  settings: PageSettings; // Page settings (CMS, seo, custom code)
+  contentHash: string | null; // SHA-256 hash of page content for change detection
+  createdAt: Date;
+  updatedAt: Date;
+  publishedAt: Date | null; // null = never published
 }
 
 export interface PageSettings {
@@ -1460,6 +1463,22 @@ export interface Translation {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+}
+
+export interface CreateTranslationData {
+  locale_id: string;
+  source_type: TranslationSourceType;
+  source_id: string;
+  content_key: string;
+  content_type: TranslationContentType;
+  content_value: string;
+  is_completed?: boolean;
+}
+
+export interface UpdateTranslationData {
+  content_value?: string;
+  content_type?: TranslationContentType;
+  is_completed?: boolean;
 }
 
 // Settings Types

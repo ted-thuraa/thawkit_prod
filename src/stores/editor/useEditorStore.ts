@@ -1,4 +1,4 @@
-// path: src/stores/use-editor-store.ts
+// path: src/stores/editor/useEditorStore.ts
 
 "use client";
 
@@ -6,6 +6,7 @@ import { create } from "zustand";
 import type { Layer, Breakpoint, UIState } from "@/types/funnel";
 import { scheduleLayerIdUrlUpdate } from "@/hooks/use-editor-url";
 import { useCanvasTextEditorStore } from "./useCanvasTextEditorStore";
+import { usePagesStore } from "./usePagesStore";
 
 /**
  * ─────────────────────────────────────────────────────────────────────────
@@ -18,16 +19,16 @@ import { useCanvasTextEditorStore } from "./useCanvasTextEditorStore";
  *
  * EXCLUDED FROM THIS PORT, with reasons:
  *   - Every `ai*` field/action (setAiActiveLayerIds, aiBuildingPageId,
- *     canvasEnterLayerIds/canvasEnterNonce, aiOpenedComponentEdit,
- *     pendingAiComponentExit, ...) — agentic features are out of scope.
+ *     aiOpenedComponentEdit, pendingAiComponentExit, ...) and
+ *     AI layer-picking flag — agentic features are out of scope.
+ *     (`canvasEnterLayerIds`/`canvasEnterNonce` ARE kept, as a plain
+ *     non-AI entrance-animation signal — see `triggerCanvasEnter`.)
  *   - `collectionItemSheet`/open/closeCollectionItemSheet,
  *     `currentPageCollectionItemId` — CMS/Collections excluded.
  *   - `fileManager`/open/closeFileManager — no asset system exists yet.
  *   - `keyboardShortcutsOpen` — keyboard shortcuts excluded.
  *   - `isSliderAnimating`/`sliderSnapCounts` — slider widget deferred (see
  *     types/PageCMS/layerSchema.ts's file header).
- *   - `isAiLayerPicking`, `elementPicker` (explicitly CMS-bound per its own
- *     Ycode comment: "for linking filter inputs to collection conditions").
  *   - `richTextSheetLayerId`, `activeSublayerIndex`, `activeListItemIndex`,
  *     `activeTextStyleKey`, `showTextStyleControls` — all depend on the
  *     canvas rich-text editing sheet, which doesn't exist yet (Phase 5+
@@ -164,6 +165,13 @@ interface EditorState {
     validate?: ((layerId: string) => boolean) | null;
     originPosition?: { x: number; y: number } | null;
   } | null;
+  /**
+   * Non-AI entrance-animation signal for the canvas. `canvasEnterNonce` is
+   * bumped on every `triggerCanvasEnter` call so identical id arrays still
+   * re-trigger the animation; `canvasEnterLayerIds` carries the ids to reveal.
+   */
+  canvasEnterLayerIds: string[];
+  canvasEnterNonce: number;
   // Computed getters
   showTextStyleControls: () => boolean;
 }
@@ -250,6 +258,15 @@ interface EditorActions {
   setLeftSidebarWidth: (value: number) => void;
   setCanvasContextMenuOpen: (value: boolean) => void;
   closeRichTextSheet: () => void;
+  setActiveTextStyleKey: (key: string | null) => void;
+  startElementPicker: (config: {
+    onSelect: (layerId: string) => void;
+    validate?: ((layerId: string) => boolean) | null;
+    originPosition?: { x: number; y: number } | null;
+  }) => void;
+  stopElementPicker: () => void;
+  /** Reveal `layerIds` with the canvas entrance animation (bumps `canvasEnterNonce`). */
+  triggerCanvasEnter: (layerIds: string[]) => void;
   /**
    * Reset all of the above back to defaults. NOT present in Ycode's
    * version — Ycode is single-project per deployment, so it never needs to
@@ -260,6 +277,8 @@ interface EditorActions {
    * so without an explicit reset, Campaign B's editor could open with
    * Campaign A's selection/history/drag state still attached. Called from
    * CampaignEditorMain whenever `campaignId` changes — see that file.
+   * Also clears `usePagesStore`, so no page/layer data from the previous
+   * campaign survives; callers must re-hydrate pages AFTER calling this.
    */
   resetForNewCampaign: () => void;
 }
@@ -313,7 +332,17 @@ const initialState: EditorState = {
   activeListItemIndex: null,
   // Element picker initial state
   elementPicker: null,
+  canvasEnterLayerIds: [],
+  canvasEnterNonce: 0,
+  // Placeholder only — the real getter is defined inside `create()` below and
+  // must never be overwritten by a reset (see `resetForNewCampaign`).
+  showTextStyleControls: () => false,
 };
+
+/** Everything `resetForNewCampaign` restores — i.e. `initialState` minus the computed getter. */
+const { showTextStyleControls: _computedGetter, ...resettableInitialState } =
+  initialState;
+void _computedGetter;
 
 export const useEditorStore = create<EditorStore>((set, get) => ({
   ...initialState,
@@ -572,7 +601,26 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   setLeftSidebarWidth: (value) => set({ leftSidebarWidth: value }),
   setCanvasContextMenuOpen: (value) => set({ isCanvasContextMenuOpen: value }),
 
-  resetForNewCampaign: () => set({ ...initialState }),
+  setActiveTextStyleKey: (key) => set({ activeTextStyleKey: key }),
+
+  startElementPicker: ({ onSelect, validate = null, originPosition = null }) =>
+    set({
+      elementPicker: { active: true, onSelect, validate, originPosition },
+    }),
+  stopElementPicker: () => set({ elementPicker: null }),
+
+  triggerCanvasEnter: (layerIds) =>
+    set((state) => ({
+      canvasEnterLayerIds: layerIds,
+      canvasEnterNonce: state.canvasEnterNonce + 1,
+    })),
+
+  resetForNewCampaign: () => {
+    // Drop the previous campaign's pages/layers first so nothing can render
+    // stale data while the next bootstrap hydrates.
+    usePagesStore.getState().reset();
+    set({ ...resettableInitialState });
+  },
   setActiveSublayerIndex: (index) => set({ activeSublayerIndex: index }),
   selectLayerWithSublayer: (layerId, sublayer) => {
     set({

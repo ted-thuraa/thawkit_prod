@@ -53,12 +53,17 @@ import {
 } from "@/lib/templates/blocks";
 import { DEFAULT_ASSETS } from "@/lib/asset-constants";
 import {
-  canHaveChildren,
   assignOrderClassToNewLayer,
   collectAllSettingsIds,
   generateUniqueSettingsId,
-  findLayerById,
 } from "@/lib/layer-utils";
+import {
+  canHaveChildren,
+  findLayerById,
+  findParentAndIndex,
+  insertLayerAfter,
+  updateLayerInTree,
+} from "@/lib/editor/layer-tree-utils";
 //import { checkCircularReference, isCircularComponentReference } from '@/lib/component-utils';
 import { cn, generateId } from "@/lib/utils";
 import { toast } from "sonner";
@@ -71,7 +76,6 @@ import { usePagesStore } from "@/stores/editor/usePagesStore";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
 //import { useEditorActions } from '@/hooks/use-editor-url';
 //import { useLocalizationMode } from '@/hooks/use-localization-mode';
-import type { UseLiveLayerUpdatesReturn } from "@/hooks/use-live-layer-updates";
 import { EditorElementType } from "@/lib/editor/element-templates";
 
 /**
@@ -179,7 +183,6 @@ function ElementButton({
 interface ElementLibraryProps {
   isOpen: boolean;
   onClose: () => void;
-  liveLayerUpdates?: UseLiveLayerUpdatesReturn | null;
 }
 
 // Category definitions
@@ -343,11 +346,10 @@ async function restoreInlinedComponents(
 export default function ElementLibrary({
   isOpen,
   onClose,
-  liveLayerUpdates,
 }: ElementLibraryProps) {
   const addLayerFromTemplate = usePagesStore((s) => s.addLayerFromTemplate);
   const updateLayer = usePagesStore((s) => s.updateLayer);
-  //const setDraftLayers = usePagesStore((s) => s.setDraftLayers);
+  const setLayers = usePagesStore((s) => s.setLayers);
   const pages = usePagesStore((s) => s.pages);
 
   const currentPageId = useEditorStore((s) => s.currentPageId);
@@ -514,58 +516,22 @@ export default function ElementLibrary({
     if (result) {
       setSelectedLayerId(result.newLayerId);
 
-      // Assign order class to new layer if siblings have responsive order classes
+      // Assign an order class to the new layer if its siblings have
+      // responsive order classes. Read FRESH page state from the store.
       if (result.parentToExpand) {
-        const freshDraft =
-          usePagesStore.getState().draftsByPageId[currentPageId];
-        if (freshDraft) {
+        const freshLayers: Layer[] | undefined = usePagesStore
+          .getState()
+          .pages.find((p) => p.id === currentPageId)?.layers;
+        if (freshLayers) {
           const updatedLayers = assignOrderClassToNewLayer(
-            freshDraft.layers,
+            freshLayers,
             result.parentToExpand,
             result.newLayerId,
             activeBreakpoint,
           );
           // Only update if layers actually changed
-          if (updatedLayers !== freshDraft.layers) {
-            //setDraftLayers(currentPageId, updatedLayers);
-          }
-        }
-      }
-
-      // Broadcast layer add to other collaborators
-      if (liveLayerUpdates && currentPageId) {
-        // Get FRESH state from store (not stale draftsByPageId from render)
-        const freshDraft =
-          usePagesStore.getState().draftsByPageId[currentPageId];
-        if (freshDraft) {
-          // Find the new layer AND its actual parent (may differ from requested parentId)
-          const findLayerWithParent = (
-            layers: any[],
-            id: string,
-            parent: any = null,
-          ): { layer: any; parent: any } | null => {
-            for (const layer of layers) {
-              if (layer.id === id) return { layer, parent };
-              if (layer.children) {
-                const found = findLayerWithParent(layer.children, id, layer);
-                if (found) return found;
-              }
-            }
-            return null;
-          };
-          const found = findLayerWithParent(
-            freshDraft.layers,
-            result.newLayerId,
-          );
-          if (found?.layer) {
-            // Use the ACTUAL parent ID where the layer was placed
-            const actualParentId = found.parent?.id || null;
-            liveLayerUpdates.broadcastLayerAdd(
-              currentPageId,
-              actualParentId,
-              elementType,
-              found.layer,
-            );
+          if (updatedLayers !== freshLayers) {
+            setLayers(currentPageId, updatedLayers);
           }
         }
       }
@@ -604,16 +570,13 @@ export default function ElementLibrary({
     }
 
     // Use the internal addLayerFromTemplate logic but with our layout
-    const draft = usePagesStore.getState().draftsByPageId[currentPageId];
-    if (!draft) {
-      const page = usePagesStore
-        .getState()
-        .pages.find((p) => p.id === currentPageId);
-      if (!page) return;
-    }
+    const page = usePagesStore
+      .getState()
+      .pages.find((p) => p.id === currentPageId);
+    if (!page) return;
 
     // Collect existing settings IDs to generate unique ones
-    const existingSettingsIds = collectAllSettingsIds(draft?.layers || []);
+    const existingSettingsIds = collectAllSettingsIds(page.layers);
     const usedSettingsIds = new Set<string>(existingSettingsIds);
 
     // Track old→new settings.id mappings so we can update 'for' attributes on labels
@@ -685,161 +648,49 @@ export default function ElementLibrary({
       // }
     }
 
-    // Find parent layer
-    const findLayerWithParent = (
-      tree: any[],
-      id: string,
-      parent: any | null = null,
-    ): { layer: any; parent: any | null } | null => {
-      for (const node of tree) {
-        if (node.id === id) return { layer: node, parent };
-        if (node.children) {
-          const found = findLayerWithParent(node.children, id, node);
-          if (found) return found;
-        }
-      }
-      return null;
-    };
-
-    const currentDraft = usePagesStore.getState().draftsByPageId[
-      currentPageId
-    ] || {
-      id: `draft-${currentPageId}`,
-      page_id: currentPageId,
-      layers: [],
-      is_published: false,
-      created_at: new Date().toISOString(),
-      deleted_at: null,
-    };
-
-    const result = findLayerWithParent(currentDraft.layers, parentId);
-    let newLayers;
+    // Place the layout: inside the target if it accepts children, otherwise
+    // right after it (falling back to the root when the target is missing).
+    const layoutRoot: Layer = newLayer;
+    const target = findLayerById(page.layers, parentId);
+    const targetLocation = target
+      ? findParentAndIndex(page.layers, target.id)
+      : null;
+    let newLayers: Layer[];
     let parentToExpand: string | null = null;
 
-    if (!result) {
-      // Add to root
-      newLayers = [...currentDraft.layers, newLayer];
+    if (!target || !targetLocation) {
+      newLayers = [...page.layers, layoutRoot];
+    } else if (canHaveChildren(target, layoutRoot.name)) {
+      newLayers = updateLayerInTree(page.layers, target.id, (node) => ({
+        ...node,
+        children: [...(node.children ?? []), layoutRoot],
+      }));
+      parentToExpand = target.id;
     } else {
-      // Check if parent can have children
-      if (canHaveChildren(result.layer)) {
-        // Add as child
-        const updateLayerInTree = (
-          tree: any[],
-          layerId: string,
-          updater: (l: any) => any,
-        ): any[] => {
-          return tree.map((node) => {
-            if (node.id === layerId) {
-              return updater(node);
-            }
-            if (node.children && node.children.length > 0) {
-              return {
-                ...node,
-                children: updateLayerInTree(node.children, layerId, updater),
-              };
-            }
-            return node;
-          });
-        };
-
-        newLayers = updateLayerInTree(
-          currentDraft.layers,
-          parentId,
-          (parent) => ({
-            ...parent,
-            children: [...(parent.children || []), newLayer],
-          }),
-        );
-        parentToExpand = parentId;
-      } else {
-        // Insert after the selected layer
-        if (result.parent) {
-          const updateLayerInTree = (
-            tree: any[],
-            layerId: string,
-            updater: (l: any) => any,
-          ): any[] => {
-            return tree.map((node) => {
-              if (node.id === layerId) {
-                return updater(node);
-              }
-              if (node.children && node.children.length > 0) {
-                return {
-                  ...node,
-                  children: updateLayerInTree(node.children, layerId, updater),
-                };
-              }
-              return node;
-            });
-          };
-
-          newLayers = updateLayerInTree(
-            currentDraft.layers,
-            result.parent.id,
-            (grandparent) => {
-              const children = grandparent.children || [];
-              const selectedIndex = children.findIndex(
-                (c: any) => c.id === parentId,
-              );
-              const newChildren = [...children];
-              newChildren.splice(selectedIndex + 1, 0, newLayer);
-              return { ...grandparent, children: newChildren };
-            },
-          );
-          parentToExpand = result.parent.id;
-        } else {
-          // Selected layer is at root level, insert after it
-          const selectedIndex = currentDraft.layers.findIndex(
-            (l: any) => l.id === parentId,
-          );
-          newLayers = [...currentDraft.layers];
-          newLayers.splice(selectedIndex + 1, 0, newLayer);
-        }
-      }
+      newLayers = insertLayerAfter(
+        page.layers,
+        targetLocation.parent,
+        targetLocation.index,
+        layoutRoot,
+      );
+      parentToExpand = targetLocation.parent?.id ?? null;
     }
 
     // Assign order class to new layer if siblings have responsive order classes
-    let finalLayers = newLayers;
-    if (parentToExpand) {
-      finalLayers = assignOrderClassToNewLayer(
-        newLayers,
-        parentToExpand,
-        newLayer.id,
-        activeBreakpoint,
-      );
-    }
+    const finalLayers: Layer[] = parentToExpand
+      ? assignOrderClassToNewLayer(
+          newLayers,
+          parentToExpand,
+          layoutRoot.id,
+          activeBreakpoint,
+        )
+      : newLayers;
 
-    // Update the draft with the new layers
-    //usePagesStore.getState().setDraftLayers(currentPageId, finalLayers);
-
-    // Broadcast layout add to other collaborators - find actual parent
-    if (liveLayerUpdates) {
-      const findLayerWithParent = (
-        layers: any[],
-        id: string,
-        parent: any = null,
-      ): { layer: any; parent: any } | null => {
-        for (const layer of layers) {
-          if (layer.id === id) return { layer, parent };
-          if (layer.children) {
-            const found = findLayerWithParent(layer.children, id, layer);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
-      const found = findLayerWithParent(newLayers, newLayer.id);
-      const actualParentId = found?.parent?.id || null;
-      liveLayerUpdates.broadcastLayerAdd(
-        currentPageId,
-        actualParentId,
-        layoutKey,
-        newLayer,
-      );
-    }
+    // Single source of truth: write straight to `pages`.
+    setLayers(currentPageId, finalLayers);
 
     // Select the root layer of the layout
-    setSelectedLayerId(newLayer.id);
+    setSelectedLayerId(layoutRoot.id);
 
     // Expand parent if needed
     if (parentToExpand) {

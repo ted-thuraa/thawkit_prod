@@ -2,7 +2,7 @@
 
 /**
  * ─────────────────────────────────────────────────────────────────────────
- * Adapted from Ycode's PagesTree.tsx + its inner PageRow component
+ * Adapted from Ycode's PagesTree.tsx + its inner Page component
  * (github.com/ycode/ycode, MIT licensed). Ycode's version renders a real
  * FOLDER TREE (buildPageTree/flattenPageTree/rebuildPageTree), plus error
  * pages, CMS/dynamic pages, and publish/draft status badges — none of
@@ -61,21 +61,20 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { PageRow } from "@/lib/editor/resolve-editor-bootstrap";
 import { Separator } from "@/components/ui/separator";
 import PagesTree from "./PagesTree";
 // import PageSettingsPanel, {
 //   PageSettingsPanelHandle,
 // } from "./PageSettingsPanel";
-import { Page } from "@/types/funnel";
+import type { Page as PageData } from "@/types/funnel";
 
-export const PAGE_TYPE_LABEL: Record<PageRow["pageType"], string> = {
+export const PAGE_TYPE_LABEL: Record<PageData["pageType"], string> = {
   landing_page: "Landing",
   normal_page: "Regular",
   result_page: "Result",
 };
 
-const PAGE_TYPE_ICON: Record<PageRow["pageType"], IconProps["name"]> = {
+const PAGE_TYPE_ICON: Record<PageData["pageType"], IconProps["name"]> = {
   landing_page: "homepage",
   normal_page: "page",
   result_page: "page",
@@ -88,7 +87,7 @@ export interface PagesContentHandle {
 interface PagesTreeProps {
   //ref: React.RefObject<PagesTreeHandle | null>;
   /** Store data can be absent during the first client render. */
-  pages?: PageRow[] | null;
+  pages?: PageData[] | null;
   currentPageId: string | null;
   onPageSelect: (pageId: string) => void;
   // onPageSettings: (pageId: string) => void;
@@ -100,7 +99,7 @@ interface PagesTreeProps {
 }
 
 interface PageRowProps {
-  page: PageRow;
+  page: PageData;
   isActive: boolean;
   isMenuOpen: boolean;
   onSelect: () => void;
@@ -113,7 +112,7 @@ interface PageRowProps {
   readOnly?: boolean;
 }
 
-const PageRow = React.memo(function PageRow({
+const Page = React.memo(function Page({
   page,
   isActive,
   isMenuOpen,
@@ -263,7 +262,7 @@ export default function PagesList({
   const selectedItemIdRef = React.useRef<string | null>(currentPageId);
   const [showPageSettings, setShowPageSettings] = useState(false);
   //const pageSettingsPanelRef = useRef<PageSettingsPanelHandle>(null);
-  const [editingPage, setEditingPage] = useState<Page | null>(null);
+  const [editingPage, setEditingPage] = useState<PageData | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 5 },
@@ -300,7 +299,7 @@ export default function PagesList({
   // Handle page selection with unsaved changes check
   const handlePageSelect = async (pageId: string) => {};
 
-  const handleEditPage = async (page: Page) => {
+  const handleEditPage = async (page: PageData) => {
     // Check for unsaved changes before switching
     //const canProceed = await checkBeforeSelectionChange();
     // if (!canProceed) {

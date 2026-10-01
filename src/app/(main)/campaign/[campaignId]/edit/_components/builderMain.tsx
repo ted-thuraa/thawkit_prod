@@ -3,6 +3,7 @@
 import { ReactNode, useEffect, useState } from "react";
 import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
 import type { EditorBootstrapContext } from "@/lib/editor/resolve-editor-bootstrap";
+import { pagesFromRows } from "@/lib/editor/page-from-row";
 import { usePagesStore } from "@/stores/editor/usePagesStore";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
 import LeftPanel from "./LeftPanel";
@@ -96,10 +97,13 @@ export function CampaignEditorMain({
     "desktop" | "tablet" | "mobile"
   >(urlState.view || "desktop");
   useEffect(() => {
-    usePagesStore.getState().hydrateFromBootstrap(bootstrap.pages);
+    // Order matters: reset first (it also clears usePagesStore), THEN hydrate.
+    useEditorStore.getState().resetForNewCampaign();
+    usePagesStore
+      .getState()
+      .hydrateFromBootstrap(pagesFromRows(bootstrap.pages));
     //useComponentsStore.getState().hydrateFromBootstrap(bootstrap.components);
     // useLayerStylesStore.getState().hydrateFromBootstrap(bootstrap.layerStyles);
-    useEditorStore.getState().resetForNewCampaign();
     // Intentionally keyed on campaignId alone, not on `bootstrap` itself:
     // `bootstrap` is a fresh object reference on every server render, but
     // re-hydrating (and wiping in-progress local edits) on every

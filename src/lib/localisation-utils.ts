@@ -912,8 +912,8 @@ function extractSeoItems(
 /**
  * Extract all translatable items from a page (slug, SEO, and layers)
  * Ordered: slug first, then SEO settings, then layer texts
- * Note: Dynamic page slugs and index pages (homepage / folder index) are
- * excluded — their slug doesn't contribute to the URL.
+ * Note: the slug is only extracted for the landing (index) page —
+ * `pageType === "landing_page"` — and never for dynamic pages.
  */
 export function extractPageTranslatableItems(
   page: Page,
@@ -923,11 +923,10 @@ export function extractPageTranslatableItems(
 ): TranslatableItem[] {
   const items: TranslatableItem[] = [];
 
-  // 1. Extract slug (first) - exclude dynamic, index, and error pages
+  // 1. Extract slug (first) - landing (index) page only, never dynamic pages
   if (
-    !page.is_dynamic &&
-    !page.is_index &&
-    !page.error_page &&
+    !page.isDynamic &&
+    page.pageType === "landing_page" &&
     page.slug &&
     page.slug.trim()
   ) {

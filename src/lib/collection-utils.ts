@@ -1,5 +1,10 @@
-import type { Collection, CollectionFieldType, CollectionSorting, Layer } from '@/types';
-import { sanitizeSlug } from './page-utils';
+import type {
+  Collection,
+  CollectionFieldType,
+  CollectionSorting,
+  Layer,
+} from "@/types/funnel";
+import { sanitizeSlug } from "./page-utils";
 
 /**
  * Collection Utilities
@@ -14,9 +19,13 @@ import { sanitizeSlug } from './page-utils';
  */
 export function normalizeBooleanValue(value: any): string {
   const numVal = Number(value);
-  return (value === 'true' || value === 'yes' || value === '1' || numVal === 1 || (typeof value === 'boolean' && value)) 
-    ? 'true' 
-    : 'false';
+  return value === "true" ||
+    value === "yes" ||
+    value === "1" ||
+    numVal === 1 ||
+    (typeof value === "boolean" && value)
+    ? "true"
+    : "false";
 }
 
 /**
@@ -25,7 +34,7 @@ export function normalizeBooleanValue(value: any): string {
  */
 export function isTruthyBooleanValue(value: any): boolean {
   const numVal = Number(value);
-  return value === 'true' || value === 'yes' || value === '1' || numVal === 1;
+  return value === "true" || value === "yes" || value === "1" || numVal === 1;
 }
 
 /**
@@ -37,7 +46,7 @@ export function isTruthyBooleanValue(value: any): boolean {
 export function parseMultiReferenceValue(value: unknown): string[] {
   if (!value) return [];
   if (Array.isArray(value)) return value;
-  if (typeof value === 'string') {
+  if (typeof value === "string") {
     try {
       const parsed = JSON.parse(value);
       return Array.isArray(parsed) ? parsed : [];
@@ -56,14 +65,19 @@ export function parseMultiReferenceValue(value: unknown): string[] {
  * @returns Sorted array of collections
  */
 /** Extract sortBy/sortOrder API params from a collection's sorting config. */
-export function getSortParams(sorting: CollectionSorting | null | undefined): { sortBy?: string; sortOrder?: string } {
-  if (!sorting || sorting.direction === 'manual') {
-    return { sortBy: 'manual', sortOrder: undefined };
+export function getSortParams(sorting: CollectionSorting | null | undefined): {
+  sortBy?: string;
+  sortOrder?: string;
+} {
+  if (!sorting || sorting.direction === "manual") {
+    return { sortBy: "manual", sortOrder: undefined };
   }
   return { sortBy: sorting.field, sortOrder: sorting.direction };
 }
 
-export function sortCollectionsByOrder(collections: Collection[]): Collection[] {
+export function sortCollectionsByOrder(
+  collections: Collection[],
+): Collection[] {
   return [...collections].sort((a, b) => {
     // If orders are different, sort by order
     if (a.order !== b.order) {
@@ -87,27 +101,30 @@ export function sortCollectionsByOrder(collections: Collection[]): Collection[] 
  * @param type - The field type to cast to
  * @returns The value cast to the appropriate type
  */
-export function castValue(value: string | null, type: CollectionFieldType): any {
-  if (value === null || value === undefined || value === '') return null;
+export function castValue(
+  value: string | null,
+  type: CollectionFieldType,
+): any {
+  if (value === null || value === undefined || value === "") return null;
 
   switch (type) {
-    case 'number': {
+    case "number": {
       const num = parseFloat(value);
       return isNaN(num) ? null : num;
     }
 
-    case 'boolean':
-      return value === 'true' || value === '1' || value === 'yes';
+    case "boolean":
+      return value === "true" || value === "1" || value === "yes";
 
-    case 'date':
-    case 'date_only':
+    case "date":
+    case "date_only":
       return value;
 
-    case 'reference':
+    case "reference":
       // Return as string (UUID of referenced item)
       return value;
 
-    case 'rich_text':
+    case "rich_text":
       // Parse TipTap JSON from stored string
       try {
         return JSON.parse(value);
@@ -115,20 +132,20 @@ export function castValue(value: string | null, type: CollectionFieldType): any 
         return value;
       }
 
-    case 'link':
+    case "link":
       // Keep as raw JSON string — parsed downstream by parseCollectionLinkValue
       return value;
 
-    case 'color':
+    case "color":
       // Standard hex color string (e.g. #ff0000 or #ff0000aa with alpha)
       return value;
 
-    case 'email':
-    case 'phone':
-    case 'text':
+    case "email":
+    case "phone":
+    case "text":
     default:
       // Try to parse JSON for text fields that might contain JSON objects
-      if (value.startsWith('{') || value.startsWith('[')) {
+      if (value.startsWith("{") || value.startsWith("[")) {
         try {
           return JSON.parse(value);
         } catch {
@@ -145,51 +162,56 @@ export function castValue(value: string | null, type: CollectionFieldType): any 
  * @param type - The field type
  * @returns String representation for database storage
  */
-export function valueToString(value: any, type: CollectionFieldType): string | null {
+export function valueToString(
+  value: any,
+  type: CollectionFieldType,
+): string | null {
   if (value === null || value === undefined) return null;
 
   // Always JSON.stringify objects to prevent [object Object]
-  if (typeof value === 'object') {
+  if (typeof value === "object") {
     return JSON.stringify(value);
   }
 
   switch (type) {
-    case 'boolean':
+    case "boolean":
       // Handle both boolean and string values
-      if (typeof value === 'string') {
-        return (value === 'true' || value === '1' || value === 'yes') ? 'true' : 'false';
+      if (typeof value === "string") {
+        return value === "true" || value === "1" || value === "yes"
+          ? "true"
+          : "false";
       }
-      return value ? 'true' : 'false';
+      return value ? "true" : "false";
 
-    case 'number':
+    case "number":
       return String(value);
 
-    case 'date':
-    case 'date_only':
+    case "date":
+    case "date_only":
       if (value instanceof Date) {
         return value.toISOString();
       }
       return String(value);
 
-    case 'reference':
+    case "reference":
       // Store ID as string
       return String(value);
 
-    case 'link':
+    case "link":
       // Store link settings as JSON
-      if (typeof value === 'object') {
+      if (typeof value === "object") {
         return JSON.stringify(value);
       }
       return String(value);
 
-    case 'color':
+    case "color":
       // Standard hex color (e.g. #ff0000 or #ff0000aa)
       return String(value);
 
-    case 'email':
-    case 'phone':
-    case 'rich_text':
-    case 'text':
+    case "email":
+    case "phone":
+    case "rich_text":
+    case "text":
     default:
       return String(value);
   }
@@ -217,8 +239,11 @@ export function slugify(name: string): string {
  * @param value - Source text to slugify (falls back to "item" when empty)
  * @param existingSlugs - Mutable set of slugs already taken
  */
-export function generateUniqueSlug(value: string | null | undefined, existingSlugs: Set<string>): string {
-  const base = slugify(value || 'item');
+export function generateUniqueSlug(
+  value: string | null | undefined,
+  existingSlugs: Set<string>,
+): string {
+  const base = slugify(value || "item");
   if (!existingSlugs.has(base)) {
     existingSlugs.add(base);
     return base;
@@ -253,8 +278,8 @@ export function isValidCollectionName(collectionName: string): boolean {
  * Inverse reference field descriptor for UI and data resolution
  */
 export interface InverseReferenceField {
-  field: import('@/types').CollectionField;
-  collection: import('@/types').Collection;
+  field: import("@/types/funnel").CollectionField;
+  collection: import("@/types/funnel").Collection;
 }
 
 /**
@@ -264,11 +289,11 @@ export interface InverseReferenceField {
  */
 export function getInverseReferenceFields(
   targetCollectionId: string,
-  allFields: Record<string, import('@/types').CollectionField[]>,
-  allCollections: import('@/types').Collection[]
+  allFields: Record<string, import("@/types/funnel").CollectionField[]>,
+  allCollections: import("@/types/funnel").Collection[],
 ): InverseReferenceField[] {
   const result: InverseReferenceField[] = [];
-  const collectionsMap = new Map(allCollections.map(c => [c.id, c]));
+  const collectionsMap = new Map(allCollections.map((c) => [c.id, c]));
 
   for (const [collectionId, fields] of Object.entries(allFields)) {
     if (collectionId === targetCollectionId) continue;
@@ -277,7 +302,7 @@ export function getInverseReferenceFields(
 
     for (const field of fields) {
       if (
-        (field.type === 'reference' || field.type === 'multi_reference') &&
+        (field.type === "reference" || field.type === "multi_reference") &&
         field.reference_collection_id === targetCollectionId
       ) {
         result.push({ field, collection });
@@ -299,17 +324,21 @@ export function getInverseReferenceFields(
  */
 export function resolveReferenceFieldsSync(
   itemValues: Record<string, string>,
-  fields: import('@/types').CollectionField[],
-  allItems: Record<string, import('@/types').CollectionItemWithValues[]>,
-  allFields: Record<string, import('@/types').CollectionField[]>,
+  fields: import("@/types/funnel").CollectionField[],
+  allItems: Record<string, import("@/types/funnel").CollectionItemWithValues[]>,
+  allFields: Record<string, import("@/types/funnel").CollectionField[]>,
   visited: Set<string> = new Set(),
-  translateValues?: (itemId: string, values: Record<string, string>, fields: import('@/types').CollectionField[]) => Record<string, string>
+  translateValues?: (
+    itemId: string,
+    values: Record<string, string>,
+    fields: import("@/types/funnel").CollectionField[],
+  ) => Record<string, string>,
 ): Record<string, string> {
   const enhancedValues = { ...itemValues };
 
   // Find reference fields (single reference only)
   const referenceFields = fields.filter(
-    f => f.type === 'reference' && f.reference_collection_id
+    (f) => f.type === "reference" && f.reference_collection_id,
   );
 
   for (const field of referenceFields) {
@@ -323,7 +352,7 @@ export function resolveReferenceFieldsSync(
 
     // Find the referenced item in the store
     const refCollectionItems = allItems[field.reference_collection_id] || [];
-    const refItem = refCollectionItems.find(item => item.id === refItemId);
+    const refItem = refCollectionItems.find((item) => item.id === refItemId);
     if (!refItem) continue;
 
     // Get fields for the referenced collection
@@ -350,13 +379,13 @@ export function resolveReferenceFieldsSync(
       allItems,
       allFields,
       visited,
-      translateValues
+      translateValues,
     );
 
     // Merge nested values with proper path prefix
     for (const [key, value] of Object.entries(nestedValues)) {
       // Only add paths that were newly resolved (contain dots from nested refs)
-      if (key.includes('.')) {
+      if (key.includes(".")) {
         enhancedValues[`${field.id}.${key}`] = value;
       }
     }
@@ -371,7 +400,10 @@ export function resolveReferenceFieldsSync(
  * targets. Lets animations bind to the correct element per item instead of
  * sharing one DOM node.
  */
-export function remapLayerIdsForCollectionItem(layer: Layer, suffix: string): Layer {
+export function remapLayerIdsForCollectionItem(
+  layer: Layer,
+  suffix: string,
+): Layer {
   const originalIds = new Set<string>();
   const collectIds = (l: Layer) => {
     originalIds.add(l.id);
@@ -386,10 +418,10 @@ export function remapLayerIdsForCollectionItem(layer: Layer, suffix: string): La
     };
 
     if (l.interactions?.length) {
-      remapped.interactions = l.interactions.map(interaction => ({
+      remapped.interactions = l.interactions.map((interaction) => ({
         ...interaction,
         id: `${interaction.id}${suffix}`,
-        tweens: interaction.tweens.map(tween => ({
+        tweens: interaction.tweens.map((tween) => ({
           ...tween,
           layer_id: originalIds.has(tween.layer_id)
             ? `${tween.layer_id}${suffix}`

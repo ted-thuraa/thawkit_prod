@@ -280,9 +280,6 @@ const PageRow = React.memo(function PageRow({
             <span className="text-xs font-medium overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
               {getNodeDisplayName(node)}
             </span>
-            {statusPage?.is_publishable === false && (
-              <Icon name="eye-off" className="size-3.5 shrink-0 opacity-70" />
-            )}
           </span>
 
           {/* Settings dropdown (for pages and folders) */}
@@ -537,12 +534,9 @@ export default function PagesTree({
         // Check if dragging a dynamic page to root that already has one
         if (activeNode.type === "page") {
           const activePage = activeNode.data as Page;
-          if (activePage.is_dynamic) {
+          if (activePage.isDynamic) {
             const rootHasDynamicPage = safePages.some(
-              (p) =>
-                p.id !== activePage.id &&
-                p.is_dynamic &&
-                p.is_published === activePage.is_published,
+              (p) => p.id !== activePage.id && p.isDynamic,
             );
 
             if (rootHasDynamicPage) {
@@ -592,10 +586,7 @@ export default function PagesTree({
 
         // Prevent slug conflicts
         const slugConflict = safePages.some(
-          (p) =>
-            p.id !== activePage.id &&
-            p.slug === activePage.slug &&
-            p.is_published === activePage.is_published,
+          (p) => p.id !== activePage.id && p.slug === activePage.slug,
         );
 
         if (slugConflict) {
@@ -603,12 +594,9 @@ export default function PagesTree({
         }
 
         // Prevent moving dynamic page to folder that already has one
-        if (activePage.is_dynamic) {
+        if (activePage.isDynamic) {
           const targetFolderHasDynamicPage = safePages.some(
-            (p) =>
-              p.id !== activePage.id &&
-              p.is_dynamic &&
-              p.is_published === activePage.is_published,
+            (p) => p.id !== activePage.id && p.isDynamic,
           );
 
           if (targetFolderHasDynamicPage) {

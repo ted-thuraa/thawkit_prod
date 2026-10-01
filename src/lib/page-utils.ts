@@ -3,7 +3,12 @@
  */
 
 import type { IconProps } from "@/components/ui/icon";
-import type { Page, PageSettings, FieldVariable } from "../types/funnel";
+import type {
+  Page,
+  PageSettings,
+  FieldVariable,
+  PageType,
+} from "../types/funnel";
 
 /**
  * Reserved slugs that cannot be used at the root level (null parent folder)
@@ -93,7 +98,7 @@ export function buildSlugPath(
 
   const page = item as Page;
 
-  if (page.is_dynamic) {
+  if (page.isDynamic) {
     slugParts.push(slugFieldKey);
   } else if (page.pageType !== "landing_page" && page.slug) {
     slugParts.push(page.slug);
@@ -118,7 +123,7 @@ export function getNodeIcon(
  */
 export function getPageIcon(page: Page): IconProps["name"] {
   if (page.pageType === "landing_page") return "homepage";
-  if (page.is_dynamic) return "dynamicPage";
+  if (page.isDynamic) return "dynamicPage";
   return "page";
 }
 
@@ -658,9 +663,7 @@ export function generateUniqueSlug(
   // Check if base slug exists in the same folder and published state
   const existingSlugs = pages
     .filter(
-      (p) =>
-        p.id !== excludePageId && // Exclude current page if editing
-        p.is_published === isPublished, // Same published state
+      (p) => p.id !== excludePageId, // Exclude current page if editing
     )
     .map((p) => p.slug.toLowerCase());
 
@@ -722,20 +725,14 @@ export function calculateNextOrder(
   // If a page is selected, insert right after it
   if (selectedItemId) {
     const selectedPage = pages.find((p) => p.id === selectedItemId);
-    if (
-      selectedPage &&
-      selectedPage.depth === depth &&
-      selectedPage.deleted_at === null // Don't use deleted pages as reference
-    ) {
+    if (selectedPage && selectedPage.depth === depth) {
       // Insert right after the selected page
       return (selectedPage.order || 0) + 1;
     }
   }
 
   // Append to end: find max order across pages and folders (exclude error pages and deleted items)
-  const siblingPages = pages.filter(
-    (p) => p.depth === depth && p.deleted_at === null, // Exclude deleted pages
-  );
+  const siblingPages = pages.filter((p) => p.depth === depth);
 
   // Combine all siblings and find the max order across both pages and folders
   const allSiblings = [...siblingPages.map((p) => ({ order: p.order || 0 }))];
@@ -779,30 +776,25 @@ export function validateFolderName(name: string): ValidationResult {
 }
 
 /**
- * Validate page slug based on page type
+ * Validate page slug based on page type. The landing page
+ * (`pageType === "landing_page"`) is the index page and, like every other
+ * page in a funnel, must have a non-empty slug.
  * @param slug - The slug to validate
- * @param isIndex - Whether the page is an index page
- * @param isErrorPage - Whether the page is an error page
+ * @param pageType - The page's type
  * @returns Validation result with error message if invalid
  */
 export function validatePageSlug(
   slug: string,
-  isIndex: boolean,
-  isErrorPage: boolean,
+  pageType: PageType,
 ): ValidationResult {
-  // Error pages must have empty slug
-  if (isErrorPage && slug.trim()) {
-    return { isValid: false, error: "Error pages must have an empty slug" };
-  }
-
-  // Index pages must have empty slug
-  if (isIndex && slug.trim()) {
-    return { isValid: false, error: "Index pages must have an empty slug" };
-  }
-
-  // Non-index, non-error pages must have non-empty slug
-  if (!isIndex && !isErrorPage && !slug.trim()) {
-    return { isValid: false, error: "Slug is required for non-index pages" };
+  if (!slug.trim()) {
+    return {
+      isValid: false,
+      error:
+        pageType === "landing_page"
+          ? "Slug is required for the landing page"
+          : "Slug is required",
+    };
   }
 
   return { isValid: true };
@@ -846,10 +838,7 @@ export function checkDuplicatePageSlug(
   }
 
   const duplicateSlug = pages.find(
-    (p) =>
-      p.id !== excludePageId &&
-      p.slug === trimmedSlug &&
-      p.is_published === isPublished,
+    (p) => p.id !== excludePageId && p.slug === trimmedSlug,
   );
 
   if (duplicateSlug) {

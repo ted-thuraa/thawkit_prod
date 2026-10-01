@@ -20,7 +20,6 @@ import React, {
   useMemo,
 } from "react";
 import { createRoot, Root } from "react-dom/client";
-import gsap from "gsap";
 
 import LayerRenderer from "@/components/editor/LayerRenderer";
 import { serializeLayers, getClassesString } from "@/lib/layer-utils";
@@ -60,13 +59,33 @@ import type {
   Locale,
   Translation,
 } from "@/types/funnel";
-import { UseLiveLayerUpdatesReturn } from "@/hooks/use-live-layer-updates";
+
+/**
+ * Minimal surface of the GSAP instance the canvas iframe loads from the CDN
+ * (see the iframe bootstrap below). Only what the entrance animation uses is
+ * typed, so the app itself needs no `gsap` package.
+ */
+interface IframeGsap {
+  from: (
+    targets: HTMLElement[],
+    vars: {
+      autoAlpha: number;
+      duration: number;
+      stagger: number;
+      ease: string;
+      clearProps: string;
+    },
+  ) => unknown;
+}
+
+/** Stable fallback so an omitted `components` prop does not defeat memoisation. */
+const EMPTY_COMPONENTS: Component[] = [];
 
 interface CanvasProps {
   /** Layers to render */
   layers: Layer[];
-  /** Components for resolving component instances */
-  components: Component[];
+  /** Components for resolving component instances (optional until a components store is wired in) */
+  components?: Component[];
   /** Currently selected layer ID */
   selectedLayerId: string | null;
   /** Currently hovered layer ID */
@@ -123,8 +142,6 @@ interface CanvasProps {
   onUndo?: () => void;
   /** Callback when redo is triggered (Cmd+Shift+Z) */
   onRedo?: () => void;
-  /** Live layer updates for collaboration */
-
   /** Callback when iframe is ready, provides the iframe element */
   onIframeReady?: (iframeElement: HTMLIFrameElement) => void;
   /** Callback when a layer is hovered (for external overlay) */
@@ -162,8 +179,6 @@ interface CanvasContentProps {
   onLayerClick: (layerId: string, event?: React.MouseEvent) => void;
   onLayerUpdate?: (layerId: string, updates: Partial<Layer>) => void;
   onLayerHover: (layerId: string | null) => void;
-  liveLayerUpdates?: UseLiveLayerUpdatesReturn | null;
-  liveComponentUpdates?: UseLiveComponentUpdatesReturn | null;
   editingComponentVariables?: ComponentVariable[];
   editingComponentId?: string | null;
   editorHiddenLayerIds?: Map<string, Breakpoint[]>;
@@ -185,8 +200,6 @@ function CanvasContent({
   onLayerClick,
   onLayerUpdate,
   onLayerHover,
-  liveLayerUpdates,
-  liveComponentUpdates,
   editingComponentVariables,
   editingComponentId,
   editorHiddenLayerIds,
@@ -291,8 +304,6 @@ function CanvasContent({
           pageId={pageId}
           pageCollectionItemId={pageCollectionItemId}
           pageCollectionItemData={pageCollectionItemData}
-          liveLayerUpdates={liveLayerUpdates}
-          liveComponentUpdates={liveComponentUpdates}
           editingComponentVariables={editingComponentVariables}
           editorHiddenLayerIds={editorHiddenLayerIds}
           editorBreakpoint={editorBreakpoint}
@@ -317,6 +328,7 @@ const Canvas = React.memo(
     //components,
     selectedLayerId,
     hoveredLayerId,
+    components = EMPTY_COMPONENTS,
     breakpoint,
     activeUIState,
     editingComponentId,
@@ -361,14 +373,15 @@ const Canvas = React.memo(
     // State
     const [iframeReady, setIframeReady] = useState(false);
 
-    // Entrance-animation signal. Driven off the nonce (bumped on every remote
-    // update) while the actual ids are read lazily from the store, so identical id
-    // arrays across consecutive remote updates still trigger the animation.
-    const canvasEnterNonce = useEditorStore((state) => state.canvasEnterNonce);
+    // Entrance-animation signal. Driven off the nonce (bumped by
+    // `triggerCanvasEnter`) while the actual ids are read lazily from the store,
+    // so identical id arrays across consecutive triggers still animate.
+    const canvasEnterNonce: number = useEditorStore(
+      (state) => state.canvasEnterNonce,
+    );
 
-    // Layer ids already animated in this page session. Prevents duplicate signals
-    // (e.g. the realtime broadcast followed by the authoritative page_changed
-    // snapshot) from replaying the same entrance. Reset on page change below.
+    // Layer ids already animated in this page session. Prevents duplicate
+    // signals from replaying the same entrance. Reset on page change below.
     const animatedEnterIdsRef = useRef<Set<string>>(new Set());
 
     // Translate component-instance override values before serialization so that
@@ -389,10 +402,10 @@ const Canvas = React.memo(
     const { layers: resolvedLayers, componentMap } = useMemo(() => {
       return serializeLayers(
         layersForSerialization,
-        //components,
+        components,
         editingComponentVariables,
       );
-    }, [layersForSerialization, editingComponentVariables]);
+    }, [layersForSerialization, components, editingComponentVariables]);
 
     // When a non-default locale is active, swap layer text and translatable
     // asset references with their translations so the canvas mirrors what the
@@ -713,40 +726,6 @@ const Canvas = React.memo(
       styleEl.textContent = customHeadCss;
     }, [iframeReady, customHeadCss]);
 
-    // Inject the server-compiled Tailwind stylesheet for the current page — the
-    // same `generated_css` published pages inject via PageRenderer. The canvas's
-    // Tailwind Browser CDN JIT is unreliable for large bulk inserts (AI/MCP page
-    // builds), so it would leave layers unstyled ("black and white") until
-    // publish. Injecting the precompiled CSS gives a reliable baseline; the CDN
-    // still layers on top for live single-property edits made in the builder.
-    // Skipped while editing a component (no page draft is bound to the canvas).
-    const generatedCss = usePagesStore((state) =>
-      pageId && !editingComponentId
-        ? (state.draftsByPageId[pageId]?.generated_css ?? "")
-        : "",
-    );
-
-    useEffect(() => {
-      if (!iframeReady || !iframeRef.current) return;
-      const iframeDoc = iframeRef.current.contentDocument;
-      if (!iframeDoc) return;
-
-      const STYLE_ID = "ycode-canvas-styles";
-      let styleEl = iframeDoc.getElementById(
-        STYLE_ID,
-      ) as HTMLStyleElement | null;
-      if (!generatedCss) {
-        styleEl?.remove();
-        return;
-      }
-      if (!styleEl) {
-        styleEl = iframeDoc.createElement("style");
-        styleEl.id = STYLE_ID;
-        iframeDoc.head.appendChild(styleEl);
-      }
-      styleEl.textContent = generatedCss;
-    }, [iframeReady, generatedCss]);
-
     // Render content into iframe
     useEffect(() => {
       if (!iframeReady || !rootRef.current) return;
@@ -804,25 +783,24 @@ const Canvas = React.memo(
       animatedEnterIdsRef.current = new Set();
     }, [pageId]);
 
-    // Reveal newly-arrived remote layers (AI/MCP/collaborator) step by step: each
-    // added layer fades in one after another in document order (container first,
-    // then its contents), so a section visibly assembles itself instead of popping
-    // in all at once. Local edits never set this signal, so they stay instant.
+    // Reveal layers flagged via `triggerCanvasEnter` step by step: each layer
+    // fades in one after another in document order (container first, then its
+    // contents). Ordinary edits never set this signal, so they stay instant.
     useEffect(() => {
       if (canvasEnterNonce === 0 || !iframeReady || !iframeRef.current) return;
 
       const iframeDoc = iframeRef.current.contentDocument;
       const iframeWindow = iframeRef.current.contentWindow;
       const iframeGsap = (
-        iframeWindow as unknown as { gsap?: typeof gsap } | null
+        iframeWindow as unknown as { gsap?: IframeGsap } | null
       )?.gsap;
       if (!iframeDoc || !iframeWindow || !iframeGsap) return;
 
-      const pending = useEditorStore
-        .getState()
-        .canvasEnterLayerIds.filter(
-          (id) => !animatedEnterIdsRef.current.has(id),
-        );
+      const enterLayerIds: string[] =
+        useEditorStore.getState().canvasEnterLayerIds;
+      const pending: string[] = enterLayerIds.filter(
+        (id: string) => !animatedEnterIdsRef.current.has(id),
+      );
       if (pending.length === 0) return;
 
       // Respect reduced-motion: skip the animation, but still mark the ids so a
@@ -831,7 +809,7 @@ const Canvas = React.memo(
         typeof window !== "undefined" &&
         window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
       if (prefersReducedMotion) {
-        pending.forEach((id) => animatedEnterIdsRef.current.add(id));
+        pending.forEach((id: string) => animatedEnterIdsRef.current.add(id));
         return;
       }
 

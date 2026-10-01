@@ -30,7 +30,7 @@ import {
   getCurrentBreakpoint,
 } from "@/lib/breakpoint-utils";
 import { remapLayerIdsForCollectionItem } from "@/lib/collection-utils";
-import { useColorVariablesStore } from "@/stores/useColorVariablesStore";
+import { useColorVariablesStore } from "@/stores/editor/useColorVariablesStore";
 import type { Layer, LayerInteraction, Breakpoint } from "@/types/funnel";
 
 // Register GSAP plugins
