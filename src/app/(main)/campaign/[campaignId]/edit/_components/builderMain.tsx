@@ -4,7 +4,13 @@ import { ReactNode, useEffect, useState } from "react";
 import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
 import type { EditorBootstrapContext } from "@/lib/editor/resolve-editor-bootstrap";
 import { pagesFromRows } from "@/lib/editor/page-from-row";
+import {
+  componentsFromRows,
+  layerStylesFromRows,
+} from "@/lib/editor/design-system-from-row";
 import { usePagesStore } from "@/stores/editor/usePagesStore";
+import { useComponentsStore } from "@/stores/editor/useComponentsStore";
+import { useLayerStylesStore } from "@/stores/editor/useLayerStylesStore";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
 import LeftPanel from "./LeftPanel";
 import { Button } from "@/components/ui/button";
@@ -102,8 +108,15 @@ export function CampaignEditorMain({
     usePagesStore
       .getState()
       .hydrateFromBootstrap(pagesFromRows(bootstrap.pages));
-    //useComponentsStore.getState().hydrateFromBootstrap(bootstrap.components);
-    // useLayerStylesStore.getState().hydrateFromBootstrap(bootstrap.layerStyles);
+    // Styles and components hydrate in the same effect (before any retained
+    // canvas / layer-menu code resolves references), and the components store
+    // also drops the previous campaign's drafts and pending saves.
+    useLayerStylesStore
+      .getState()
+      .hydrateFromBootstrap(layerStylesFromRows(bootstrap.layerStyles));
+    useComponentsStore
+      .getState()
+      .hydrateFromBootstrap(componentsFromRows(bootstrap.components));
     // Intentionally keyed on campaignId alone, not on `bootstrap` itself:
     // `bootstrap` is a fresh object reference on every server render, but
     // re-hydrating (and wiping in-progress local edits) on every
@@ -201,14 +214,12 @@ export function CampaignEditorMain({
       >
         {/* CANVAS SLOT — sits behind the floating panels and fills the whole
           area, so the mounted component must size itself `h-full w-full`.
-          Not mounted yet, same as before this pass:
-            layers route    → <EditorBuilder layers={activePage.layers} />
-            component route → the component editor, once
-                              useComponentsStore hydration is re-enabled
-                              above (`components.find(...)` for
-                              `urlState.resourceId` / `urlState.variantId`).
-          `activePage` is null on the component route, so guard it when
-          uncommenting. */}
+          Not mounted yet, same as before this pass: */}
+        <EditorCenterCanvas
+          currentPageId={activePage.id}
+          viewportMode={viewportMode}
+          setViewportMode={setViewportMode}
+        />
       </EditorShell>
     );
   }

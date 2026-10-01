@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 /**
  * Save Layout Dialog
@@ -7,7 +7,7 @@
  * Prompts user for layout name and category
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -15,45 +15,50 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import Icon from '@/components/ui/icon';
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import Icon from "@/components/ui/icon";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import Image from 'next/image';
+} from "@/components/ui/select";
+import Image from "next/image";
 
 interface SaveLayoutDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onConfirm: (layoutName: string, category: string, imageFile: File | null, oldLayoutKey?: string) => Promise<void>;
+  onConfirm: (
+    layoutName: string,
+    category: string,
+    imageFile: File | null,
+    oldLayoutKey?: string,
+  ) => Promise<void>;
   defaultName?: string;
   defaultCategory?: string;
-  mode?: 'create' | 'edit';
+  mode?: "create" | "edit";
   layoutKey?: string; // For edit mode
 }
 
 const LAYOUT_CATEGORIES = [
-  'Navigation',
-  'Hero',
-  'Features',
-  'Stats',
-  'Blog header',
-  'Blog posts',
-  'CTA',
-  'Team',
-  'Testimonials',
-  'Pricing',
-  'FAQ',
-  'Footer',
-  'Header',
-  'Custom',
+  "Navigation",
+  "Hero",
+  "Features",
+  "Stats",
+  "Blog header",
+  "Blog posts",
+  "CTA",
+  "Team",
+  "Testimonials",
+  "Pricing",
+  "FAQ",
+  "Footer",
+  "Header",
+  "Custom",
 ];
 
 export default function SaveLayoutDialog({
@@ -62,11 +67,11 @@ export default function SaveLayoutDialog({
   onConfirm,
   defaultName,
   defaultCategory,
-  mode = 'create',
+  mode = "create",
   layoutKey,
 }: SaveLayoutDialogProps) {
-  const [layoutName, setLayoutName] = useState(defaultName || '');
-  const [category, setCategory] = useState(defaultCategory || 'Custom');
+  const [layoutName, setLayoutName] = useState(defaultName || "");
+  const [category, setCategory] = useState(defaultCategory || "Custom");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -93,21 +98,21 @@ export default function SaveLayoutDialog({
     setIsSaving(true);
     try {
       await onConfirm(layoutName.trim(), category, imageFile, layoutKey);
-      setLayoutName('');
-      setCategory('Custom');
+      setLayoutName("");
+      setCategory("Custom");
       setImageFile(null);
       setImagePreview(null);
       onOpenChange(false);
     } catch (error) {
-      console.error('Failed to save layout:', error);
+      console.error("Failed to save layout:", error);
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleCancel = () => {
-    setLayoutName('');
-    setCategory('Custom');
+    setLayoutName("");
+    setCategory("Custom");
     setImageFile(null);
     setImagePreview(null);
     onOpenChange(false);
@@ -117,14 +122,14 @@ export default function SaveLayoutDialog({
     const file = e.target.files?.[0];
     if (file) {
       // Validate file type
-      if (!file.type.startsWith('image/')) {
-        alert('Please select an image file');
+      if (!file.type.startsWith("image/")) {
+        alert("Please select an image file");
         return;
       }
 
       // Validate file size (max 5MB)
       if (file.size > 5 * 1024 * 1024) {
-        alert('Image size must be less than 5MB');
+        alert("Image size must be less than 5MB");
         return;
       }
 
@@ -145,7 +150,7 @@ export default function SaveLayoutDialog({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && layoutName.trim()) {
+    if (e.key === "Enter" && layoutName.trim()) {
       handleConfirm();
     }
   };
@@ -153,17 +158,17 @@ export default function SaveLayoutDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        width="360px"
-        className="gap-0"
+        className="gap-0 sm:max-w-[360px]"
         aria-describedby={undefined}
       >
         <DialogHeader>
-          <DialogTitle>{mode === 'edit' ? 'Edit Layout' : 'Save as Layout'}</DialogTitle>
+          <DialogTitle>
+            {mode === "edit" ? "Edit Layout" : "Save as Layout"}
+          </DialogTitle>
           <DialogDescription>
-            {mode === 'edit'
-              ? 'Update the layout name and category'
-              : 'Save this layer structure as a reusable layout template'
-            }
+            {mode === "edit"
+              ? "Update the layout name and category"
+              : "Save this layer structure as a reusable layout template"}
           </DialogDescription>
         </DialogHeader>
 
@@ -196,7 +201,7 @@ export default function SaveLayoutDialog({
             </Select>
           </div>
 
-          {mode === 'create' && (
+          {mode === "create" && (
             <div className="flex flex-col gap-2">
               <Label htmlFor="layout-image">Preview Image</Label>
               {imagePreview ? (
@@ -223,7 +228,9 @@ export default function SaveLayoutDialog({
                 >
                   <div className="flex flex-col items-center gap-2 text-zinc-400">
                     <Icon name="upload" className="size-5" />
-                    <span className="text-xs">Click to upload preview image</span>
+                    <span className="text-xs">
+                      Click to upload preview image
+                    </span>
                     <span className="text-[10px] text-zinc-500">Max 5MB</span>
                   </div>
                   <input
@@ -251,9 +258,12 @@ export default function SaveLayoutDialog({
               disabled={!layoutName.trim() || isSaving}
             >
               {isSaving
-                ? (mode === 'edit' ? 'Updating...' : 'Saving...')
-                : (mode === 'edit' ? 'Update Layout' : 'Save Layout')
-              }
+                ? mode === "edit"
+                  ? "Updating..."
+                  : "Saving..."
+                : mode === "edit"
+                  ? "Update Layout"
+                  : "Save Layout"}
             </Button>
           </DialogFooter>
         </div>

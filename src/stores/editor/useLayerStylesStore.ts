@@ -7,6 +7,7 @@
 
 import { create } from "zustand";
 import type { Layer, LayerStyle } from "@/types/funnel";
+import { getStyleIds } from "@/lib/layer-style-resolve";
 
 /**
  * Affected entity when deleting a layer style
@@ -37,6 +38,8 @@ interface LayerStylesState {
 interface LayerStylesActions {
   // Data loading
   setStyles: (styles: LayerStyle[]) => void;
+  /** Atomically replace the store with a fresh campaign bootstrap snapshot. */
+  hydrateFromBootstrap: (styles: LayerStyle[]) => void;
   loadStyles: () => Promise<void>;
 
   // CRUD operations
@@ -83,6 +86,9 @@ export const useLayerStylesStore = create<LayerStylesStore>((set, get) => ({
 
   // Set styles (used by unified init)
   setStyles: (styles) => set({ styles }),
+
+  hydrateFromBootstrap: (styles) =>
+    set({ styles, isLoading: false, error: null }),
 
   // Load all styles
   loadStyles: async () => {
@@ -254,7 +260,7 @@ export const useLayerStylesStore = create<LayerStylesStore>((set, get) => ({
           for (const entity of affectedEntities) {
             if (entity.type === "page" && entity.pageId) {
               // Update the page draft with new layers (style detached)
-              const currentDraft = pagesStore.pages[entity.pageId];
+              const currentDraft = pagesStore.getPageById(entity.pageId);
               if (currentDraft) {
                 pagesStore.setLayers(entity.pageId, entity.newLayers);
               }
@@ -310,8 +316,7 @@ export const useLayerStylesStore = create<LayerStylesStore>((set, get) => ({
             const layerIds: string[] = [];
             const traverse = (layerList: Layer[]) => {
               for (const layer of layerList) {
-                const ids =
-                  layer.styleIds ?? (layer.styleId ? [layer.styleId] : []);
+                const ids = getStyleIds(layer);
                 if (ids.includes(styleId)) {
                   layerIds.push(layer.id);
                 }
@@ -460,9 +465,9 @@ export const useLayerStylesStore = create<LayerStylesStore>((set, get) => ({
     return get().styles.find((s) => s.id === id);
   },
 
-  // Get styles filtered by group (styles without a group are included everywhere)
+  // Get styles filtered by styleGroup (styles without a group are included everywhere)
   getStylesByGroup: (group) => {
-    return get().styles.filter((s) => !s.group || s.group === group);
+    return get().styles.filter((s) => !s.styleGroup || s.styleGroup === group);
   },
 
   // Error management

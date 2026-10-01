@@ -27,11 +27,6 @@ import {
 import { useEditorStore } from "@/stores/editor/useEditorStore";
 import { usePagesStore } from "@/stores/editor/usePagesStore";
 import { useClipboardStore } from "@/stores/editor/useClipboardStore";
-import { useExternalPasteStore } from "@/stores/editor/useExternalPasteStore";
-import {
-  isClipboardReadGranted,
-  readExternalDesignClipboard,
-} from "@/lib/import/clipboard-detect";
 import { useComponentsStore } from "@/stores/editor/useComponentsStore";
 import {
   canHaveChildren,
@@ -65,9 +60,6 @@ import {
 import type { Layer } from "@/types/funnel";
 import CreateComponentDialog from "./CreateComponentDialog";
 import SaveLayoutDialog from "./SaveLayoutDialog";
-import ImportHtmlDialog from "./ImportHtmlDialog";
-import ExportHtmlDialog from "./ExportHtmlDialog";
-import { htmlToLayers, layerToExportHtml } from "@/lib/html-layer-converter";
 
 interface LayerContextMenuProps {
   layerId: string;
@@ -112,12 +104,6 @@ interface LayerContextMenuInnerProps extends Omit<
   setIsComponentDialogOpen: (open: boolean) => void;
   isLayoutDialogOpen: boolean;
   setIsLayoutDialogOpen: (open: boolean) => void;
-  isImportHtmlOpen: boolean;
-  setIsImportHtmlOpen: (open: boolean) => void;
-  isExportHtmlOpen: boolean;
-  setIsExportHtmlOpen: (open: boolean) => void;
-  exportHtml: string;
-  setExportHtml: (html: string) => void;
   layerName: string;
   setLayerName: (name: string) => void;
 }
@@ -140,12 +126,6 @@ function LayerContextMenuInner({
   setIsComponentDialogOpen,
   isLayoutDialogOpen,
   setIsLayoutDialogOpen,
-  isImportHtmlOpen,
-  setIsImportHtmlOpen,
-  isExportHtmlOpen,
-  setIsExportHtmlOpen,
-  exportHtml,
-  setExportHtml,
   layerName,
   setLayerName,
 }: LayerContextMenuInnerProps) {
@@ -218,13 +198,7 @@ function LayerContextMenuInner({
     (state) => state.copiedInteractions,
   );
 
-  // Design-tool clipboard (Webflow/Figma) detected when the menu opened, plus
-  // the registered runner that imports it at a chosen placement.
-  const externalKind = useExternalPasteStore((state) => state.kind);
-  const pasteExternalAt = useExternalPasteStore((state) => state.pasteAt);
-
   const hasClipboard = clipboardLayer !== null;
-  const hasExternal = externalKind !== null && pasteExternalAt !== null;
   const hasStyleClipboard = copiedStyle !== null;
   const hasInteractionsClipboard = copiedInteractions !== null;
 
@@ -345,14 +319,6 @@ function LayerContextMenuInner({
   };
 
   const handlePasteAfter = () => {
-    // A Webflow/Figma copy on the OS clipboard means the freshest copy was
-    // external (an internal copy stamps the OS clipboard with the Ycode marker,
-    // which detection ignores), so it wins over a stale internal clipboard —
-    // matching the keyboard ⌘V behaviour. Import it as a sibling after target.
-    if (hasExternal) {
-      if (!isBody) pasteExternalAt?.({ mode: "after", layerId });
-      return;
-    }
     if (!clipboardLayer) return;
 
     if (isComponentContext && editingComponentId) {
@@ -404,11 +370,6 @@ function LayerContextMenuInner({
   };
 
   const handlePasteInside = () => {
-    // External clipboard wins over a stale internal one (see handlePasteAfter).
-    if (hasExternal) {
-      if (canPasteInside) pasteExternalAt?.({ mode: "inside", layerId });
-      return;
-    }
     if (!clipboardLayer || !canPasteInside) return;
 
     if (isComponentContext && editingComponentId) {
@@ -811,50 +772,6 @@ function LayerContextMenuInner({
     }
   };
 
-  const handleImportHtml = (html: string) => {
-    let importedLayers: Layer[];
-    try {
-      importedLayers = htmlToLayers(html);
-    } catch {
-      toast.error("Failed to parse HTML");
-      return;
-    }
-
-    if (importedLayers.length === 0) {
-      toast.error("No valid HTML elements found");
-      return;
-    }
-
-    if (isComponentContext && editingComponentId) {
-      const componentLayers = getComponentLayers();
-      const targetLayer = findLayerById(componentLayers, layerId);
-      if (!targetLayer) return;
-
-      const newChildren = [...(targetLayer.children || []), ...importedLayers];
-      updateComponentAndBroadcast(
-        updateLayerProps(componentLayers, layerId, { children: newChildren }),
-      );
-    } else {
-      const draft = pages.find((p) => p.id === pageId);
-      if (!draft) return;
-
-      const targetLayer = findLayerById(draft.layers, layerId);
-      if (!targetLayer) return;
-
-      const newChildren = [...(targetLayer.children || []), ...importedLayers];
-      updateLayer(pageId, layerId, { children: newChildren });
-    }
-
-    toast.success("HTML imported successfully");
-  };
-
-  const handleExportHtml = () => {
-    if (!layer) return;
-    const html = layerToExportHtml(layer);
-    setExportHtml(html);
-    setIsExportHtmlOpen(true);
-  };
-
   const handleConvertToCollection = () => {
     if (!layer || !canConvertToCollection(layer)) return;
 
@@ -975,35 +892,12 @@ function LayerContextMenuInner({
 
         <ContextMenuSub>
           <ContextMenuSubTrigger>Paste</ContextMenuSubTrigger>
-          <ContextMenuSubContent
-            container={canvasPortalContainer}
-            style={
-              canvasPortalContainer ? { zoom: 100 / canvasZoom } : undefined
-            }
-          >
-            {hasExternal &&
-              (externalKind === "figma" || externalKind === "webflow") && (
-                <>
-                  <ContextMenuLabel className="flex items-center gap-1.5 font-normal text-muted-foreground select-none">
-                    <Icon
-                      name={externalKind === "figma" ? "figma" : "webflow"}
-                      className="size-3"
-                    />
-                    <span>
-                      From {externalKind === "figma" ? "Figma" : "Webflow"}
-                    </span>
-                  </ContextMenuLabel>
-                  <ContextMenuSeparator />
-                </>
-              )}
-
+          {/* Rendered inside the (already zoom-compensated) menu content, so no
+              portal target or zoom of its own is needed. */}
+          <ContextMenuSubContent>
             <ContextMenuItem
               onClick={handlePasteAfter}
-              disabled={
-                (!hasClipboard && !hasExternal) ||
-                isBody ||
-                !canPasteAfterTarget
-              }
+              disabled={!hasClipboard || isBody || !canPasteAfterTarget}
             >
               Paste after
               <ContextMenuShortcut>⌘V</ContextMenuShortcut>
@@ -1011,7 +905,7 @@ function LayerContextMenuInner({
 
             <ContextMenuItem
               onClick={handlePasteInside}
-              disabled={(!hasClipboard && !hasExternal) || !canPasteInside}
+              disabled={!hasClipboard || !canPasteInside}
             >
               Paste inside
               <ContextMenuShortcut>⌘⇧V</ContextMenuShortcut>
@@ -1085,23 +979,6 @@ function LayerContextMenuInner({
         )}
 
         <ContextMenuSeparator />
-
-        <ContextMenuItem
-          onClick={() => setIsImportHtmlOpen(true)}
-          disabled={!canPasteInside}
-        >
-          Import HTML
-          <ContextMenuShortcut>
-            <Icon name="code" className="size-3" />
-          </ContextMenuShortcut>
-        </ContextMenuItem>
-
-        <ContextMenuItem onClick={handleExportHtml}>
-          Export as HTML
-          <ContextMenuShortcut>
-            <Icon name="code" className="size-3" />
-          </ContextMenuShortcut>
-        </ContextMenuItem>
 
         {showConvertTextHeading && textHeadingConversion && (
           <>
@@ -1221,18 +1098,6 @@ function LayerContextMenuInner({
         onConfirm={handleConfirmSaveLayout}
         defaultName={layerName}
       />
-
-      <ImportHtmlDialog
-        open={isImportHtmlOpen}
-        onOpenChange={setIsImportHtmlOpen}
-        onImport={handleImportHtml}
-      />
-
-      <ExportHtmlDialog
-        open={isExportHtmlOpen}
-        onOpenChange={setIsExportHtmlOpen}
-        html={exportHtml}
-      />
     </>
   );
 }
@@ -1257,17 +1122,10 @@ function LayerContextMenu({
   const [menuOpen, setMenuOpen] = useState(false);
   const [isComponentDialogOpen, setIsComponentDialogOpen] = useState(false);
   const [isLayoutDialogOpen, setIsLayoutDialogOpen] = useState(false);
-  const [isImportHtmlOpen, setIsImportHtmlOpen] = useState(false);
-  const [isExportHtmlOpen, setIsExportHtmlOpen] = useState(false);
-  const [exportHtml, setExportHtml] = useState("");
   const [layerName, setLayerName] = useState("");
   const canvasPortalContainer = useCanvasPortalContainer();
 
-  const anyDialogOpen =
-    isComponentDialogOpen ||
-    isLayoutDialogOpen ||
-    isImportHtmlOpen ||
-    isExportHtmlOpen;
+  const anyDialogOpen = isComponentDialogOpen || isLayoutDialogOpen;
   const needsInner = menuOpen || anyDialogOpen;
 
   const handleOpenChange = useCallback(
@@ -1277,19 +1135,6 @@ function LayerContextMenu({
       if (open) {
         dismissActiveContextMenu();
         activeMenuDocument = canvasPortalContainer?.ownerDocument ?? document;
-
-        // Detect a Webflow/Figma copy on the OS clipboard so the Paste submenu
-        // can offer "Paste after / inside". Best-effort and silent: only read
-        // when clipboard access is already granted, so a right-click never
-        // triggers a permission prompt. When access isn't granted the items
-        // stay disabled — the keyboard ⌘V import path is unaffected.
-        useExternalPasteStore.getState().setKind(null);
-        void isClipboardReadGranted()
-          .then((granted) => (granted ? readExternalDesignClipboard() : null))
-          .then((data) =>
-            useExternalPasteStore.getState().setKind(data?.kind ?? null),
-          )
-          .catch(() => useExternalPasteStore.getState().setKind(null));
       }
 
       if (open && onLayerSelect) {
@@ -1338,12 +1183,6 @@ function LayerContextMenu({
           setIsComponentDialogOpen={setIsComponentDialogOpen}
           isLayoutDialogOpen={isLayoutDialogOpen}
           setIsLayoutDialogOpen={setIsLayoutDialogOpen}
-          isImportHtmlOpen={isImportHtmlOpen}
-          setIsImportHtmlOpen={setIsImportHtmlOpen}
-          isExportHtmlOpen={isExportHtmlOpen}
-          setIsExportHtmlOpen={setIsExportHtmlOpen}
-          exportHtml={exportHtml}
-          setExportHtml={setExportHtml}
           layerName={layerName}
           setLayerName={setLayerName}
         />

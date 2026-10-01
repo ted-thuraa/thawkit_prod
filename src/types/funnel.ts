@@ -855,6 +855,13 @@ export interface Layer {
 
   // Applied LayerStyle stack, low to high priority (base first, combos after).
   styleIds?: string[];
+  /**
+   * @deprecated Legacy single-style reference. `styleIds` is the canonical
+   * persisted stack. Read this only through `getStyleIds()`; writers dual-write
+   * it (first stack entry) during the migration window and should stop once
+   * stored data has been migrated.
+   */
+  styleId?: string;
   styleOverrides?: {
     classes?: string;
     design?: DesignProperties;

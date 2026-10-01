@@ -153,11 +153,18 @@ interface EditorState {
   isSidebarResizing: boolean;
   leftSidebarWidth: number;
   isCanvasContextMenuOpen: boolean;
-
+  // Slider transition state (hides outlines during slide animation)
+  isSliderAnimating: boolean;
+  sliderSnapCounts: Record<string, number>;
   /** Index of the selected sublayer within a richText element (null = no sublayer selected) */
   activeSublayerIndex: number | null;
   /** Index of the selected list item within its parent list (null = no list item selected) */
   activeListItemIndex: number | null;
+  collectionItemSheet: {
+    open: boolean;
+    collectionId: string;
+    itemId: string;
+  } | null;
   // Element picker state (for linking filter inputs to collection conditions)
   elementPicker: {
     active: boolean;
@@ -218,6 +225,7 @@ interface EditorActions {
   setHoveredLayerId: (id: string | null) => void;
   setRenamingLayerId: (id: string | null) => void;
   setPreviewMode: (enabled: boolean) => void;
+  setSliderSnapCount: (sliderId: string, count: number) => void;
 
   openCreateComponentDialog: (layerId: string, defaultName: string) => void;
   closeCreateComponentDialog: () => void;
@@ -231,6 +239,7 @@ interface EditorActions {
   updateDragPosition: (position: DragPosition) => void;
   updateCanvasDropTarget: (target: CanvasDropTarget | null) => void;
   endCanvasDrag: () => void;
+  setSliderAnimating: (value: boolean) => void;
 
   startCanvasLayerDrag: (
     layerId: string,
@@ -253,7 +262,9 @@ interface EditorActions {
       listItemIndex: number | null;
     },
   ) => void;
-
+  /** Open a RichTextEditorSheet for the given layer (triggered from iframe on double-click) */
+  openRichTextSheet: (layerId: string) => void;
+  openCollectionItemSheet: (collectionId: string, itemId: string) => void;
   setSidebarResizing: (value: boolean) => void;
   setLeftSidebarWidth: (value: number) => void;
   setCanvasContextMenuOpen: (value: boolean) => void;
@@ -313,6 +324,8 @@ const initialState: EditorState = {
   dragElementSource: null,
   dragPosition: null,
   canvasDropTarget: null,
+  isSliderAnimating: false,
+  sliderSnapCounts: {},
   isDraggingLayerOnCanvas: false,
   draggedLayerId: null,
   draggedLayerName: null,
@@ -330,6 +343,7 @@ const initialState: EditorState = {
   richTextSheetLayerId: null,
   activeSublayerIndex: null,
   activeListItemIndex: null,
+  collectionItemSheet: null,
   // Element picker initial state
   elementPicker: null,
   canvasEnterLayerIds: [],
@@ -346,6 +360,26 @@ void _computedGetter;
 
 export const useEditorStore = create<EditorStore>((set, get) => ({
   ...initialState,
+  openRichTextSheet: (layerId) => set({ richTextSheetLayerId: layerId }),
+  openCollectionItemSheet: (collectionId, itemId) =>
+    set({
+      collectionItemSheet: {
+        open: true,
+        collectionId,
+        itemId,
+      },
+    }),
+  setSliderSnapCount: (sliderId, count) =>
+    set((state) => {
+      // Swiper fires `update` on every DOM mutation inside its wrapper, which
+      // happens constantly in the iframe (Tailwind class injections, child
+      // re-renders). Bail out when the count hasn't changed so subscribers
+      // — notably slideBullets `LayerItem`s — don't re-render.
+      if (state.sliderSnapCounts[sliderId] === count) return state;
+      return {
+        sliderSnapCounts: { ...state.sliderSnapCounts, [sliderId]: count },
+      };
+    }),
   closeRichTextSheet: () => set({ richTextSheetLayerId: null }),
   // Computed getter: Returns true when text style controls should be shown
   // This happens when:
@@ -600,7 +634,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   setSidebarResizing: (value) => set({ isSidebarResizing: value }),
   setLeftSidebarWidth: (value) => set({ leftSidebarWidth: value }),
   setCanvasContextMenuOpen: (value) => set({ isCanvasContextMenuOpen: value }),
-
+  setSliderAnimating: (value) => set({ isSliderAnimating: value }),
   setActiveTextStyleKey: (key) => set({ activeTextStyleKey: key }),
 
   startElementPicker: ({ onSelect, validate = null, originPosition = null }) =>

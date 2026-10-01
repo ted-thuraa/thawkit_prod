@@ -293,8 +293,8 @@ export function useUndoRedo({
 
     switch (entityType) {
       case "page_layers": {
-        const draft = pagesByPageId[entityId];
-        return draft?.layers || [];
+        const page = pagesByPageId.find((p) => p.id === entityId);
+        return page?.layers || [];
       }
       case "component": {
         // Track the variant currently being edited so undo/redo operates on the
@@ -876,7 +876,7 @@ export function useUndoRedo({
 
         // Reload from database
         if (entityType === "page_layers") {
-          await usePagesStore.getState().loadDraft(entityId);
+          await usePagesStore.getState().reloadPage(entityId);
         } else if (entityType === "component") {
           await useComponentsStore.getState().loadComponentDraft(entityId);
         } else if (entityType === "layer_style") {

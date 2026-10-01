@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 /**
  * Create Component Dialog
@@ -7,7 +7,7 @@
  * Prompts user for component name
  */
 
-import React, { useState } from 'react';
+import React, { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -15,10 +15,10 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface CreateComponentDialogProps {
   open: boolean;
@@ -33,7 +33,7 @@ export default function CreateComponentDialog({
   onConfirm,
   layerName,
 }: CreateComponentDialogProps) {
-  const [componentName, setComponentName] = useState(layerName || '');
+  const [componentName, setComponentName] = useState(layerName || "");
   const [isCreating, setIsCreating] = useState(false);
 
   const handleConfirm = async () => {
@@ -42,17 +42,17 @@ export default function CreateComponentDialog({
     setIsCreating(true);
     await onConfirm(componentName.trim());
     setIsCreating(false);
-    setComponentName('');
+    setComponentName("");
     onOpenChange(false);
   };
 
   const handleCancel = () => {
-    setComponentName('');
+    setComponentName("");
     onOpenChange(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && componentName.trim()) {
+    if (e.key === "Enter" && componentName.trim()) {
       handleConfirm();
     }
   };
@@ -60,8 +60,7 @@ export default function CreateComponentDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        width="320px"
-        className="gap-0"
+        className="gap-0 sm:max-w-[320px]"
         aria-describedby={undefined}
       >
         <DialogHeader>

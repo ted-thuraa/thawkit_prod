@@ -192,7 +192,7 @@ export async function recordVersionViaApi(
   }
 
   // Also check the store flag for backward compatibility
-  const { useVersionsStore } = await import("@/stores/useVersionsStore");
+  const { useVersionsStore } = await import("@/stores/editor/useVersionsStore");
   const isUndoRedoInProgress = useVersionsStore.getState().isUndoRedoInProgress;
 
   if (isUndoRedoInProgress) {
@@ -358,7 +358,8 @@ export async function recordVersionViaApi(
     // Update the versions store with the new version
     if (result.data) {
       // Dynamic import to avoid circular dependencies
-      const { useVersionsStore } = await import("@/stores/useVersionsStore");
+      const { useVersionsStore } =
+        await import("@/stores/editor/useVersionsStore");
       useVersionsStore.getState().recordVersion(result.data);
 
       // Notify that save completed (for clearing local undo buffers)

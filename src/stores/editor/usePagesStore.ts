@@ -34,6 +34,7 @@ import {
   triggerThumbnailGeneration,
   useComponentsStore,
 } from "./useComponentsStore";
+import { pagesApi } from "@/lib/api";
 import {
   detachComponentFromLayers,
   updateLayersWithComponent,
@@ -59,6 +60,13 @@ interface PagesActions {
   removePageLocal: (pageId: string) => void;
 
   getPageById: (pageId: string) => Page | undefined;
+
+  /**
+   * Re-fetch a single page from the server and replace it in the array
+   * immutably (used by undo/redo "restore latest"). Resolves `true` when the
+   * page was refreshed, `false` when the fetch failed or the page is gone.
+   */
+  reloadPage: (pageId: string) => Promise<boolean>;
 
   setLayers: (pageId: string, layers: Layer[]) => void;
   addLayerWithId: (
@@ -151,6 +159,23 @@ export const usePagesStore = create<PagesStore>((set, get) => ({
   },
 
   getPageById: (pageId) => get().pages.find((page) => page.id === pageId),
+
+  reloadPage: async (pageId) => {
+    const response = await pagesApi.getById(pageId);
+    const fresh = response.data;
+    if (response.error || !fresh) return false;
+
+    const normalized: Page = {
+      ...fresh,
+      layers: Array.isArray(fresh.layers) ? fresh.layers : [],
+    };
+    set((state) => ({
+      pages: state.pages.some((page) => page.id === pageId)
+        ? state.pages.map((page) => (page.id === pageId ? normalized : page))
+        : state.pages,
+    }));
+    return true;
+  },
 
   setLayers: (pageId, layers) => {
     set((state) => ({ pages: withUpdatedLayers(state.pages, pageId, layers) }));
@@ -436,8 +461,8 @@ export const usePagesStore = create<PagesStore>((set, get) => ({
    * IMPORTANT: componentId is preserved in nested layers to support nested components
    */
   createComponentFromLayer: async (pageId, layerId, componentName) => {
-    const { pages, copyLayer } = get();
-    const draft = pages[pageId];
+    const { getPageById, copyLayer } = get();
+    const draft = getPageById(pageId);
     if (!draft) return null;
 
     const layerToCopy = copyLayer(pageId, layerId);
@@ -469,12 +494,7 @@ export const usePagesStore = create<PagesStore>((set, get) => ({
       newComponent.id,
     );
 
-    set({
-      pages: {
-        ...pages,
-        [pageId]: { ...draft, layers: newLayers },
-      },
-    });
+    get().setLayers(pageId, newLayers);
 
     // Generate thumbnail in the background (fire-and-forget)
     triggerThumbnailGeneration(
@@ -491,23 +511,16 @@ export const usePagesStore = create<PagesStore>((set, get) => ({
    * Used when a component is updated
    */
   updateComponentOnLayers: (componentId) => {
-    const { pages } = get();
-
-    let mutated = false;
-    const updatedDrafts: typeof pages = { ...pages };
-
-    Object.keys(pages).forEach((pageId) => {
-      const draft = pages[pageId];
-      const nextLayers = updateLayersWithComponent(draft.layers, componentId);
-      if (nextLayers !== draft.layers) {
+    set((state) => {
+      let mutated = false;
+      const pages = state.pages.map((page) => {
+        const nextLayers = updateLayersWithComponent(page.layers, componentId);
+        if (nextLayers === page.layers) return page;
         mutated = true;
-        updatedDrafts[pageId] = { ...draft, layers: nextLayers };
-      }
+        return { ...page, layers: nextLayers };
+      });
+      return mutated ? { pages } : state;
     });
-
-    if (mutated) {
-      set({ pages: updatedDrafts });
-    }
   },
 
   /**
@@ -516,27 +529,23 @@ export const usePagesStore = create<PagesStore>((set, get) => ({
    * Replaces component instances with the component's actual children layers
    */
   detachComponentFromAllLayers: (componentId) => {
-    const { pages } = get();
     const { getComponentById } = useComponentsStore.getState();
 
     // Get the component data to extract its layers
     const component = getComponentById(componentId);
 
-    const updatedDrafts = { ...pages };
-
-    Object.keys(updatedDrafts).forEach((pageId) => {
-      const draft = updatedDrafts[pageId];
-      updatedDrafts[pageId] = {
-        ...draft,
-        layers: detachComponentFromLayers(
-          draft.layers,
+    set((state) => ({
+      pages: state.pages.map((page) => {
+        const nextLayers = detachComponentFromLayers(
+          page.layers,
           componentId,
           component || undefined,
-        ),
-      };
-    });
-
-    set({ pages: updatedDrafts });
+        );
+        return nextLayers === page.layers
+          ? page
+          : { ...page, layers: nextLayers };
+      }),
+    }));
   },
 
   /**

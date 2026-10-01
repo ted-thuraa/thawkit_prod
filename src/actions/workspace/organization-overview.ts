@@ -8,7 +8,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth/auth";
 import { requireOrgPermission } from "@/lib/auth/require-org-permission";
 import { WORKSPACE_ROLE_MATRIX } from "@/lib/workspace/permissions";
-import { organizationOverviewCacheTag } from "@/lib/queries/organization";
+import { organizationOverviewCacheTag } from "@/lib/querries/organization";
 import { isAppError, UpstreamServiceError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 import type { ActionResult, OrganizationOverviewDTO } from "@/types/workspace";
@@ -23,7 +23,7 @@ const updateOverviewSchema = z.object({
   logo: z.string().url("Logo must be a valid URL.").nullable(),
 });
 
-export type UpdateOrganizationOverviewInput = z.infer
+export type UpdateOrganizationOverviewInput = z.infer<
   typeof updateOverviewSchema
 >;
 

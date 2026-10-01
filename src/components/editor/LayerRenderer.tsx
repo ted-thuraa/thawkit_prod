@@ -120,12 +120,12 @@ import {
   extractPlainTextFromTiptap,
 } from "@/lib/tiptap-utils";
 
-import { useCollectionLayerStore } from "@/stores/useCollectionLayerStore";
+import { useCollectionLayerStore } from "@/stores/editor/useCollectionLayerStore";
 import { useFilterStore } from "@/stores/editor/useFilterStore";
 import { useCollectionsStore } from "@/stores/editor/useCollectionsStore";
 import { useAssetsStore } from "@/stores/editor/useAssetsStore";
 import { useColorVariablesStore } from "@/stores/editor/useColorVariablesStore";
-import { useGlobalsStore } from "@/stores/useGlobalsStore";
+import { useGlobalsStore } from "@/stores/editor/useGlobalsStore";
 import { ShimmerSkeleton } from "@/components/ui/shimmer-skeleton";
 import {
   combineBgValues,
@@ -158,6 +158,8 @@ import {
 import type { DesignColorVariable } from "@/types/funnel";
 import LayerContextMenu from "@/app/(main)/campaign/[campaignId]/edit/_components/LayerContextMenu";
 import CanvasTextEditor from "@/app/(main)/campaign/[campaignId]/edit/_components/CanvasTextEditor";
+import { useComponentsStore } from "@/stores/editor/useComponentsStore";
+import { getComponentVariantLayers } from "@/lib/component-variant-utils";
 
 /**
  * Build a map of layerId -> anchor value (attributes.id) for O(1) anchor resolution
@@ -306,9 +308,9 @@ const LayerRenderer: React.FC<LayerRendererProps> = ({
   // Get pages and folders for link resolution
   // Use props if provided (SSR/preview), otherwise use store (editor)
   const storePages = usePagesStore((state) => state.pages);
-  const storeFolders = usePagesStore((state) => state.folders);
+  //const storeFolders = usePagesStore((state) => state.folders);
   const pages = pagesProp || storePages;
-  const folders = foldersProp || storeFolders;
+  //const folders = foldersProp || storeFolders;
 
   // Build anchor map once at top level for O(1) anchor resolution
   // Use prop if provided (recursive calls), otherwise build from layers
@@ -447,7 +449,7 @@ const LayerRenderer: React.FC<LayerRendererProps> = ({
         isInsideLink={isInsideLink}
         parentFormSettings={parentFormSettings}
         pages={pages}
-        folders={folders}
+        //folders={folders}
         collectionItemSlugs={collectionItemSlugs}
         isPreview={isPreview}
         translations={translations}
@@ -667,7 +669,7 @@ const LayerItemImpl: React.FC<{
     },
     [resolvedAssets, getAssetFromStore],
   );
-  const openFileManager = useEditorStore((state) => state.openFileManager);
+  //const openFileManager = useEditorStore((state) => state.openFileManager);
   const storeComponents = useComponentsStore((state) => state.components);
   const allComponents =
     storeComponents.length > 0 ? storeComponents : (componentsProp ?? []);
@@ -2347,46 +2349,46 @@ const LayerItemImpl: React.FC<{
   };
 
   // Open file manager for image layers on double-click
-  const openImageFileManager = useCallback(() => {
-    if (!isEditMode || !onLayerUpdate) return;
+  // const openImageFileManager = useCallback(() => {
+  //   if (!isEditMode || !onLayerUpdate) return;
 
-    // Get current asset ID for highlighting in file manager
-    const currentAssetId = isAssetVariable(layer.variables?.image?.src)
-      ? getAssetId(layer.variables?.image?.src)
-      : null;
+  //   // Get current asset ID for highlighting in file manager
+  //   const currentAssetId = isAssetVariable(layer.variables?.image?.src)
+  //     ? getAssetId(layer.variables?.image?.src)
+  //     : null;
 
-    openFileManager(
-      (asset) => {
-        // Validate asset type - allow both images and icons (SVGs)
-        const isImage =
-          asset.mime_type &&
-          isAssetOfType(asset.mime_type, ASSET_CATEGORIES.IMAGES);
-        const isSvg =
-          asset.mime_type &&
-          isAssetOfType(asset.mime_type, ASSET_CATEGORIES.ICONS);
+  //   openFileManager(
+  //     (asset) => {
+  //       // Validate asset type - allow both images and icons (SVGs)
+  //       const isImage =
+  //         asset.mime_type &&
+  //         isAssetOfType(asset.mime_type, ASSET_CATEGORIES.IMAGES);
+  //       const isSvg =
+  //         asset.mime_type &&
+  //         isAssetOfType(asset.mime_type, ASSET_CATEGORIES.ICONS);
 
-        if (!isImage && !isSvg) {
-          toast.error("Invalid asset type", {
-            description: "Please select an image or SVG file.",
-          });
-          return false; // Don't close file manager
-        }
+  //       if (!isImage && !isSvg) {
+  //         toast.error("Invalid asset type", {
+  //           description: "Please select an image or SVG file.",
+  //         });
+  //         return false; // Don't close file manager
+  //       }
 
-        // Update layer with new image asset
-        onLayerUpdate(layer.id, {
-          variables: {
-            ...layer.variables,
-            image: {
-              src: createAssetVariable(asset.id),
-              alt: layer.variables?.image?.alt || createDynamicTextVariable(""),
-            },
-          },
-        });
-      },
-      currentAssetId,
-      [ASSET_CATEGORIES.IMAGES, ASSET_CATEGORIES.ICONS],
-    );
-  }, [isEditMode, onLayerUpdate, layer, openFileManager]);
+  //       // Update layer with new image asset
+  //       onLayerUpdate(layer.id, {
+  //         variables: {
+  //           ...layer.variables,
+  //           image: {
+  //             src: createAssetVariable(asset.id),
+  //             alt: layer.variables?.image?.alt || createDynamicTextVariable(""),
+  //           },
+  //         },
+  //       });
+  //     },
+  //     currentAssetId,
+  //     [ASSET_CATEGORIES.IMAGES, ASSET_CATEGORIES.ICONS],
+  //   );
+  // }, [isEditMode, onLayerUpdate, layer, openFileManager]);
 
   const finishEditing = useCallback(() => {
     if (editingLayerId === layer.id) {
@@ -3056,7 +3058,7 @@ const LayerItemImpl: React.FC<{
 
         // Image layers: open file manager for quick image replacement
         if (layer.name === "image" || htmlTag === "img") {
-          openImageFileManager();
+          //openImageFileManager();
           return;
         }
 

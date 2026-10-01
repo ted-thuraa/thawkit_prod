@@ -177,6 +177,12 @@ export interface DeleteComponentResult {
 interface ComponentsActions {
   // Data loading
   setComponents: (components: Component[]) => void;
+  /**
+   * Atomically replace the store with a fresh campaign bootstrap snapshot.
+   * Also drops drafts, dirty flags and pending save timers so nothing from the
+   * previous campaign can leak or be saved into the new one.
+   */
+  hydrateFromBootstrap: (components: Component[]) => void;
   loadComponents: () => Promise<void>;
   /**
    * Apply an authoritative component snapshot from the server (e.g. after the AI
@@ -363,6 +369,21 @@ export const useComponentsStore = create<ComponentsStore>((set, get) => {
     // Set components (used by unified init)
     setComponents: (components) => set({ components }),
 
+    hydrateFromBootstrap: (components) => {
+      Object.values(get().saveTimeouts).forEach((timeout) =>
+        clearTimeout(timeout),
+      );
+      set({
+        components,
+        componentDrafts: {},
+        componentDraftDirty: {},
+        saveTimeouts: {},
+        isLoading: false,
+        isSaving: false,
+        error: null,
+      });
+    },
+
     // Apply an authoritative server snapshot (e.g. after AI edits a component).
     applyServerComponent: (component) => {
       const variants =
@@ -543,7 +564,7 @@ export const useComponentsStore = create<ComponentsStore>((set, get) => {
           for (const entity of affectedEntities) {
             if (entity.type === "page" && entity.pageId) {
               // Update the page draft with new layers (component detached)
-              const currentDraft = pagesStore.[pages][entity.pageId];
+              const currentDraft = pagesStore.getPageById(entity.pageId);
               if (currentDraft) {
                 pagesStore.setLayers(entity.pageId, entity.newLayers);
               }
