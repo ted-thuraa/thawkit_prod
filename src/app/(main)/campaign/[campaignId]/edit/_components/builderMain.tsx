@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useCallback, useEffect, useState } from "react";
 import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
 import type { EditorBootstrapContext } from "@/lib/editor/resolve-editor-bootstrap";
 import { pagesFromRows } from "@/lib/editor/page-from-row";
@@ -18,6 +18,7 @@ import { GitForkIcon, Palette, Plus } from "lucide-react";
 import RightPanel from "./RightPanel";
 import EditorToolbar from "./EditorToolbar";
 import EditorCenterCanvas from "./EditorCanvas";
+import { Layer } from "@/types/funnel";
 
 interface EditorShellProps {
   /** Floating panel pinned to the left edge. */
@@ -186,6 +187,41 @@ export function CampaignEditorMain({
     setEditingComponentVariantId,
   ]);
 
+  const handleLayerUpdate = useCallback(
+    (layerId: string, updates: Partial<Layer>) => {
+      const {
+        editingComponentId: compId,
+        editingComponentVariantId: variantId,
+      } = useEditorStore.getState();
+      if (compId) {
+        const { componentDrafts, updateComponentDraft } =
+          useComponentsStore.getState();
+        const variantDrafts = componentDrafts[compId];
+        const targetVariantId =
+          variantId && variantDrafts?.[variantId]
+            ? variantId
+            : variantDrafts
+              ? Object.keys(variantDrafts)[0]
+              : null;
+        if (!targetVariantId || !variantDrafts) return;
+        const layers = variantDrafts[targetVariantId] || [];
+        const updateTree = (tree: Layer[]): Layer[] =>
+          tree.map((l) => {
+            if (l.id === layerId) return { ...l, ...updates };
+            if (l.children) return { ...l, children: updateTree(l.children) };
+            return l;
+          });
+        updateComponentDraft(compId, targetVariantId, updateTree(layers));
+      } else {
+        const pageId = useEditorStore.getState().currentPageId;
+        if (pageId) {
+          usePagesStore.getState().updateLayer(pageId, layerId, updates);
+        }
+      }
+    },
+    [],
+  );
+
   if (needsPageRedirect) {
     if (pages.length === 0) {
       return (
@@ -203,13 +239,15 @@ export function CampaignEditorMain({
 
   const showRightPanel = urlState.type !== "page";
 
-  console.log(activePage);
-
   if (urlState.type === "layers" && activePage) {
     return (
       <EditorShell
         leftPanel={<LeftPanel campaignId={campaignId} />}
-        // rightPanel={showRightPanel ? <RightPanel /> : undefined}
+        rightPanel={
+          showRightPanel ? (
+            <RightPanel onLayerUpdate={handleLayerUpdate} />
+          ) : undefined
+        }
         toolbar={<EditorToolbar />}
       >
         {/* CANVAS SLOT — sits behind the floating panels and fills the whole
@@ -228,7 +266,11 @@ export function CampaignEditorMain({
     return (
       <EditorShell
         leftPanel={<LeftPanel campaignId={campaignId} />}
-        rightPanel={showRightPanel ? <RightPanel /> : undefined}
+        rightPanel={
+          showRightPanel ? (
+            <RightPanel onLayerUpdate={handleLayerUpdate} />
+          ) : undefined
+        }
         toolbar={<EditorToolbar />}
       >
         {/* CANVAS SLOT — sits behind the floating panels and fills the whole

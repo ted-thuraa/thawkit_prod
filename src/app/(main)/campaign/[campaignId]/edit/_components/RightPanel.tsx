@@ -1,5 +1,7 @@
 import React from "react";
 import { cn } from "@/lib/utils";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Layer } from "@/types/funnel";
 
 /**
  * ─────────────────────────────────────────────────────────────────────────
@@ -17,23 +19,46 @@ import { cn } from "@/lib/utils";
  * ─────────────────────────────────────────────────────────────────────────
  */
 interface RightPanelProps {
-  children?: React.ReactNode;
+  onLayerUpdate: (layerId: string, updates: Partial<Layer>) => void;
   className?: string;
 }
 
 const RightPanel = React.memo(function RightPanel({
-  children,
   className,
 }: RightPanelProps) {
+  const handleModeChange = (value: string) => {
+    if (value === "agent") {
+      //open();
+    } else {
+      //close();
+    }
+  };
+
   return (
     <aside
       aria-label="Properties"
       className={cn(
-        "flex h-full w-80 shrink-0 flex-col overflow-hidden rounded-xl border bg-background shadow-lg",
+        "w-64 shrink-0 bg-background border-l flex flex-col h-full overflow-hidden  rounded-xl border  shadow-lg",
         className,
       )}
     >
-      {children}
+      <div className="px-4 pt-4 shrink-0">
+        <Tabs value={"human"} onValueChange={handleModeChange}>
+          <TabsList className="w-full">
+            <TabsTrigger value="human" className="flex-1">
+              Human
+            </TabsTrigger>
+            <TabsTrigger value="agent" className="flex-1">
+              Agent
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <hr className="mt-4" />
+      </div>
+
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        {/* <RightSidebar embedded onLayerUpdate={onLayerUpdate} /> */}
+      </div>
     </aside>
   );
 });

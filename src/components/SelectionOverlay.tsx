@@ -12,6 +12,13 @@
 
 import React, { useEffect, useRef, useCallback } from "react";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
+import { useCanvasTextEditorStore } from "@/stores/editor/useCanvasTextEditorStore";
+import {
+  SelectionToolbar,
+  type SelectionToolbarAnchor,
+  type SelectionToolbarHandle,
+} from "@/components/SelectionToolbar";
+
 interface SelectionOverlayProps {
   /** Reference to the canvas iframe element */
   iframeElement: HTMLIFrameElement | null;
@@ -27,6 +34,8 @@ interface SelectionOverlayProps {
   activeSublayerIndex?: number | null;
   /** Active list item index within a list (null = highlight whole list block) */
   activeListItemIndex?: number | null;
+  /** Element identifier shown in the floating toolbar (e.g. "div") */
+  selectedLayerLabel?: string | null;
 }
 
 export function SelectionOverlay({
@@ -37,6 +46,7 @@ export function SelectionOverlay({
   zoom,
   activeSublayerIndex,
   activeListItemIndex,
+  selectedLayerLabel,
 }: SelectionOverlayProps) {
   const hoveredLayerIdRef = useRef(useEditorStore.getState().hoveredLayerId);
   const activeUIState = useEditorStore((state) => state.activeUIState);
@@ -55,6 +65,24 @@ export function SelectionOverlay({
   const hoveredContainerRef = useRef<HTMLDivElement>(null);
   const parentContainerRef = useRef<HTMLDivElement>(null);
 
+  // Floating action toolbar (positioned imperatively from updateAllOutlines)
+  const toolbarRef = useRef<SelectionToolbarHandle>(null);
+
+  // The toolbar is only meaningful for a single, whole-layer selection that is
+  // not being text-edited. (Drag / scroll / animation hiding is handled by
+  // hideAllOutlines below.)
+  const isTextEditing = useCanvasTextEditorStore((state) => state.isEditing);
+  const selectionCount = useEditorStore(
+    (state) => state.selectedLayerIds.length,
+  );
+  const isToolbarHidden =
+    !selectedLayerId ||
+    selectedLayerId === "body" ||
+    isTextEditing ||
+    selectionCount > 1 ||
+    (activeSublayerIndex !== null && activeSublayerIndex !== undefined) ||
+    (activeListItemIndex !== null && activeListItemIndex !== undefined);
+
   // Track drag/animation/resize state for scroll/mutation handlers
   const isDraggingRef = useRef(false);
   const isSliderAnimatingRef = useRef(false);
@@ -67,6 +95,7 @@ export function SelectionOverlay({
       hoveredContainerRef.current.style.display = "none";
     if (parentContainerRef.current)
       parentContainerRef.current.style.display = "none";
+    toolbarRef.current?.position(null);
   }, []);
 
   // Update outline(s) for all elements matching a layer ID
@@ -81,12 +110,12 @@ export function SelectionOverlay({
       outlineClass: string,
       blockIndex?: number | null,
       listItemIndex?: number | null,
-    ) => {
-      if (!container) return;
+    ): SelectionToolbarAnchor | null => {
+      if (!container) return null;
 
       if (!layerId) {
         container.style.display = "none";
-        return;
+        return null;
       }
 
       const isBody = layerId === "body";
@@ -121,7 +150,7 @@ export function SelectionOverlay({
       }
       if (targetElements.length === 0) {
         container.style.display = "none";
-        return;
+        return null;
       }
 
       container.style.display = "block";
@@ -147,6 +176,10 @@ export function SelectionOverlay({
       for (let i = targetElements.length; i < container.children.length; i++) {
         (container.children[i] as HTMLElement).style.display = "none";
       }
+
+      // Rect of the first instance (in overlay coordinates) — used to anchor
+      // the floating toolbar.
+      let firstRect: SelectionToolbarAnchor | null = null;
 
       targetElements.forEach((targetElement, idx) => {
         const child = container.children[idx] as HTMLElement;
@@ -176,7 +209,10 @@ export function SelectionOverlay({
         child.style.left = `${left}px`;
         child.style.width = `${width}px`;
         child.style.height = `${height}px`;
+
+        if (idx === 0) firstRect = { top, left, width, height };
       });
+      return firstRect;
     },
     [],
   );
@@ -234,7 +270,7 @@ export function SelectionOverlay({
 
       // Update selected outline (skip during drag)
       if (!skipSolidBorders) {
-        updateOutline(
+        const selectedRect = updateOutline(
           selectedContainerRef.current,
           selectedLayerId,
           ctx.iframeDoc,
@@ -245,6 +281,9 @@ export function SelectionOverlay({
           activeSublayerIndex,
           activeListItemIndex,
         );
+
+        // Anchor the floating toolbar to the same rect as the selected outline
+        toolbarRef.current?.position(selectedRect);
 
         const hovered = hoveredLayerIdRef.current;
         const effectiveHoveredId = hovered !== selectedLayerId ? hovered : null;
@@ -522,6 +561,14 @@ export function SelectionOverlay({
 
       {/* Selection outline container - hidden during drag */}
       <div ref={selectedContainerRef} style={{ display: "none" }} />
+
+      {/* Floating action toolbar - anchored above the selected element */}
+      <SelectionToolbar
+        ref={toolbarRef}
+        label={selectedLayerLabel || "Layer"}
+        hidden={isToolbarHidden}
+        accent={isStateActive ? "green" : "blue"}
+      />
     </div>
   );
 }

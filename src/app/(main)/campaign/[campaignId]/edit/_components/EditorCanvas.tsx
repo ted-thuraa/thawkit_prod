@@ -1437,6 +1437,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
               zoom={zoom}
               activeSublayerIndex={activeSublayerIndex}
               activeListItemIndex={activeListItemIndex}
+              selectedLayerLabel={selectedLayerName}
             />
           )}
 
