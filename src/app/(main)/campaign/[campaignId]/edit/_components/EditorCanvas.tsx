@@ -1417,13 +1417,13 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
   console.log("EditorCenterCanvas here");
 
   return (
-    <div className="flex-1 min-w-0 flex flex-col relative">
+    <div className="flex h-full w-full min-w-0 flex-col relative">
       {/* Top Bar */}
 
       {/* Canvas Area */}
       <div
         ref={canvasContainerRef}
-        className="flex-1 relative overflow-hidden bg-neutral-50 dark:bg-neutral-950/80 select-none"
+        className="flex-1 min-h-0 relative overflow-hidden bg-neutral-50 dark:bg-neutral-950/80 select-none"
       >
         {/* Selection overlay - renders outlines on top of the iframe */}
         {!isPreviewMode &&

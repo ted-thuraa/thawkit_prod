@@ -39,6 +39,8 @@ import {
   hasRichTextLinks,
 } from "@/lib/link-utils";
 import { HTML_TO_REACT_ATTRS } from "@/lib/parse-head-html";
+import { applyComponentOverrides } from "./resolve-components";
+import { getComponentVariantLayers } from "./component-variant-utils";
 
 // Alias for backwards compatibility within this file
 const hasLinkSettings = layerHasLink;
@@ -2088,11 +2090,16 @@ export function getLayerHtmlTag(layer: Layer): string {
     return "div";
   }
 
-  if (layer.settings?.tag) {
-    return layer.settings.tag;
-  }
+  const rawTag =
+    layer.settings?.tag ||
+    LAYER_NAME_TO_HTML_TAG[layer.name] ||
+    layer.name ||
+    "div";
 
-  return LAYER_NAME_TO_HTML_TAG[layer.name] || layer.name || "div";
+  // React treats capitalised JSX tags as components ("<Section /> is using
+  // incorrect casing"), and HTML tag names are case-insensitive anyway.
+  // Normalise, and fall back to <div> for anything that isn't a valid tag name.
+  return /^[A-Za-z][A-Za-z0-9-]*$/.test(rawTag) ? rawTag.toLowerCase() : "div";
 }
 
 /**

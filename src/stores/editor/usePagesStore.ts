@@ -35,10 +35,43 @@ import {
   useComponentsStore,
 } from "./useComponentsStore";
 import { pagesApi } from "@/lib/api";
+
 import {
   detachComponentFromLayers,
   updateLayersWithComponent,
 } from "@/lib/component-utils";
+
+// Pages saved before addLayerFromTemplate was fixed persisted the display
+// label ("Section") in layer.name instead of the element type ("section").
+// Repair those on load so structural checks and the renderer see lowercase names.
+const LEGACY_CAPITALISED_NAMES = new Set([
+  "section",
+  "div",
+  "button",
+  "link",
+  "form",
+  "input",
+  "textarea",
+  "select",
+  "checkbox",
+  "hr",
+  "image",
+  "video",
+  "heading",
+  "text",
+]);
+
+function normalizeLegacyLayerNames(page: Page): Page {
+  const fix = (layer: Layer): Layer => {
+    const lower = layer.name.toLowerCase();
+    const name =
+      layer.name !== lower && LEGACY_CAPITALISED_NAMES.has(lower)
+        ? lower
+        : layer.name;
+    return { ...layer, name, children: layer.children?.map(fix) };
+  };
+  return { ...page, layers: page.layers.map(fix) };
+}
 
 interface PagesState {
   /** Single source of truth for every page's layer tree (`page.layers`). */
@@ -141,7 +174,9 @@ export const usePagesStore = create<PagesStore>((set, get) => ({
 
   setPages: (pages) => set({ pages }),
   setError: (error) => set({ error }),
-  hydrateFromBootstrap: (pages) => set({ pages, error: null }),
+  // hydrateFromBootstrap: (pages) => set({ pages, error: null }),
+  hydrateFromBootstrap: (pages) =>
+    set({ pages: pages.map(normalizeLegacyLayerNames), error: null }),
   reset: () => set({ pages: [], isLoading: false, error: null }),
 
   updatePageLocal: (pageId, updates) => {

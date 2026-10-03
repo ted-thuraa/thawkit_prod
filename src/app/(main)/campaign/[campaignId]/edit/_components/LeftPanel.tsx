@@ -113,6 +113,19 @@ const LeftPanel = React.memo(function LeftPanel({
 
   const [showElementLibrary, setShowElementLibrary] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  // Keeps the panel body mounted while the collapse animation plays, then
+  // unmounts it (same cost profile as before: nothing rendered when closed).
+  const [isPanelMounted, setIsPanelMounted] = useState(false);
+  const expandPanel = () => {
+    setIsPanelMounted(true);
+    setIsExpanded(true);
+  };
+  const collapsePanel = () => setIsExpanded(false);
+  useEffect(() => {
+    if (isExpanded) return;
+    const timeout = setTimeout(() => setIsPanelMounted(false), 300);
+    return () => clearTimeout(timeout);
+  }, [isExpanded]);
 
   // ─── Store state ──────────────────────────────────────────────────────
   const currentPageId = useEditorStore((s) => s.currentPageId);
@@ -225,39 +238,57 @@ const LeftPanel = React.memo(function LeftPanel({
   return (
     <>
       <div
-        className={`relative z-30 h-full shrink-0 overflow-visible transition-[width] duration-300 ease-out ${
+        className={`relative z-30 h-full shrink-0 overflow-visible transition-[width] duration-300 ease-in-out motion-reduce:transition-none ${
           isExpanded ? "w-64" : "w-10"
         }`}
       >
-        {!isExpanded ? (
+        {/* One morphing card: collapsed it is a 40px trigger vertically centred
+            in the column; expanded it grows to the full-height panel (top-left
+            stays anchored at the panel's original position). */}
+        <div
+          className="absolute left-0 overflow-hidden rounded-xl border bg-background shadow-lg transition-[top,height,width] duration-300 ease-in-out motion-reduce:transition-none"
+          style={{
+            top: isExpanded ? 0 : "calc(50% - 1.25rem)",
+            height: isExpanded ? "100%" : "2.5rem",
+            width: isExpanded ? "16rem" : "2.5rem",
+          }}
+        >
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             size="icon"
             aria-label="Expand layers panel"
-            aria-expanded={false}
-            className="size-10 rounded-xl bg-background shadow-lg"
-            onClick={() => setIsExpanded(true)}
+            aria-expanded={isExpanded}
+            aria-hidden={isExpanded}
+            tabIndex={isExpanded ? -1 : 0}
+            className={`absolute inset-0 size-full rounded-xl transition-opacity duration-200 ease-in-out ${
+              isExpanded ? "pointer-events-none opacity-0" : "opacity-100"
+            }`}
+            onClick={expandPanel}
           >
             <Layers className="size-4" />
           </Button>
-        ) : (
-          <div className="relative h-full shrink-0 w-64">
-            {/* Floating card: full border + radius + shadow replace the old
-            docked `border-r`; `pb-2` (was `pb-0`) keeps the last tree row
-            off the rounded bottom corners. */}
-            <div className="flex h-full w-full overflow-hidden rounded-xl border bg-background p-4 pb-2 shadow-lg">
+
+          {isPanelMounted && (
+            <div
+              className={`flex h-full w-[calc(16rem-2px)] p-4 pb-2 transition-opacity duration-200 ease-in-out ${
+                isExpanded
+                  ? "animate-in fade-in delay-100 duration-200 fill-mode-backwards"
+                  : "pointer-events-none opacity-0"
+              }`}
+            >
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
                 aria-label="Collapse layers panel"
-                aria-expanded={true}
+                aria-expanded={isExpanded}
                 className="absolute right-3 top-3 z-30 size-8"
-                onClick={() => setIsExpanded(false)}
+                onClick={collapsePanel}
               >
                 <X className="size-4" />
               </Button>
+
               {/* Tabs */}
               <div className="w-full">
                 <Tabs
@@ -359,8 +390,8 @@ const LeftPanel = React.memo(function LeftPanel({
                 </Tabs>
               </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Invisible overlay during resize to prevent iframe from capturing mouse events */}
         {/* {isResizing && <div className="fixed inset-0 z-50 cursor-col-resize" />} */}

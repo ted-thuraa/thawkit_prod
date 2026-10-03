@@ -209,7 +209,7 @@ export function CampaignEditorMain({
     return (
       <EditorShell
         leftPanel={<LeftPanel campaignId={campaignId} />}
-        rightPanel={showRightPanel ? <RightPanel /> : undefined}
+        // rightPanel={showRightPanel ? <RightPanel /> : undefined}
         toolbar={<EditorToolbar />}
       >
         {/* CANVAS SLOT — sits behind the floating panels and fills the whole

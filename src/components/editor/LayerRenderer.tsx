@@ -2676,10 +2676,14 @@ const LayerItemImpl: React.FC<{
         }),
     );
 
+    // For all other values, keep them as-is return [jsxKey, value]; }), );
+
     // Parse style string to object if needed (for display: contents from collection wrappers)
-    const parsedAttrStyle =
+    // attrStyle comes from Record<string, unknown>, so it is unknown here —
+    // narrow it to something spreadable instead of spreading unknown below.
+    const parsedAttrStyle: React.CSSProperties | undefined =
       typeof attrStyle === "string"
-        ? Object.fromEntries(
+        ? (Object.fromEntries(
             attrStyle
               .split(";")
               .filter(Boolean)
@@ -2691,8 +2695,10 @@ const LayerItemImpl: React.FC<{
                 );
                 return [camelProp, val];
               }),
-          )
-        : attrStyle;
+          ) as React.CSSProperties)
+        : attrStyle && typeof attrStyle === "object"
+          ? (attrStyle as React.CSSProperties)
+          : undefined;
 
     // Resolve design color bindings from CMS fields (editor + published, supports gradients)
     const designBindings = layer.variables?.design as
@@ -4043,7 +4049,7 @@ const LayerItemImpl: React.FC<{
       if (htmlTag === "audio" || htmlTag === "video") {
         const originalRef = mediaProps.ref;
         const volumeValue = normalizedAttributes?.volume
-          ? parseInt(normalizedAttributes.volume) / 100
+          ? parseInt(String(normalizedAttributes.volume), 10) / 100
           : undefined;
 
         if (shouldAutoPlay || shouldMute || volumeValue !== undefined) {
