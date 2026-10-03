@@ -66,7 +66,9 @@ import PagesTree from "./PagesTree";
 // import PageSettingsPanel, {
 //   PageSettingsPanelHandle,
 // } from "./PageSettingsPanel";
-import type { Page as PageData } from "@/types/funnel";
+import type { Page as PageData, PageSettings } from "@/types/funnel";
+import { usePagesStore } from "@/stores/editor/usePagesStore";
+import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
 
 export const PAGE_TYPE_LABEL: Record<PageData["pageType"], string> = {
   landing_page: "Landing",
@@ -334,6 +336,10 @@ export default function PagesList({
                 <DropdownMenuItem onClick={() => handleAddPage()}>
                   <Icon name="page" className="size-3 opacity-60" />
                   Regular
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleAddPage()}>
+                  <Icon name="page" className="size-3 opacity-60" />
+                  Result
                 </DropdownMenuItem>
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
