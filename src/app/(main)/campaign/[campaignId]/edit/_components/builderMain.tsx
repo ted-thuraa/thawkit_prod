@@ -1,7 +1,10 @@
 "use client";
 
-import { ReactNode, useCallback, useEffect, useState } from "react";
+import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
+import { DEFAULT_LAYER_ID, type Viewport } from "@/lib/editor/editor-url";
+import { findLayerById } from "@/lib/editor/layer-tree-utils";
+import type { Layer } from "@/types/funnel";
 import type { EditorBootstrapContext } from "@/lib/editor/resolve-editor-bootstrap";
 import { pagesFromRows } from "@/lib/editor/page-from-row";
 import {
@@ -13,12 +16,9 @@ import { useComponentsStore } from "@/stores/editor/useComponentsStore";
 import { useLayerStylesStore } from "@/stores/editor/useLayerStylesStore";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
 import LeftPanel from "./LeftPanel";
-import { Button } from "@/components/ui/button";
-import { GitForkIcon, Palette, Plus } from "lucide-react";
 import RightPanel from "./RightPanel";
 import EditorToolbar from "./EditorToolbar";
 import EditorCenterCanvas from "./EditorCanvas";
-import { Layer } from "@/types/funnel";
 
 interface EditorShellProps {
   /** Floating panel pinned to the left edge. */
@@ -99,12 +99,14 @@ export function CampaignEditorMain({
   campaignId: string;
   bootstrap: EditorBootstrapContext;
 }) {
-  const { urlState, navigateToLayers } = useCampaignEditorUrl(campaignId);
-  const [viewportMode, setViewportMode] = useState<
-    "desktop" | "tablet" | "mobile"
-  >(urlState.view || "desktop");
+  const { urlState, navigateToPage, replaceViewInUrl } =
+    useCampaignEditorUrl(campaignId);
+  const [viewportMode, setViewportModeState] = useState<Viewport>(
+    urlState.view || "desktop",
+  );
   useEffect(() => {
-    // Order matters: reset first (it also clears usePagesStore), THEN hydrate.
+    // Order matters: reset first (it also clears usePagesStore and restores
+    // the store-owned sidebar tab to "layers"), THEN hydrate.
     useEditorStore.getState().resetForNewCampaign();
     usePagesStore
       .getState()
@@ -129,39 +131,97 @@ export function CampaignEditorMain({
   }, [campaignId]);
 
   const pages = usePagesStore((state) => state.pages);
-  //const components = useComponentsStore((state) => state.components);
   const setCurrentPageId = useEditorStore((state) => state.setCurrentPageId);
 
+  // ─── Viewport ↔ `?view=` ──────────────────────────────────────────────
+  // User-driven viewport changes are mirrored into the URL with
+  // history.replaceState (fine-grained state — no history entry), and URL
+  // changes (back/forward, pasted link) are mirrored back into local state.
+  const setViewportMode = useCallback(
+    (mode: Viewport) => {
+      setViewportModeState(mode);
+      replaceViewInUrl(mode);
+    },
+    [replaceViewInUrl],
+  );
+  useEffect(() => {
+    if (urlState.view && urlState.view !== viewportMode) {
+      setViewportModeState(urlState.view);
+    }
+    // Only react to the URL changing; `viewportMode` changes are pushed to
+    // the URL by `setViewportMode` above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlState.view]);
+
+  // ─── Route → active page ──────────────────────────────────────────────
+  // Every page-oriented route is now `/edit/pages/[pageId]` (the base
+  // `/edit` route has no resource yet and is redirected below).
   const isPageOrientedRoute =
-    urlState.type === null ||
-    urlState.type === "layers" ||
-    urlState.type === "page";
+    urlState.type === null || urlState.type === "page";
   const activePage =
     isPageOrientedRoute && urlState.resourceId != null
       ? (pages.find((p) => p.id === urlState.resourceId) ?? null)
       : null;
   const needsPageRedirect = isPageOrientedRoute && activePage === null;
 
+  // No / unknown page in the URL → resolve to a REAL page route with query
+  // defaults (`?view=desktop&tab=design&layer=body`). `replace`, because the
+  // pre-redirect URL was never a navigation target worth a back-button entry.
   useEffect(() => {
-    if (!needsPageRedirect) return;
-    const firstPage = pages[0];
-    if (firstPage) {
-      navigateToLayers(firstPage.id, { replace: true });
-    }
-  }, [needsPageRedirect, pages, navigateToLayers]);
+    if (!needsPageRedirect || pages.length === 0) return;
+    const firstPage = [...pages].sort((a, b) => a.order - b.order)[0];
+    navigateToPage(firstPage.id, { replace: true });
+  }, [needsPageRedirect, pages, navigateToPage]);
 
   // Keep useEditorStore's currentPageId in sync with whichever page the
-  // URL actually resolved to — read by the (future) layers tree and
+  // URL actually resolved to — read by the layers tree, pages list and
   // canvas so they don't each need their own copy of "which page is this."
   useEffect(() => {
     setCurrentPageId(activePage?.id ?? null);
   }, [activePage?.id, setCurrentPageId]);
 
+  // ─── URL `?layer=` → store selection (reconciliation) ─────────────────
+  // Runs once per page switch (and on first load), AFTER the page's layer
+  // tree is in the store (`activePage` is only non-null once it is). The
+  // requested layer is validated against that page's tree: a valid id is
+  // selected, otherwise fall back to `body`, otherwise nothing. Subsequent
+  // selection changes flow the other way (store → URL) via
+  // `setSelectedLayerId`, so this must not re-run on every `layer` change.
+  const reconciledPageIdRef = useRef<string | null>(null);
+  const activePageLayers = activePage?.layers;
+  const urlLayerId = urlState.layerId;
+  useEffect(() => {
+    if (!activePage || urlState.type !== "page") return;
+    if (reconciledPageIdRef.current === activePage.id) return;
+    reconciledPageIdRef.current = activePage.id;
+
+    const { selectLayerWithSublayer, clearSelection } =
+      useEditorStore.getState();
+    const clean = {
+      textStyleKey: null,
+      sublayerIndex: null,
+      listItemIndex: null,
+    };
+
+    const requested = urlLayerId || DEFAULT_LAYER_ID;
+    const layers = activePageLayers ?? [];
+    if (findLayerById(layers, requested)) {
+      selectLayerWithSublayer(requested, clean);
+    } else if (findLayerById(layers, DEFAULT_LAYER_ID)) {
+      selectLayerWithSublayer(DEFAULT_LAYER_ID, clean);
+    } else {
+      clearSelection();
+    }
+    // `urlLayerId` / `activePageLayers` are read only at the moment the
+    // page id changes — see the comment above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage?.id, urlState.type]);
+
   // Same idea for component-edit mode: LeftPanel.tsx's Layers tab reads
   // `editingComponentId`/`editingComponentVariantId` to decide whether to
   // render a page's layer tree or a component variant's, and
   // ComponentVariantsSection needs to know which variant the URL says is
-  // active. Without this sync, navigating to `/editor/components/[id]`
+  // active. Without this sync, navigating to `/edit/components/[id]`
   // would never actually flip the store into component-edit mode — the
   // URL would say "component" but every store consumer would still think
   // it's editing whatever page was open before.
@@ -226,7 +286,7 @@ export function CampaignEditorMain({
     if (pages.length === 0) {
       return (
         <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
-          This funnel has no pages yet. Page creation lands in a later phase.
+          This funnel has no pages yet.
         </div>
       );
     }
@@ -237,32 +297,11 @@ export function CampaignEditorMain({
     );
   }
 
-  const showRightPanel = urlState.type !== "page";
-
-  if (urlState.type === "layers" && activePage) {
-    return (
-      <EditorShell
-        leftPanel={<LeftPanel campaignId={campaignId} />}
-        rightPanel={
-          showRightPanel ? (
-            <RightPanel onLayerUpdate={handleLayerUpdate} />
-          ) : undefined
-        }
-        toolbar={<EditorToolbar />}
-      >
-        {/* CANVAS SLOT — sits behind the floating panels and fills the whole
-          area, so the mounted component must size itself `h-full w-full`.
-          Not mounted yet, same as before this pass: */}
-        <EditorCenterCanvas
-          currentPageId={activePage.id}
-          viewportMode={viewportMode}
-          setViewportMode={setViewportMode}
-        />
-      </EditorShell>
-    );
-  }
-
   if (urlState.type === "page" && activePage) {
+    // The right inspector is hidden in page-settings mode (`?edit=`), where
+    // the left panel hosts the settings form instead.
+    const showRightPanel = !urlState.isEditing;
+
     return (
       <EditorShell
         leftPanel={<LeftPanel campaignId={campaignId} />}
@@ -274,8 +313,7 @@ export function CampaignEditorMain({
         toolbar={<EditorToolbar />}
       >
         {/* CANVAS SLOT — sits behind the floating panels and fills the whole
-          area, so the mounted component must size itself `h-full w-full`.
-          Not mounted yet, same as before this pass: */}
+          area, so the mounted component must size itself `h-full w-full`. */}
         <EditorCenterCanvas
           currentPageId={activePage.id}
           viewportMode={viewportMode}
@@ -285,27 +323,6 @@ export function CampaignEditorMain({
     );
   }
 
-  // urlState.type === "component"
-  //   const activeComponent =
-  //     components.find((c) => c.id === urlState.resourceId) ?? null;
-
-  return (
-    <div className="h-full flex">
-      {/* <LeftPanel campaignId={campaignId} />
-      <div className="flex-1 h-full overflow-hidden flex items-center justify-center text-sm text-muted-foreground">
-        {activeComponent ? (
-          <>
-            Component editor for &quot;{activeComponent.name}&quot;
-            {urlState.variantId ? ` (variant ${urlState.variantId})` : ""}
-          </>
-        ) : (
-          <>
-            Component &quot;{urlState.resourceId}&quot; not found in this
-            workspace.
-          </>
-        )}
-      </div>
-      <RightPanel /> */}
-    </div>
-  );
+  // urlState.type === "component" — component editing UI is not mounted yet.
+  return <div className="h-full flex" />;
 }

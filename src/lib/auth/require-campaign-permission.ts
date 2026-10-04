@@ -21,7 +21,7 @@ export interface AuthorizedCampaignActor extends AuthorizedActor {
 
 /**
  * The authorization gate for mounting the campaign editor (and any other
- * campaign-content mutation) at `campaign/[campaignId]/editor`. Composes
+ * campaign-content mutation) at `campaign/[campaignId]/edit`. Composes
  * `requireOrgPermission` rather than duplicating its membership/role/
  * banned/impersonation logic — this wrapper's only job is resolving
  * `campaignId` to the `organizationId` that gate actually needs.

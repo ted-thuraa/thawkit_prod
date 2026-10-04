@@ -62,7 +62,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAlertDialog } from "@/providers/alert-dialog-provider";
-import { useCampaignEditorUrl, type SidebarTab } from "@/hooks/use-editor-url";
+import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
 import {
   EditorSidebarTab,
   useEditorStore,
@@ -104,12 +104,7 @@ const LeftPanel = React.memo(function LeftPanel({
   readOnly = false,
 }: LeftPanelProps) {
   // const { showAlertDialog } = useAlertDialog();
-  const {
-    urlState,
-    navigateToLayers,
-    navigateToPages,
-    navigateToPageSettings,
-  } = useCampaignEditorUrl(campaignId);
+  const { urlState } = useCampaignEditorUrl(campaignId);
 
   const [showElementLibrary, setShowElementLibrary] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -127,9 +122,15 @@ const LeftPanel = React.memo(function LeftPanel({
     return () => clearTimeout(timeout);
   }, [isExpanded]);
 
+  // Publish open/closed to the store so canvas overlays can react to it.
+  const setLeftPanelOpen = useEditorStore((s) => s.setLeftPanelOpen);
+  useEffect(() => {
+    setLeftPanelOpen(isExpanded);
+    return () => setLeftPanelOpen(false);
+  }, [isExpanded, setLeftPanelOpen]);
+
   // ─── Store state ──────────────────────────────────────────────────────
   const currentPageId = useEditorStore((s) => s.currentPageId);
-  const setCurrentPageId = useEditorStore((state) => state.setCurrentPageId);
   const selectedLayerId = useEditorStore((s) => s.selectedLayerId);
   const setSelectedLayerId = useEditorStore((s) => s.setSelectedLayerId);
   const setActiveSidebarTab = useEditorStore((s) => s.setActiveSidebarTab);
@@ -144,12 +145,9 @@ const LeftPanel = React.memo(function LeftPanel({
   const removePageLocal = usePagesStore((s) => s.removePageLocal);
   const addLayerFromTemplate = usePagesStore((s) => s.addLayerFromTemplate);
   const setLayers = usePagesStore((s) => s.setLayers);
-  const activeSidebarTab = useEditorStore((s) => s.activeSidebarTab);
-
-  const activeTab: EditorSidebarTab = activeSidebarTab;
-  useEffect(() => {
-    setActiveSidebarTab(activeSidebarTab);
-  }, [activeSidebarTab, setActiveSidebarTab]);
+  // The active sidebar tab is STORE-owned (default "layers"); it is never
+  // read from, or written to, the URL.
+  const activeTab: EditorSidebarTab = useEditorStore((s) => s.activeSidebarTab);
 
   const currentPage = pages.find((p) => p.id === currentPageId) ?? null;
 
@@ -210,11 +208,11 @@ const LeftPanel = React.memo(function LeftPanel({
   //const settingsRef = useRef<PageSettingsPanelHandle>(null);
 
   useEffect(() => {
-    if (activeTab === "pages" && urlState.isEditingPage && currentPageId) {
+    if (activeTab === "pages" && urlState.isEditing && currentPageId) {
       setSettingsPageId(currentPageId);
       setSettingsTab(urlState.editTab ?? "general");
     }
-  }, [activeTab, currentPageId, urlState.editTab, urlState.isEditingPage]);
+  }, [activeTab, currentPageId, urlState.editTab, urlState.isEditing]);
 
   const hasLandingPage = pages.some((p) => p.pageType === "landing_page");
 
@@ -293,10 +291,9 @@ const LeftPanel = React.memo(function LeftPanel({
               <div className="w-full">
                 <Tabs
                   value={activeTab}
-                  onValueChange={async (value) => {
-                    const newTab = value as SidebarTab;
-
-                    setActiveSidebarTab(newTab);
+                  onValueChange={(value) => {
+                    // Store-only: updates immediately, no navigation.
+                    setActiveSidebarTab(value as EditorSidebarTab);
                     setShowElementLibrary(false);
                   }}
                   className="h-full overflow-hidden gap-0!"
@@ -374,16 +371,12 @@ const LeftPanel = React.memo(function LeftPanel({
                     className="flex flex-col min-h-0 overflow-y-auto no-scrollbar"
                   >
                     <PagesList
-                      //ref={pagesRef}
+                      campaignId={campaignId}
                       pages={pages}
                       currentPageId={currentPageId}
-                      onPageSelect={(pageId: string) => {
-                        // setCurrentPageId(pageId);
-                        // if (isEditor) {
-                        //   useEditorStore.getState().setActiveSidebarTab('layers');
-                        // }
-                      }}
-                      setCurrentPageId={setCurrentPageId}
+                      // Fired after a page has been explicitly OPENED
+                      // (double-click / "Open"): jump back to the Layers tab.
+                      onPageOpened={() => setActiveSidebarTab("layers")}
                       readOnly={readOnly}
                     />
                   </TabsContent>

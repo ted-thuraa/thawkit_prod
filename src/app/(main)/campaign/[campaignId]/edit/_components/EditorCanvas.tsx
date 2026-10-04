@@ -519,6 +519,9 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
   onExitComponentEditMode,
 }: EditorCenterCanvasProps) {
   const selectedLayerId = useEditorStore((state) => state.selectedLayerId);
+  // The Pages tab hides canvas outlines only while that tab is actually on
+  // screen; with the left panel collapsed they always render.
+  const isLeftPanelOpen = useEditorStore((state) => state.isLeftPanelOpen);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
@@ -1315,11 +1318,32 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
 
   const handleRedo = useCallback(async () => {}, []);
 
-  // Handle layer hover from Canvas (for SelectionOverlay)
-  const handleCanvasLayerHover = useCallback(
-    (layerId: string | null) => {},
-    [],
-  );
+  // Direct canvas hover → the ONE canonical `hoveredLayerId` in the editor
+  // store (the same field the layers tree writes). `SelectionOverlay`
+  // subscribes to it and paints the outline, so this works identically
+  // whether or not the left panel is open. Component-root resolution has
+  // already happened in `Canvas.handleLayerHover`. Hover never selects.
+  const handleCanvasLayerHover = useCallback((layerId: string | null) => {
+    const { isDraggingLayerOnCanvas, isDraggingToCanvas, setHoveredLayerId } =
+      useEditorStore.getState();
+    // Drags own the outlines (drop indicators); don't fight them.
+    if (layerId !== null && (isDraggingLayerOnCanvas || isDraggingToCanvas)) {
+      return;
+    }
+    setHoveredLayerId(layerId);
+  }, []);
+
+  // Pointer leaving the canvas iframe entirely must clear hover, even when
+  // the last layer's own `mouseleave` resolved to a neighbour at the edge.
+  useEffect(() => {
+    if (!canvasIframeElement) return;
+    const clearHover = () => useEditorStore.getState().setHoveredLayerId(null);
+    canvasIframeElement.addEventListener("mouseleave", clearHover);
+    return () => {
+      canvasIframeElement.removeEventListener("mouseleave", clearHover);
+      clearHover();
+    };
+  }, [canvasIframeElement]);
 
   // Handle drop callback for useCanvasDropDetection
   const handleCanvasDrop = useCallback(
@@ -1427,7 +1451,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
       >
         {/* Selection overlay - renders outlines on top of the iframe */}
         {!isPreviewMode &&
-          activeSidebarTab !== "pages" &&
+          (activeSidebarTab !== "pages" || !isLeftPanelOpen) &&
           canvasIframeElement && (
             <SelectionOverlay
               iframeElement={canvasIframeElement}

@@ -38,12 +38,12 @@ export interface EditorBootstrapContext {
  * response). That pattern means every editor mount pays a network
  * round-trip plus a loading-spinner frame before any content can render.
  *
- * This resolver is called from `campaign/[campaignId]/editor/layout.tsx` — a
+ * This resolver is called from `campaign/[campaignId]/edit/layout.tsx` — a
  * Server Component — so the equivalent data is fetched during the initial
  * render, before anything reaches the browser, and passed down as props
  * through `EditorLayoutClient` to `CampaignEditorMain`. Because Next.js
  * layouts persist across sub-route navigation within the same segment
- * (`layers/[pageId]` → `layers/[otherPageId]` doesn't remount
+ * (`pages/[pageId]` → `pages/[otherPageId]` doesn't remount
  * `layout.tsx`), this only runs once per distinct `campaignId`, not once
  * per navigation — the same "don't repeat expensive data loads" property
  * the persistent-builder pattern is designed for, just achieved server-side

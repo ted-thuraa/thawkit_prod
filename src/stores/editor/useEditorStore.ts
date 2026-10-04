@@ -4,7 +4,10 @@
 
 import { create } from "zustand";
 import type { Layer, Breakpoint, UIState } from "@/types/funnel";
-import { scheduleLayerIdUrlUpdate } from "@/hooks/use-editor-url";
+import {
+  isEditorResourceRoute,
+  scheduleLayerIdUrlUpdate,
+} from "@/lib/editor/editor-url";
 import { useCanvasTextEditorStore } from "./useCanvasTextEditorStore";
 import { usePagesStore } from "./usePagesStore";
 
@@ -49,14 +52,14 @@ import { usePagesStore } from "./usePagesStore";
  *     layout-blocks library; not something this project has. Pruned to
  *     `'elements' | 'components'`.
  *
- * `activeSidebarTab` is likewise NOT carried over as store state: Ycode
- * keeps it here as independent client state that the route-handling effect
- * happens to also call `setActiveSidebarTab()` on. This project instead
- * derives the equivalent value (`urlState.sidebarTab`) directly from the
- * URL in use-campaign-editor-url.ts and passes it to EditorBody as a
- * controlled prop — see that file's comment. Simpler here because there's
- * currently no way to change the active sidebar tab independently of
- * navigating; if one shows up later, that's the point to reconsider.
+ * `activeSidebarTab` (Layers / Pages) is STORE-OWNED client state, default
+ * "layers". It is never derived from the URL and has no query param: the
+ * route only says what is being edited (page / component / settings mode),
+ * while this field says which left-sidebar tab is showing. Tab changes just
+ * call `setActiveSidebarTab`, and `resetForNewCampaign` restores the default.
+ * Navigation helpers (`navigateToNextPage` in use-editor-url.ts) may READ this
+ * value to pick page- vs layer-oriented behaviour, but never write the URL
+ * from it.
  * ─────────────────────────────────────────────────────────────────────────
  */
 
@@ -152,6 +155,8 @@ interface EditorState {
   richTextSheetLayerId: string | null;
   isSidebarResizing: boolean;
   leftSidebarWidth: number;
+  /** Whether the floating left panel is expanded (not the collapsed 40px trigger). */
+  isLeftPanelOpen: boolean;
   isCanvasContextMenuOpen: boolean;
   // Slider transition state (hides outlines during slide animation)
   isSliderAnimating: boolean;
@@ -267,6 +272,7 @@ interface EditorActions {
   openCollectionItemSheet: (collectionId: string, itemId: string) => void;
   setSidebarResizing: (value: boolean) => void;
   setLeftSidebarWidth: (value: number) => void;
+  setLeftPanelOpen: (value: boolean) => void;
   setCanvasContextMenuOpen: (value: boolean) => void;
   closeRichTextSheet: () => void;
   setActiveTextStyleKey: (key: string | null) => void;
@@ -336,6 +342,7 @@ const initialState: EditorState = {
   layerDragStartPosition: null,
   isSidebarResizing: false,
   leftSidebarWidth: 256,
+  isLeftPanelOpen: false,
   activeTextStyleKey: null,
   isCanvasContextMenuOpen: false,
   activeInteractionTriggerLayerId: null,
@@ -398,14 +405,10 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       lastSelectedLayerId: id,
     });
 
-    if (typeof window !== "undefined") {
-      const isResourceRoute =
-        /^\/campaign\/[^/]+\/editor\/(layers|pages|components)\//.test(
-          window.location.pathname,
-        );
-      if (isResourceRoute) {
-        scheduleLayerIdUrlUpdate(id);
-      }
+    // Mirror into `?layer=` (debounced, replaceState) — only while on a
+    // page/component editor route.
+    if (isEditorResourceRoute()) {
+      scheduleLayerIdUrlUpdate(id);
     }
   },
 
@@ -567,7 +570,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     return stack.length > 0 ? stack[stack.length - 1] : null;
   },
 
-  setHoveredLayerId: (id) => set({ hoveredLayerId: id }),
+  // Canonical hover state — written by BOTH the layers tree and direct canvas
+  // hover. Bail out on an unchanged id so subscribers (SelectionOverlay) don't
+  // wake up for every mousemove-driven re-entry of the same layer.
+  setHoveredLayerId: (id) =>
+    set((state) =>
+      state.hoveredLayerId === id ? state : { hoveredLayerId: id },
+    ),
   setRenamingLayerId: (id) => set({ renamingLayerId: id }),
   setPreviewMode: (enabled) => set({ isPreviewMode: enabled }),
 
@@ -633,6 +642,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   setSidebarResizing: (value) => set({ isSidebarResizing: value }),
   setLeftSidebarWidth: (value) => set({ leftSidebarWidth: value }),
+  setLeftPanelOpen: (value) => set({ isLeftPanelOpen: value }),
   setCanvasContextMenuOpen: (value) => set({ isCanvasContextMenuOpen: value }),
   setSliderAnimating: (value) => set({ isSliderAnimating: value }),
   setActiveTextStyleKey: (key) => set({ activeTextStyleKey: key }),
@@ -666,14 +676,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       activeListItemIndex: sublayer.listItemIndex,
     });
 
-    if (typeof window !== "undefined") {
-      const pathname = window.location.pathname;
-      const isLayerRoute = /^\/ycode\/(layers|pages|components)\//.test(
-        pathname,
-      );
-      if (isLayerRoute) {
-        //updateUrlQueryParam('layer', layerId);
-      }
+    if (isEditorResourceRoute()) {
+      scheduleLayerIdUrlUpdate(layerId);
     }
   },
 }));

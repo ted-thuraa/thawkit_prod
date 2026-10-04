@@ -1843,6 +1843,9 @@ export default function LayersTree({
     return () => {
       el.removeEventListener("mouseover", onOver);
       el.removeEventListener("mouseleave", onLeave);
+      // The tree can unmount mid-hover (left panel collapsed / tab switched):
+      // no `mouseleave` fires then, so release the shared hover state here.
+      if (hoverId !== null) setHoveredLayerIdFromStore(null);
     };
   }, [setHoveredLayerIdFromStore]);
 

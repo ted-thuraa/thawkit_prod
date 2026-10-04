@@ -1,122 +1,85 @@
-// path: src/hooks/use-campaign-editor-url.ts
+// path: src/hooks/use-editor-url.ts
 
 "use client";
 
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useEditorStore } from "@/stores/editor/useEditorStore";
+import {
+  DEFAULT_LAYER_ID,
+  buildPageUrl,
+  parsePageSettingsTab,
+  parseRightTab,
+  parseViewport,
+  updateUrlQueryParam,
+  type PageSettingsTab,
+  type RightPanelTab,
+  type Viewport,
+} from "@/lib/editor/editor-url";
 
 /**
  * ─────────────────────────────────────────────────────────────────────────
- * Adapted from Ycode's hooks/use-editor-url.ts (github.com/ycode/ycode, MIT
- * licensed). Pure route/query interpretation: reads `usePathname()` +
- * `useSearchParams()` and returns a discriminated `CampaignEditorUrlState`,
- * plus navigation helpers that push canonical URLs. Nothing here touches
- * data loading — see CampaignEditorMain.tsx for why this exists (the
- * persistent-builder pattern) and what consumes this hook's output.
+ * Pure route/query interpretation for the campaign editor: reads
+ * `usePathname()` + `useSearchParams()` and returns a discriminated
+ * `CampaignEditorUrlState`, plus navigation helpers that push canonical URLs.
+ * Nothing here touches data loading — see builderMain.tsx for the
+ * persistent-builder pattern and what consumes this hook's output.
  *
- * SCOPE (this port): matches `campaign/[campaignId]/editor/{layers,pages,components}/[id]`
- * only. Ycode's hook also matches collections/settings/localization/
- * profile/forms/integrations routes — all excluded here per current scope
- * (CMS/Collections excluded entirely; the others have no Thawkit
- * equivalent yet). Extend this hook's match list the same way Ycode's
- * does — one additional `if (xMatch) return {...}` block per new route
- * type — when those land.
+ * ROUTE MODEL (the `layers/[pageId]` route no longer exists):
+ *
+ *   /campaign/{campaignId}/edit/pages/{pageId}?view=desktop&tab=design&layer=body
+ *   /campaign/{campaignId}/edit/pages/{pageId}?…&edit=general|seo|custom-code
+ *   /campaign/{campaignId}/edit/components/{componentId}?tab=…&layer=…&variant=…
+ *
+ * The LEFT sidebar tab (Layers / Pages) is deliberately NOT derived from the
+ * URL and has no query param: it is owned by
+ * `useEditorStore().activeSidebarTab` (default "layers"). The URL only says
+ * *what* is being edited (page / component / settings mode), never which
+ * sidebar tab is showing.
  *
  * `campaignId` is accepted as an explicit argument rather than regex-parsed
- * out of the pathname alongside everything else: the Server Component
- * layout already resolved it authoritatively from `params` before any of
- * this client code runs, so re-deriving it here would just be a second,
- * potentially-divergent source of truth for a value we already have.
+ * out of the pathname: the Server Component layout already resolved it
+ * authoritatively from `params` before any of this client code runs, so
+ * re-deriving it here would just be a second, potentially-divergent source of
+ * truth for a value we already have.
  * ─────────────────────────────────────────────────────────────────────────
  */
 
-export type EditorRouteType = "layers" | "page" | "component" | null;
-export type PageSettingsTab = "general" | "seo" | "custom-code";
-export type RightPanelTab = "design" | "settings" | "interactions";
-export type Viewport = "desktop" | "tablet" | "mobile";
-/** Matches EditorBody.tsx's Tabs value — inferred from route type, same as Ycode's `sidebarTab`. */
-export type SidebarTab = "layers" | "pages";
+export type { PageSettingsTab, RightPanelTab, Viewport };
+export {
+  scheduleLayerIdUrlUpdate,
+  updateUrlQueryParam,
+} from "@/lib/editor/editor-url";
+
+export type EditorRouteType = "page" | "component" | null;
 
 export interface CampaignEditorUrlState {
   type: EditorRouteType;
-  /** `pageId` for 'layers'/'page' routes, `componentId` for 'component' routes. */
+  /** `pageId` for 'page' routes, `componentId` for 'component' routes. */
   resourceId: string | null;
-  /** Page-settings edit mode — mirrors Ycode's `?edit=` on the pages route. */
-  isEditingPage: boolean;
+  /** Page-settings mode — `?edit=` is present on a page route. */
+  isEditing: boolean;
+  /** `?edit=` value; `null` for the default ("general") tab or outside settings mode. */
   editTab: PageSettingsTab | null;
-  sidebarTab: SidebarTab;
   view: Viewport | null;
+  /** RIGHT inspector tab (`?tab=`), not the left sidebar tab. */
   rightTab: RightPanelTab | null;
   layerId: string | null;
   variantId: string | null;
 }
 
-/**
- * Convention (matching Ycode): every page's root `layers` array contains
- * exactly one non-deletable root node with this id. Established here as
- * the URL default so an unqualified `/layers/[pageId]` always resolves to
- * a defined selection; actually enforcing "body is non-deletable" is a
- * Phase 6 (tree-mutation) concern, not something this hook or the schema
- * can enforce on its own.
- */
-const DEFAULT_LAYER_ID = "body";
-
-// ─── Standalone (non-hook) URL helpers ─────────────────────────────────────
-//
-// Ported from Ycode's `updateUrlQueryParam` (hooks/use-editor-url.ts) plus
-// its module-level debounce wrapper around the `?layer=` param
-// (stores/useEditorStore.ts's `scheduleLayerUrlUpdate`). Both live here,
-// as plain exported functions rather than values returned from the hook,
-// for the same reason Ycode keeps them separate: `useEditorStore` (Zustand)
-// runs OUTSIDE React's render tree and cannot call a hook — but it still
-// needs to mirror layer selection into the URL when the user clicks a
-// layer in the canvas or tree, not just when a component calls
-// `navigateToLayers`/`replaceLayerIdInUrl` directly.
-
-/**
- * Set (or clear) a single query param via `history.replaceState`, without
- * pushing a new history entry and without re-writing the URL when the
- * value hasn't actually changed (avoids Next.js's patched
- * `history.replaceState` triggering a router-wide re-render for a no-op).
- */
-export function updateUrlQueryParam(
-  key: string,
-  value: string | null | undefined,
-): void {
-  if (typeof window === "undefined") return;
-
-  const params = new URLSearchParams(window.location.search);
-  const current = params.get(key);
-  if ((value ?? null) === current) return;
-
-  if (value) params.set(key, value);
-  else params.delete(key);
-
-  const query = params.toString();
-  const newUrl = `${window.location.pathname}${query ? `?${query}` : ""}`;
-  window.history.replaceState({ ...window.history.state }, "", newUrl);
-}
-
-// Debounce window for the `?layer=…` URL mirror — long enough to coalesce
-// rapid selection changes (e.g. arrow-key navigation through the layers
-// tree), short enough that the URL is accurate by the time anyone copies
-// it. Matches Ycode's own LAYER_URL_DEBOUNCE_MS exactly.
-const LAYER_URL_DEBOUNCE_MS = 250;
-let pendingLayerUrlTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingLayerUrlValue: string | null = null;
-
-/**
- * Debounced version of `updateUrlQueryParam('layer', id)`, for high-frequency
- * callers (canvas click, tree click, arrow-key navigation) — see
- * useEditorStore's `setSelectedLayerId`, which is the one caller of this.
- */
-export function scheduleLayerIdUrlUpdate(layerId: string | null): void {
-  pendingLayerUrlValue = layerId;
-  if (pendingLayerUrlTimer !== null) return;
-  pendingLayerUrlTimer = setTimeout(() => {
-    pendingLayerUrlTimer = null;
-    updateUrlQueryParam("layer", pendingLayerUrlValue);
-  }, LAYER_URL_DEBOUNCE_MS);
+export interface NavigateToPageOptions {
+  view?: Viewport;
+  rightTab?: RightPanelTab;
+  layerId?: string;
+  /**
+   * Use router.replace() instead of push(). Appropriate for synthetic
+   * corrections (e.g. the base `/edit` route resolving to its first page, or
+   * an invalid page id falling back) where the pre-redirect URL was never a
+   * real navigation target the user should be able to land back on via the
+   * back button.
+   */
+  replace?: boolean;
 }
 
 export function useCampaignEditorUrl(campaignId: string) {
@@ -127,9 +90,6 @@ export function useCampaignEditorUrl(campaignId: string) {
   const base = `/campaign/${campaignId}/edit`;
 
   const urlState = useMemo((): CampaignEditorUrlState => {
-    const layersMatch = pathname?.match(
-      /^\/campaign\/[^/]+\/edit\/layers\/([^/]+)$/,
-    );
     const pageMatch = pathname?.match(
       /^\/campaign\/[^/]+\/edit\/pages\/([^/]+)$/,
     );
@@ -137,35 +97,18 @@ export function useCampaignEditorUrl(campaignId: string) {
       /^\/campaign\/[^/]+\/edit\/components\/([^/]+)$/,
     );
 
-    if (layersMatch) {
-      return {
-        type: "layers",
-        resourceId: layersMatch[1],
-        isEditingPage: false,
-        editTab: null,
-        sidebarTab: "layers",
-        view: (searchParams?.get("view") as Viewport | null) ?? null,
-        rightTab: (searchParams?.get("tab") as RightPanelTab | null) ?? null,
-        layerId: searchParams?.get("layer") ?? null,
-        variantId: null,
-      };
-    }
-
     if (pageMatch) {
       const editParam = searchParams?.get("edit");
-      const editTab =
-        editParam && editParam !== "" && editParam !== "general"
-          ? (editParam as PageSettingsTab)
-          : null;
+      const parsedEditTab = parsePageSettingsTab(editParam);
 
       return {
         type: "page",
         resourceId: pageMatch[1],
-        isEditingPage: searchParams?.has("edit") ?? false,
-        editTab,
-        sidebarTab: "pages",
-        view: (searchParams?.get("view") as Viewport | null) ?? null,
-        rightTab: (searchParams?.get("tab") as RightPanelTab | null) ?? null,
+        isEditing: searchParams?.has("edit") ?? false,
+        editTab:
+          parsedEditTab && parsedEditTab !== "general" ? parsedEditTab : null,
+        view: parseViewport(searchParams?.get("view")),
+        rightTab: parseRightTab(searchParams?.get("tab")),
         layerId: searchParams?.get("layer") ?? null,
         variantId: null,
       };
@@ -175,25 +118,21 @@ export function useCampaignEditorUrl(campaignId: string) {
       return {
         type: "component",
         resourceId: componentMatch[1],
-        isEditingPage: false,
+        isEditing: false,
         editTab: null,
-        // Matches Ycode: component-edit mode shows the Layers sidebar
-        // (editing the component's own tree), not a Pages tree.
-        sidebarTab: "layers",
         view: null,
-        rightTab: (searchParams?.get("tab") as RightPanelTab | null) ?? null,
+        rightTab: parseRightTab(searchParams?.get("tab")),
         layerId: searchParams?.get("layer") ?? null,
         variantId: searchParams?.get("variant") ?? null,
       };
     }
 
-    // Base /campaign/[campaignId]/editor route — no resource selected yet.
+    // Base /campaign/[campaignId]/edit route — no resource selected yet.
     return {
       type: null,
       resourceId: null,
-      isEditingPage: false,
+      isEditing: false,
       editTab: null,
-      sidebarTab: "layers",
       view: null,
       rightTab: null,
       layerId: null,
@@ -201,69 +140,102 @@ export function useCampaignEditorUrl(campaignId: string) {
     };
   }, [pathname, searchParams]);
 
-  const navigateToLayers = useCallback(
-    (
-      pageId: string,
-      options?: {
-        view?: Viewport;
-        rightTab?: RightPanelTab;
-        layerId?: string;
-        /**
-         * Use router.replace() instead of push(). Ycode's own
-         * navigateToLayers always pushes — appropriate for a real user
-         * action (clicking a page) that should be back-navigable. This
-         * codebase adds `replace` for the one case Ycode doesn't
-         * distinguish: CampaignEditorMain's synthetic "no/invalid resource
-         * in the URL, redirect to the funnel's first page" correction,
-         * where the pre-redirect URL was never a real navigation target
-         * the user should be able to land back on via the back button.
-         */
-        replace?: boolean;
-      },
-    ) => {
-      const params = new URLSearchParams(window.location.search);
-      params.delete("edit"); // layers view is never in page-settings edit mode
-      params.set("view", options?.view ?? params.get("view") ?? "desktop");
-      params.set("tab", options?.rightTab ?? params.get("tab") ?? "design");
-      params.set(
-        "layer",
-        options?.layerId ?? params.get("layer") ?? DEFAULT_LAYER_ID,
-      );
-      const url = `${base}/layers/${pageId}?${params.toString()}`;
-      if (options?.replace) {
-        router.replace(url);
-      } else {
-        router.push(url);
-      }
-    },
-    [router, base],
-  );
+  // Async callers (e.g. the pages list awaiting an unsaved-changes prompt)
+  // must see the URL as it is NOW, not as it was when their closure was
+  // created — mirror the latest state into a ref.
+  const urlStateRef = useRef(urlState);
+  useEffect(() => {
+    urlStateRef.current = urlState;
+  }, [urlState]);
 
-  const navigateToPageSettings = useCallback(
-    (pageId: string, tab?: PageSettingsTab) => {
-      const params = new URLSearchParams(searchParams?.toString() ?? "");
-      params.set("edit", tab && tab !== "general" ? tab : "general");
-      router.push(`${base}/pages/${pageId}?${params.toString()}`);
+  /**
+   * Navigate to a page's design route. Always leaves page-settings mode
+   * (`edit` is never emitted). `view` / `tab` / `layer` fall back to the
+   * CURRENT query values, then to the defaults, so the URL always carries
+   * `?view=…&tab=…&layer=…`.
+   */
+  const navigateToPage = useCallback(
+    (pageId: string, options?: NavigateToPageOptions) => {
+      const url = buildPageUrl(
+        campaignId,
+        pageId,
+        {
+          view: options?.view,
+          rightTab: options?.rightTab,
+          layerId: options?.layerId,
+        },
+        new URLSearchParams(window.location.search),
+      );
+      if (options?.replace) router.replace(url);
+      else router.push(url);
     },
-    [router, base, searchParams],
+    [router, campaignId],
   );
 
   /**
-   * Switch to the Pages tab WITHOUT opening the settings panel — the
-   * `pages` route type minus the `?edit=` param. Mirrors Ycode's split
-   * between `navigateToPage` (just shows the tree) and `navigateToPageEdit`
-   * (opens settings). Needed by LeftPanel.tsx's tab click handler: clicking
-   * "Pages" should show the list, not immediately pop open a page's
-   * settings form.
+   * Navigate to a page in page-settings mode (`?edit=<tab>`), preserving the
+   * current view / right tab / layer unless overridden.
    */
-  const navigateToPages = useCallback(
-    (pageId: string) => {
-      const params = new URLSearchParams(searchParams?.toString() ?? "");
-      params.delete("edit");
-      const query = params.toString();
-      router.push(`${base}/pages/${pageId}${query ? `?${query}` : ""}`);
+  const navigateToPageSettings = useCallback(
+    (
+      pageId: string,
+      tab?: PageSettingsTab,
+      options?: Omit<NavigateToPageOptions, "replace">,
+    ) => {
+      router.push(
+        buildPageUrl(
+          campaignId,
+          pageId,
+          { ...options, settingsTab: tab ?? "general" },
+          new URLSearchParams(window.location.search),
+        ),
+      );
     },
-    [router, base, searchParams],
+    [router, campaignId],
+  );
+
+  /**
+   * Centralized "go to this page" helper — the ONLY place the pages list (and
+   * the delete / create fallbacks) assemble a route. Performs NO data fetch;
+   * it only updates routing.
+   *
+   * Decision order:
+   *   1. `view`      ← urlState.view   (empty → undefined)
+   *   2. `rightTab`  ← urlState.rightTab (empty → undefined)
+   *   3. page-settings mode active → page-settings route
+   *   4. Pages sidebar tab active (store-owned) → page route
+   *   5. otherwise → page route (normal design/layer semantics)
+   *   6. `layerId` defaults to `body`
+   *
+   * Steps 4 and 5 are kept as two explicit branches even though the
+   * `layers/[pageId]` route is gone and both now land on the same page route:
+   * the store, not the URL, decides which mode we are in, and keeping the
+   * seam means callers never need to change if the two modes diverge again.
+   */
+  const navigateToNextPage = useCallback(
+    (pageId: string, layerId?: string) => {
+      const current = urlStateRef.current;
+      const view = current.view || undefined;
+      const rightTab = current.rightTab || undefined;
+      const targetLayerId = layerId || DEFAULT_LAYER_ID;
+
+      if (current.isEditing) {
+        navigateToPageSettings(pageId, current.editTab ?? undefined, {
+          view,
+          rightTab,
+          layerId: targetLayerId,
+        });
+        return;
+      }
+
+      if (useEditorStore.getState().activeSidebarTab === "pages") {
+        navigateToPage(pageId, { view, rightTab, layerId: targetLayerId });
+        return;
+      }
+
+      navigateToPage(pageId, { view, rightTab, layerId: targetLayerId });
+    },
+    [navigateToPage, navigateToPageSettings],
   );
 
   const navigateToComponent = useCallback(
@@ -294,23 +266,26 @@ export function useCampaignEditorUrl(campaignId: string) {
   }, [router, base]);
 
   /**
-   * Mirrors the selected layer back into the URL WITHOUT pushing a new
-   * history entry. Thin wrapper around `updateUrlQueryParam` for React
-   * callers; `useEditorStore`'s `setSelectedLayerId` calls
-   * `scheduleLayerIdUrlUpdate` directly instead, since it can't use this
-   * hook (see the standalone-helpers comment above).
+   * Fine-grained state mirrors — `history.replaceState`, no new history
+   * entry. `useEditorStore.setSelectedLayerId` calls
+   * `scheduleLayerIdUrlUpdate` directly instead (it can't use a hook).
    */
   const replaceLayerIdInUrl = useCallback((layerId: string | null) => {
     updateUrlQueryParam("layer", layerId);
   }, []);
 
+  const replaceViewInUrl = useCallback((view: Viewport) => {
+    updateUrlQueryParam("view", view);
+  }, []);
+
   return {
     urlState,
-    navigateToLayers,
+    navigateToPage,
     navigateToPageSettings,
-    navigateToPages,
+    navigateToNextPage,
     navigateToComponent,
     navigateToEditor,
     replaceLayerIdInUrl,
+    replaceViewInUrl,
   };
 }

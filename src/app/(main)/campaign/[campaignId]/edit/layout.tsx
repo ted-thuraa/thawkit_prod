@@ -13,7 +13,7 @@ import EditorLayoutClient from "./EditorLayoutClient";
 /**
  * Campaign Editor Layout (Server Component)
  *
- * Forces dynamic rendering for the whole `campaign/[campaignId]/editor` segment
+ * Forces dynamic rendering for the whole `campaign/[campaignId]/edit` segment
  * — every mount depends on the caller's live session and the target
  * campaign's live membership/role, neither of which can be prerendered.
  *
@@ -33,7 +33,7 @@ import EditorLayoutClient from "./EditorLayoutClient";
  *
  * PERSISTENT BUILDER: this layout — and therefore `EditorLayoutClient`,
  * mounted once here — persists across every sub-route under this segment
- * (`layers/[pageId]`, `pages/[pageId]`, `components/[componentId]`).
+ * (`pages/[pageId]`, `components/[componentId]`).
  * Because Next.js doesn't re-run a layout's Server Component on
  * navigation within the same segment, `resolveEditorBootstrap` above only
  * runs once per distinct `campaignId`, not once per page/component

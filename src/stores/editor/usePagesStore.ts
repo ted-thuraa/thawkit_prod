@@ -4,7 +4,7 @@
 
 import { create } from "zustand";
 import { cloneDeep } from "lodash";
-import type { Layer, Page } from "@/types/funnel";
+import type { Layer, Page, PageSettings, PageType } from "@/types/funnel";
 import {
   canHaveChildren,
   canMoveLayer,
@@ -35,6 +35,14 @@ import {
   useComponentsStore,
 } from "./useComponentsStore";
 import { pagesApi } from "@/lib/api";
+import {
+  createPageAction,
+  deletePageAction,
+  duplicatePageAction,
+  type PageOrderUpdate,
+} from "@/actions/editor/editor-actions";
+import { pageFromRow } from "@/lib/editor/page-from-row";
+import { generateUniqueSlug } from "@/lib/page-utils";
 
 import {
   detachComponentFromLayers,
@@ -73,6 +81,64 @@ function normalizeLegacyLayerNames(page: Page): Page {
   return { ...page, layers: page.layers.map(fix) };
 }
 
+/** Fields the client decides for a new page before the server confirms it. */
+export interface CreatePageInput {
+  name: string;
+  slug: string;
+  pageType: PageType;
+  /** Position in the flat order; pages at/after it shift +1. */
+  order: number;
+  isDynamic: boolean;
+  settings: PageSettings;
+}
+
+export type PageMutationOutcome =
+  | { success: true; page: Page }
+  | { success: false; error: string };
+
+/**
+ * The optimistic half is committed synchronously (`tempId` is already in the
+ * store when this returns); the network half is the `result` promise.
+ */
+export type StartedPageMutation =
+  | { ok: true; tempId: string; result: Promise<PageMutationOutcome> }
+  | { ok: false; error: string };
+
+export const TEMP_PAGE_ID_PREFIX = "temp-page-";
+export function isTempPageId(id: string | null | undefined): boolean {
+  return !!id && id.startsWith(TEMP_PAGE_ID_PREFIX);
+}
+
+function makeTempPageId(): string {
+  return `${TEMP_PAGE_ID_PREFIX}${crypto.randomUUID()}`;
+}
+
+/** Orders >= `fromOrder` move +1 (making room for an insert) …*/
+function shiftOrdersUp(pages: Page[], fromOrder: number): Page[] {
+  return pages.map((p) =>
+    p.order >= fromOrder ? { ...p, order: p.order + 1 } : p,
+  );
+}
+
+/** … and the exact inverse, applied only to the ids that were shifted. */
+function unshiftOrders(pages: Page[], shiftedIds: ReadonlySet<string>): Page[] {
+  return pages.map((p) =>
+    shiftedIds.has(p.id) ? { ...p, order: p.order - 1 } : p,
+  );
+}
+
+/** Authoritative order values from the server win over the optimistic shift. */
+function applyOrderUpdates(
+  pages: Page[],
+  updates: readonly PageOrderUpdate[],
+): Page[] {
+  if (updates.length === 0) return pages;
+  const byId = new Map(updates.map((u) => [u.id, u.order]));
+  return pages.map((p) =>
+    byId.has(p.id) ? { ...p, order: byId.get(p.id)! } : p,
+  );
+}
+
 interface PagesState {
   /** Single source of truth for every page's layer tree (`page.layers`). */
   pages: Page[];
@@ -93,6 +159,28 @@ interface PagesActions {
   removePageLocal: (pageId: string) => void;
 
   getPageById: (pageId: string) => Page | undefined;
+
+  /**
+   * Optimistically create a page (temp id, `body`-only layer tree), then
+   * persist. Replaces the temp page with the server's row on success; on
+   * failure removes it and un-shifts sibling orders. Never blocks the UI:
+   * await `result`, not this call.
+   */
+  createPage: (
+    campaignId: string,
+    input: CreatePageInput,
+  ) => StartedPageMutation;
+  /**
+   * Optimistically duplicate `pageId` right after itself (same type/settings,
+   * cloned layers), then persist. Same commit / reconcile / rollback shape as
+   * `createPage`. The caller decides about selection — this never navigates.
+   */
+  duplicatePage: (campaignId: string, pageId: string) => StartedPageMutation;
+  /** Delete on the server, THEN remove locally. Resolves with the outcome. */
+  deletePage: (
+    campaignId: string,
+    pageId: string,
+  ) => Promise<{ success: true } | { success: false; error: string }>;
 
   /**
    * Re-fetch a single page from the server and replace it in the array
@@ -194,6 +282,182 @@ export const usePagesStore = create<PagesStore>((set, get) => ({
   },
 
   getPageById: (pageId) => get().pages.find((page) => page.id === pageId),
+
+  createPage: (campaignId, input) => {
+    const existing = get().pages;
+    const tempId = makeTempPageId();
+    const now = new Date();
+
+    const tempPage: Page = {
+      id: tempId,
+      slug: input.slug,
+      name: input.name,
+      funnelId: existing[0]?.funnelId ?? "",
+      order: input.order,
+      depth: 0,
+      pageType: input.pageType,
+      isDynamic: input.isDynamic,
+      layers: [{ id: "body", name: "body", classes: "", children: [] }],
+      settings: input.settings,
+      contentHash: null,
+      createdAt: now,
+      updatedAt: now,
+      publishedAt: null,
+    };
+
+    const shiftedIds = new Set(
+      existing.filter((p) => p.order >= input.order).map((p) => p.id),
+    );
+    set((state) => ({
+      pages: [...shiftOrdersUp(state.pages, input.order), tempPage],
+      isLoading: true,
+      error: null,
+    }));
+
+    const result = (async (): Promise<PageMutationOutcome> => {
+      try {
+        const response = await createPageAction(campaignId, {
+          title: input.name,
+          pageType: input.pageType,
+          slug: input.slug,
+          order: input.order,
+          settings: input.settings,
+          isDynamic: input.isDynamic,
+        });
+        if (!response.success) throw new Error(response.error);
+
+        const real = pageFromRow(response.data.page);
+        set((state) => ({
+          pages: applyOrderUpdates(
+            state.pages.map((p) => (p.id === tempId ? real : p)),
+            response.data.orderUpdates,
+          ),
+          isLoading: false,
+        }));
+        return { success: true, page: real };
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to create page.";
+        set((state) => ({
+          pages: unshiftOrders(
+            state.pages.filter((p) => p.id !== tempId),
+            shiftedIds,
+          ),
+          isLoading: false,
+          error: message,
+        }));
+        return { success: false, error: message };
+      }
+    })();
+
+    return { ok: true, tempId, result };
+  },
+
+  duplicatePage: (campaignId, pageId) => {
+    const source = get().pages.find((p) => p.id === pageId);
+    if (!source)
+      return { ok: false, error: "Couldn't find the page to duplicate." };
+    if (isTempPageId(pageId)) {
+      return { ok: false, error: "Wait for this page to finish saving first." };
+    }
+    // Mirror the server's rules up front so we never flash an optimistic copy
+    // that is guaranteed to roll back: "/" belongs to the landing page, and
+    // the dynamic slug ("*") is unique per funnel.
+    if (source.pageType === "landing_page") {
+      return { ok: false, error: "The landing page can't be duplicated." };
+    }
+    if (source.isDynamic) {
+      return {
+        ok: false,
+        error:
+          "A funnel can only have one dynamic page, so it can't be duplicated.",
+      };
+    }
+
+    const tempId = makeTempPageId();
+    const now = new Date();
+    const order = source.order + 1;
+
+    const tempPage: Page = {
+      ...source,
+      id: tempId,
+      name: `${source.name} (Copy)`,
+      // Placeholder until the server assigns the final unique slug.
+      slug: generateUniqueSlug(
+        `${source.name} (Copy)`,
+        get().pages,
+        null,
+        false,
+      ),
+      order,
+      isDynamic: false,
+      layers: cloneDeep(source.layers),
+      settings: cloneDeep(source.settings),
+      createdAt: now,
+      updatedAt: now,
+      publishedAt: null,
+    };
+
+    const shiftedIds = new Set(
+      get()
+        .pages.filter((p) => p.order >= order)
+        .map((p) => p.id),
+    );
+    set((state) => ({
+      pages: [...shiftOrdersUp(state.pages, order), tempPage],
+      isLoading: true,
+      error: null,
+    }));
+
+    const result = (async (): Promise<PageMutationOutcome> => {
+      try {
+        const response = await duplicatePageAction(campaignId, pageId);
+        if (!response.success) throw new Error(response.error);
+
+        const real = pageFromRow(response.data.page);
+        set((state) => ({
+          pages: applyOrderUpdates(
+            state.pages.map((p) => (p.id === tempId ? real : p)),
+            response.data.orderUpdates,
+          ),
+          isLoading: false,
+        }));
+        return { success: true, page: real };
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to duplicate page.";
+        set((state) => ({
+          pages: unshiftOrders(
+            state.pages.filter((p) => p.id !== tempId),
+            shiftedIds,
+          ),
+          isLoading: false,
+          error: message,
+        }));
+        return { success: false, error: message };
+      }
+    })();
+
+    return { ok: true, tempId, result };
+  },
+
+  deletePage: async (campaignId, pageId) => {
+    set({ isLoading: true, error: null });
+    try {
+      const response = await deletePageAction(campaignId, pageId);
+      if (!response.success) throw new Error(response.error);
+      // Server first: deletion is destructive, so there is nothing to
+      // "optimistically" roll back. The caller removes the page locally once
+      // it has navigated away (see PagesList's handleDelete).
+      set({ isLoading: false });
+      return { success: true };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to delete page.";
+      set({ isLoading: false, error: message });
+      return { success: false, error: message };
+    }
+  },
 
   reloadPage: async (pageId) => {
     const response = await pagesApi.getById(pageId);

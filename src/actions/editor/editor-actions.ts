@@ -2,10 +2,9 @@
 
 "use server";
 
-import { asc, eq } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 
 import { db } from "@/drizzle/db";
-import { funnel } from "@/drizzle/schemas/campaigns-schema";
 import {
   funnelVersions,
   page as pageTable,
@@ -21,6 +20,8 @@ import {
 import { logger } from "@/lib/logger";
 import { nanoid } from "nanoid";
 import { requirePageInCampaign } from "@/components/editor/require-page-in-campaign";
+import { generateUniqueSlug, sanitizeSlug } from "@/lib/page-utils";
+import { pagesFromRows } from "@/lib/editor/page-from-row";
 
 export type ActionResult<T> =
   | { success: true; data: T }
@@ -33,16 +34,6 @@ export type ActionResult<T> =
  * The table is imported as `pageTable` here so fetched page rows can safely be
  * named `page` without shadowing the table object used by Drizzle queries.
  */
-
-function slugify(title: string): string {
-  return (
-    title
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "page"
-  );
-}
 
 function toErrorResult(
   error: unknown,
@@ -62,16 +53,81 @@ function toErrorResult(
   return { success: false, error: fallbackMessage };
 }
 
+/** A sibling whose `order` was shifted to make room for an inserted page. */
+export interface PageOrderUpdate {
+  id: string;
+  order: number;
+}
+
+/**
+ * Result of any action that inserts a page into the funnel's flat order.
+ * `orderUpdates` lists ONLY the existing pages whose `order` moved (+1), so
+ * the client can merge them without replacing whole page rows (which would
+ * clobber un-autosaved layer edits on other pages).
+ */
+export interface InsertedPageResult {
+  page: PageRow;
+  orderUpdates: PageOrderUpdate[];
+}
+
+/** The one slug a dynamic (CMS-driven) page uses. */
+const DYNAMIC_PAGE_SLUG = "*";
+
+function defaultPageSettings(): PageSettings {
+  return {
+    seo: { image: null, title: "", description: "", noindex: false },
+    custom_code: { head: "", body: "" },
+  };
+}
+
+/**
+ * Insert `row` at `desiredOrder` in the funnel's flat page order, shifting
+ * every page at or after that position by +1 — atomically. `order` is a
+ * plain (non-unique) indexed column, so the single UPDATE can't trip a
+ * uniqueness check mid-shift.
+ */
+async function insertPageAtOrder(
+  funnelId: string,
+  row: PageRow,
+): Promise<PageOrderUpdate[]> {
+  return db.transaction(async (tx) => {
+    const shifted = await tx
+      .update(pageTable)
+      .set({ order: sql`${pageTable.order} + 1` })
+      .where(
+        and(eq(pageTable.funnelId, funnelId), gte(pageTable.order, row.order)),
+      )
+      .returning({ id: pageTable.id, order: pageTable.order });
+
+    await tx.insert(pageTable).values(row);
+    return shifted;
+  });
+}
+
 export async function createPageAction(
   campaignId: string,
-  input: { title: string; pageType: PageType },
-): Promise<ActionResult<PageRow>> {
+  input: {
+    title: string;
+    pageType: PageType;
+    /** Client-proposed slug; re-validated and made unique here. */
+    slug?: string;
+    /** Desired position in the flat order; clamped to [0, max + 1]. */
+    order?: number;
+    /** Only `cms` is honoured (and only with `isDynamic`). */
+    settings?: PageSettings;
+    isDynamic?: boolean;
+  },
+): Promise<ActionResult<InsertedPageResult>> {
   try {
     const { campaign } = await requireCampaignEditPermission(campaignId);
 
+    const title = input.title.trim();
+    if (!title) {
+      return { success: false, error: "A page name is required." };
+    }
+
     const funnelRow = await db.query.funnel.findFirst({
       where: { campaignId: campaign.id },
-      //orderBy: asc(funnel.createdAt),
     });
     if (!funnelRow) {
       throw new Error(`Campaign ${campaignId} has no associated funnel.`);
@@ -80,18 +136,65 @@ export async function createPageAction(
     const existingPages = await db.query.page.findMany({
       where: { funnelId: funnelRow.id },
     });
-    const nextOrder =
-      existingPages.length > 0
-        ? Math.max(...existingPages.map((p) => p.order)) + 1
-        : 0;
 
-    const slug = slugify(input.title);
-    if (existingPages.some((p) => p.slug === slug)) {
+    // Only one page may render at "/" — never create a second landing page.
+    if (
+      input.pageType === "landing_page" &&
+      existingPages.some((p) => p.pageType === "landing_page")
+    ) {
       return {
         success: false,
-        error: `A page with a matching slug ("${slug}") already exists in this funnel.`,
+        error: "This funnel already has a landing page.",
       };
     }
+
+    const isDynamic = Boolean(input.isDynamic);
+    const cms = input.settings?.cms;
+    if (isDynamic && !(cms?.collection_id && cms.slug_field_id)) {
+      return {
+        success: false,
+        error: "A dynamic page needs a collection with a slug field.",
+      };
+    }
+
+    let slug: string;
+    if (isDynamic) {
+      slug = DYNAMIC_PAGE_SLUG;
+      if (existingPages.some((p) => p.slug === slug)) {
+        return {
+          success: false,
+          error: "This funnel already has a dynamic page.",
+        };
+      }
+    } else {
+      const proposedSlug = input.slug ?? "";
+      const requested = sanitizeSlug(proposedSlug) ? proposedSlug : title;
+      const existingForSlugs = pagesFromRows(existingPages);
+      slug =
+        generateUniqueSlug(requested, existingForSlugs, null, false) ||
+        generateUniqueSlug("page", existingForSlugs, null, false);
+    }
+
+    const maxOrder =
+      existingPages.length > 0
+        ? Math.max(...existingPages.map((p) => p.order))
+        : -1;
+    const desiredOrder = Math.min(
+      Math.max(0, Math.floor(input.order ?? maxOrder + 1)),
+      maxOrder + 1,
+    );
+
+    const settings: PageSettings = {
+      ...defaultPageSettings(),
+      ...(isDynamic && cms
+        ? {
+            cms: {
+              collection_id: cms.collection_id,
+              slug_field_id: cms.slug_field_id,
+            },
+          }
+        : {}),
+    };
 
     const bodyLayer: Layer = {
       id: "body",
@@ -100,40 +203,27 @@ export async function createPageAction(
       children: [],
     };
 
-    const pageSettings: PageSettings = {
-      seo: {
-        image: null,
-        title: "",
-        description: "",
-        noindex: false,
-      },
-      custom_code: {
-        head: "",
-        body: "",
-      },
-    };
-
     const now = new Date();
     const newPage: PageRow = {
       id: nanoid(),
       funnelId: funnelRow.id,
       slug,
-      name: input.title,
-      order: nextOrder,
+      name: title,
+      order: desiredOrder,
       depth: 0,
       pageType: input.pageType,
       contentHash: null,
-      isDynamic: false,
+      isDynamic,
       layers: [bodyLayer],
-      settings: pageSettings,
+      settings,
       createdAt: now,
       updatedAt: now,
       publishedAt: null,
     };
 
-    await db.insert(pageTable).values(newPage);
+    const orderUpdates = await insertPageAtOrder(funnelRow.id, newPage);
 
-    return { success: true, data: newPage };
+    return { success: true, data: { page: newPage, orderUpdates } };
   } catch (error) {
     return toErrorResult(error, "Failed to create page.");
   }
@@ -142,26 +232,38 @@ export async function createPageAction(
 export async function duplicatePageAction(
   campaignId: string,
   pageId: string,
-): Promise<ActionResult<PageRow>> {
+): Promise<ActionResult<InsertedPageResult>> {
   try {
     const { page } = await requirePageInCampaign(campaignId, pageId);
+
+    // The landing page owns "/", and a funnel supports a single dynamic page
+    // (slug "*" is unique per funnel) — a copy of either would collide.
+    if (page.pageType === "landing_page") {
+      return { success: false, error: "The landing page can't be duplicated." };
+    }
+    if (page.isDynamic) {
+      return {
+        success: false,
+        error:
+          "A funnel can only have one dynamic page, so it can't be duplicated.",
+      };
+    }
+
     const siblings = await db.query.page.findMany({
       where: { funnelId: page.funnelId },
     });
 
-    const baseTitle = `${page.name} Copy`;
+    const baseTitle = `${page.name} (Copy)`;
     let name = baseTitle;
     let suffix = 2;
     while (siblings.some((candidate) => candidate.name === name)) {
-      name = `${baseTitle} ${suffix++}`;
+      name = `${page.name} (Copy ${suffix++})`;
     }
 
-    const baseSlug = slugify(name);
-    let slug = baseSlug;
-    suffix = 2;
-    while (siblings.some((candidate) => candidate.slug === slug)) {
-      slug = `${baseSlug}-${suffix++}`;
-    }
+    const siblingsForSlugs = pagesFromRows(siblings);
+    const slug =
+      generateUniqueSlug(name, siblingsForSlugs, null, false) ||
+      generateUniqueSlug("page", siblingsForSlugs, null, false);
 
     const now = new Date();
     const duplicate: PageRow = {
@@ -169,15 +271,18 @@ export async function duplicatePageAction(
       id: nanoid(),
       name,
       slug,
-      order: Math.max(...siblings.map((candidate) => candidate.order), -1) + 1,
+      // Immediately after the original; everything from there on shifts +1.
+      order: page.order + 1,
+      isDynamic: false,
       layers: structuredClone(page.layers),
+      settings: structuredClone(page.settings),
       createdAt: now,
       updatedAt: now,
       publishedAt: null,
     };
 
-    await db.insert(pageTable).values(duplicate);
-    return { success: true, data: duplicate };
+    const orderUpdates = await insertPageAtOrder(page.funnelId, duplicate);
+    return { success: true, data: { page: duplicate, orderUpdates } };
   } catch (error) {
     return toErrorResult(error, "Failed to duplicate page.");
   }
@@ -228,7 +333,11 @@ export async function deletePageAction(
   pageId: string,
 ): Promise<ActionResult<{ deletedId: string }>> {
   try {
-    await requirePageInCampaign(campaignId, pageId);
+    const { page } = await requirePageInCampaign(campaignId, pageId);
+
+    if (page.pageType === "landing_page") {
+      return { success: false, error: "The landing page can't be deleted." };
+    }
 
     await db.delete(pageTable).where(eq(pageTable.id, pageId));
 
