@@ -4,7 +4,13 @@
 
 import { create } from "zustand";
 import { cloneDeep } from "lodash";
-import type { Layer, Page, PageSettings, PageType } from "@/types/funnel";
+import type {
+  Layer,
+  LayerStyle,
+  Page,
+  PageSettings,
+  PageType,
+} from "@/types/funnel";
 import {
   canHaveChildren,
   canMoveLayer,
@@ -48,6 +54,10 @@ import {
   detachComponentFromLayers,
   updateLayersWithComponent,
 } from "@/lib/component-utils";
+import {
+  detachStyleFromLayers,
+  updateLayersWithStyle,
+} from "@/lib/layer-style-utils";
 
 // Pages saved before addLayerFromTemplate was fixed persisted the display
 // label ("Section") in layer.name instead of the element type ("section").
@@ -223,6 +233,16 @@ interface PagesActions {
     targetLayerId: string,
     layerToPaste: Layer,
   ) => Layer | null;
+
+  // Layer Style Actions
+  updateStyleOnLayers: (
+    styleId: string,
+    stylesById: Map<string, LayerStyle>,
+  ) => void;
+  detachStyleFromAllLayers: (
+    styleId: string,
+    stylesById?: Map<string, LayerStyle>,
+  ) => void;
 
   // CMS Binding Cleanup Actions
   cleanupDeletedCollection: (collectionId: string) => void;
@@ -845,6 +865,48 @@ export const usePagesStore = create<PagesStore>((set, get) => ({
           : { ...page, layers: nextLayers };
       }),
     }));
+  },
+
+  /**
+   * Update all layers using a specific style across all pages
+   * Used when a style is updated
+   * Updates the classes/design on layers that have the style applied
+   */
+  updateStyleOnLayers: (styleId, stylesById) => {
+    const { pages } = get();
+
+    const updatedDrafts = { ...pages };
+
+    Object.keys(updatedDrafts).forEach((pageId) => {
+      const draft = updatedDrafts[pageId];
+      updatedDrafts[pageId] = {
+        ...draft,
+        layers: updateLayersWithStyle(draft.layers, styleId, stylesById),
+      };
+    });
+
+    set({ pages: updatedDrafts });
+  },
+
+  /**
+   * Detach a style from all layers across all pages
+   * Used when a style is deleted
+   * Removes the style from each layer's stack, re-flattening remaining styles
+   */
+  detachStyleFromAllLayers: (styleId, stylesById) => {
+    const { pages } = get();
+
+    const updatedDrafts = { ...pages };
+
+    Object.keys(updatedDrafts).forEach((pageId) => {
+      const draft = updatedDrafts[pageId];
+      updatedDrafts[pageId] = {
+        ...draft,
+        layers: detachStyleFromLayers(draft.layers, styleId, stylesById),
+      };
+    });
+
+    set({ pages: updatedDrafts });
   },
 
   /**

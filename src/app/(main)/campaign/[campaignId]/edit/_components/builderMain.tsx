@@ -16,15 +16,19 @@ import { useComponentsStore } from "@/stores/editor/useComponentsStore";
 import { useLayerStylesStore } from "@/stores/editor/useLayerStylesStore";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
 import LeftPanel from "./LeftPanel";
-import RightPanel from "./RightPanel";
+import RightPanelDrawer from "./RightPanelDrawer";
 import EditorToolbar from "./EditorToolbar";
 import EditorCenterCanvas from "./EditorCanvas";
 
 interface EditorShellProps {
   /** Floating panel pinned to the left edge. */
   leftPanel?: ReactNode;
-  /** Floating panel pinned to the right edge. */
-  rightPanel?: ReactNode;
+  /**
+   * Floating overlays that portal into this shell (e.g. the RightPanel
+   * drawer). Rendered inside the `data-editor-shell` root so they are
+   * positioned relative to the editor area, not the viewport.
+   */
+  overlay?: ReactNode;
   /** Floating button group, pinned bottom-centre. */
   toolbar?: ReactNode;
   /** The canvas — rendered full-bleed behind every floating element. */
@@ -33,12 +37,15 @@ interface EditorShellProps {
 
 export default function EditorShell({
   leftPanel,
-  rightPanel,
+  overlay,
   toolbar,
   children,
 }: EditorShellProps) {
   return (
-    <div className="relative min-h-0 min-w-0 flex-1 self-stretch overflow-hidden">
+    <div
+      data-editor-shell
+      className="relative min-h-0 min-w-0 flex-1 self-stretch overflow-hidden"
+    >
       {/* Layer 0 — canvas */}
       <div className="absolute inset-0 z-0">{children}</div>
 
@@ -46,9 +53,6 @@ export default function EditorShell({
       <div className="pointer-events-none absolute inset-0 z-20 flex justify-between gap-3 p-3">
         {leftPanel && (
           <div className="pointer-events-auto h-full">{leftPanel}</div>
-        )}
-        {rightPanel && (
-          <div className="pointer-events-auto ml-auto h-full">{rightPanel}</div>
         )}
       </div>
 
@@ -59,6 +63,9 @@ export default function EditorShell({
           <div className="pointer-events-auto">{toolbar}</div>
         </div>
       )}
+
+      {/* Overlays (RightPanel drawer) — portal target is this root */}
+      {overlay}
     </div>
   );
 }
@@ -298,17 +305,16 @@ export function CampaignEditorMain({
   }
 
   if (urlState.type === "page" && activePage) {
-    // The right inspector is hidden in page-settings mode (`?edit=`), where
-    // the left panel hosts the settings form instead.
-    const showRightPanel = !urlState.isEditing;
-
     return (
       <EditorShell
         leftPanel={<LeftPanel campaignId={campaignId} />}
-        rightPanel={
-          showRightPanel ? (
-            <RightPanel onLayerUpdate={handleLayerUpdate} />
-          ) : undefined
+        overlay={
+          // The right inspector is hidden in page-settings mode (`?edit=`),
+          // where the left panel hosts the settings form instead.
+          <RightPanelDrawer
+            onLayerUpdate={handleLayerUpdate}
+            disabled={urlState.isEditing}
+          />
         }
         toolbar={<EditorToolbar />}
       >

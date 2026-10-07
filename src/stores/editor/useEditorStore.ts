@@ -153,6 +153,7 @@ interface EditorState {
   activeTextStyleKey: string | null; // Currently active text style (e.g., 'bold', 'italic'),
   /** Layer ID whose content should be opened in a RichTextEditorSheet (set from iframe on double-click) */
   richTextSheetLayerId: string | null;
+  isRightPanelOpen: boolean;
   isSidebarResizing: boolean;
   leftSidebarWidth: number;
   /** Whether the floating left panel is expanded (not the collapsed 40px trigger). */
@@ -275,6 +276,9 @@ interface EditorActions {
   setLeftPanelOpen: (value: boolean) => void;
   setCanvasContextMenuOpen: (value: boolean) => void;
   closeRichTextSheet: () => void;
+  openRightPanel: () => void;
+  closeRightPanel: () => void;
+  toggleRightPanel: () => void;
   setActiveTextStyleKey: (key: string | null) => void;
   startElementPicker: (config: {
     onSelect: (layerId: string) => void;
@@ -348,6 +352,7 @@ const initialState: EditorState = {
   activeInteractionTriggerLayerId: null,
   activeInteractionTargetLayerIds: [],
   richTextSheetLayerId: null,
+  isRightPanelOpen: false,
   activeSublayerIndex: null,
   activeListItemIndex: null,
   collectionItemSheet: null,
@@ -388,6 +393,10 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       };
     }),
   closeRichTextSheet: () => set({ richTextSheetLayerId: null }),
+  openRightPanel: () => set({ isRightPanelOpen: true }),
+  closeRightPanel: () => set({ isRightPanelOpen: false }),
+  toggleRightPanel: () =>
+    set((state) => ({ isRightPanelOpen: !state.isRightPanelOpen })),
   // Computed getter: Returns true when text style controls should be shown
   // This happens when:
   // 1. Canvas text editing is active, OR

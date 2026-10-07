@@ -2,7 +2,9 @@ import React from "react";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Layer } from "@/types/funnel";
-
+import { X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import RightPanelContent from "./RightPanelContent";
 /**
  * ─────────────────────────────────────────────────────────────────────────
  * RightPanel — floating properties panel (Design / Settings / Interactions
@@ -20,10 +22,12 @@ import { Layer } from "@/types/funnel";
  */
 interface RightPanelProps {
   onLayerUpdate: (layerId: string, updates: Partial<Layer>) => void;
+  onClose?: () => void;
   className?: string;
 }
 
 const RightPanel = React.memo(function RightPanel({
+  onClose,
   className,
 }: RightPanelProps) {
   const handleModeChange = (value: string) => {
@@ -43,21 +47,38 @@ const RightPanel = React.memo(function RightPanel({
       )}
     >
       <div className="px-4 pt-4 shrink-0">
-        <Tabs value={"human"} onValueChange={handleModeChange}>
-          <TabsList className="w-full">
-            <TabsTrigger value="human" className="flex-1">
-              Human
-            </TabsTrigger>
-            <TabsTrigger value="agent" className="flex-1">
-              Agent
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex items-center gap-2">
+          <Tabs
+            value={"human"}
+            onValueChange={handleModeChange}
+            className="min-w-0 flex-1"
+          >
+            <TabsList className="w-full">
+              <TabsTrigger value="human" className="flex-1">
+                Human
+              </TabsTrigger>
+              <TabsTrigger value="agent" className="flex-1">
+                Agent
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          {onClose && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Close properties panel"
+              onClick={onClose}
+            >
+              <X />
+            </Button>
+          )}
+        </div>
         <hr className="mt-4" />
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {/* <RightSidebar embedded onLayerUpdate={onLayerUpdate} /> */}
+        <RightPanelContent />
       </div>
     </aside>
   );

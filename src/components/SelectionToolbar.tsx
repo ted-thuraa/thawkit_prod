@@ -6,7 +6,8 @@
  * Floating action bar anchored to the top of the currently selected canvas
  * element: [move] [LABEL] [←] [→] [copy] [delete] [edit].
  *
- * DISPLAY ONLY (phase 1): the buttons have no behavior yet.
+ * Phase 2: the Edit button toggles the RightPanel drawer (see
+ * RightPanelDrawer). The remaining buttons are still display-only.
  *
  * Positioning is imperative, like the outlines in SelectionOverlay: the
  * overlay measures the selected element and calls `handle.position(anchor)`
@@ -32,6 +33,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useEditorStore } from "@/stores/editor/useEditorStore";
 
 export interface SelectionToolbarAnchor {
   top: number;
@@ -66,20 +68,30 @@ const clamp = (value: number, min: number, max: number) =>
 function ToolbarButton({
   label,
   hoverClass,
+  onClick,
+  pressed,
+  pressedClass,
   children,
 }: {
   label: string;
   hoverClass: string;
+  onClick?: () => void;
+  /** Toggle state; renders aria-pressed and the pressed style when defined */
+  pressed?: boolean;
+  pressedClass?: string;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
       aria-label={label}
+      aria-pressed={pressed}
       tabIndex={-1}
+      onClick={onClick}
       className={cn(
         "flex size-[18px] shrink-0 items-center justify-center rounded-[3px] outline-none transition-colors",
         hoverClass,
+        pressed && pressedClass,
       )}
     >
       {children}
@@ -96,6 +108,11 @@ export function SelectionToolbar({
   const elRef = useRef<HTMLDivElement>(null);
   const anchorRef = useRef<SelectionToolbarAnchor | null>(null);
   const hiddenRef = useRef(hidden);
+
+  // Edit button toggles the RightPanel drawer. The action is stable; the flag
+  // only drives this button's pressed state (no extra re-renders elsewhere).
+  const isRightPanelOpen = useEditorStore((state) => state.isRightPanelOpen);
+  const toggleRightPanel = useEditorStore((state) => state.toggleRightPanel);
 
   const apply = useCallback(() => {
     const el = elRef.current;
@@ -207,7 +224,13 @@ export function SelectionToolbar({
       <ToolbarButton label="Delete" hoverClass={hoverClass}>
         <Trash2 className="size-3" strokeWidth={2.25} />
       </ToolbarButton>
-      <ToolbarButton label="Edit" hoverClass={hoverClass}>
+      <ToolbarButton
+        label="Edit"
+        hoverClass={hoverClass}
+        onClick={toggleRightPanel}
+        pressed={isRightPanelOpen}
+        pressedClass={isGreen ? "bg-black/15" : "bg-white/25"}
+      >
         <Pencil className="size-3" strokeWidth={2.25} />
       </ToolbarButton>
     </div>
