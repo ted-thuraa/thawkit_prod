@@ -163,6 +163,15 @@ import LinkSettings from "./LinkSettings";
 import ToggleGroupCustom from "./ToggleGroupCustom";
 import ImageSettings from "./editorRightPanel/ImageSettings";
 import { useLocalizationMode } from "@/hooks/use-localization-mode";
+import VideoSettings from "./editorRightPanel/VideoSettings";
+import AudioSettings from "./editorRightPanel/AudioSettings";
+import IconSettings from "./editorRightPanel/IconSettings";
+import HTMLEmbedSettings from "./editorRightPanel/HTMLEmbedSettings";
+import MapSettings from "./editorRightPanel/MapSettings";
+import FormSettings from "./editorRightPanel/FormSettings";
+import FilterSettings from "./editorRightPanel/FilterSettings";
+import SliderSettings from "./editorRightPanel/SliderSettings";
+import InputSettings from "./editorRightPanel/InputSettings";
 
 interface RightPanelContentProps {
   onLayerUpdate: (layerId: string, updates: Partial<Layer>) => void;
@@ -3878,10 +3887,10 @@ const RightPanelContent = React.memo(function RightPanelContent({
                   onLayerUpdate={handleLayerUpdate}
                 />
 
-                <AlertSettings
+                {/* <AlertSettings
                   layer={selectedLayer}
                   onLayerUpdate={handleLayerUpdate}
-                />
+                /> */}
 
                 <SliderSettings
                   layer={selectedLayer}
@@ -3890,19 +3899,19 @@ const RightPanelContent = React.memo(function RightPanelContent({
                   fieldGroups={fieldGroups}
                 />
 
-                <LightboxSettings
+                {/* <LightboxSettings
                   layer={selectedLayer}
                   onLayerUpdate={handleLayerUpdate}
                   fieldGroups={fieldGroups}
                   allFields={fields}
                   collections={collections}
-                />
+                /> */}
 
-                <LabelSettings
+                {/* <LabelSettings
                   layer={selectedLayer}
                   allLayers={allLayers}
                   onLayerUpdate={handleLayerUpdate}
-                />
+                /> */}
 
                 <InputSettings
                   layer={selectedLayer}
