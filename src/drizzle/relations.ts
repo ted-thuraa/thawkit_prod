@@ -95,9 +95,19 @@ export const relations = defineRelations(schema, (r) => ({
     invitations: r.many.invitation(),
     activeSessions: r.many.session(),
     campaigns: r.many.campaign(),
+    assets: r.many.asset(),
     //funnels: r.many.funnel(),
     // components: r.many.component(),
     // layerStyles: r.many.layerStyle(),
+  },
+
+  // ── Asset ─────────────────────────────────────────────────────────────────
+  asset: {
+    organization: r.one.organization({
+      from: r.asset.organizationId,
+      to: r.organization.id,
+      optional: false,
+    }),
   },
 
   // ── Member ────────────────────────────────────────────────────────────────
