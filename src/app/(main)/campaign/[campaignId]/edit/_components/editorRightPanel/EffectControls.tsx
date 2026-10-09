@@ -9,12 +9,12 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/in
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { useDesignSync } from '@/hooks/use-design-sync';
-import { useEditorStore } from '@/stores/useEditorStore';
+import { useEditorStore } from '@/stores/editor/useEditorStore';
 import { removeSpaces } from '@/lib/utils';
-import type { Layer } from '@/types';
+import type { Layer } from '@/types/funnel';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
-import ColorPicker from './ColorPicker';
+import ColorPicker from '../ColorPicker';
 import {
   DropdownMenu,
   DropdownMenuContent,

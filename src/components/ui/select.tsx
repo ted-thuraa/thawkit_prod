@@ -1,11 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { cn } from "cn";
-import { Select as SelectPrimitive } from "radix-ui";
-import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react";
-import { cva, VariantProps } from "class-variance-authority";
-import Icon from "./icon";
+import * as SelectPrimitive from "@radix-ui/react-select";
+import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+import { cva, type VariantProps } from "class-variance-authority";
+
+import { cn } from "@/lib/utils";
+import Icon from "@/components/ui/icon";
+import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 
 function Select({
   ...props
@@ -14,16 +17,9 @@ function Select({
 }
 
 function SelectGroup({
-  className,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Group>) {
-  return (
-    <SelectPrimitive.Group
-      data-slot="select-group"
-      className={cn("scroll-my-1 p-1", className)}
-      {...props}
-    />
-  );
+  return <SelectPrimitive.Group data-slot="select-group" {...props} />;
 }
 
 function SelectValue({
@@ -109,17 +105,37 @@ function SelectTrigger({
 function SelectContent({
   className,
   children,
-  position = "item-aligned",
+  position = "popper",
   align = "center",
+  searchable,
+  searchValue,
+  onSearchChange,
+  searchPlaceholder,
+  searchLoading,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Content>) {
+}: React.ComponentProps<typeof SelectPrimitive.Content> & {
+  searchable?: boolean;
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
+  searchPlaceholder?: string;
+  searchLoading?: boolean;
+}) {
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const isSearchFocusedRef = React.useRef(false);
+  // Timestamp of the last keyboard-navigation key on the search input.
+  // Used to distinguish a user-initiated focus transfer to an item (arrow
+  // keys) from a programmatic one (e.g. Radix re-focusing after items
+  // re-render when search results stream in).
+  const lastNavKeyAtRef = React.useRef(0);
+
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Content
         data-slot="select-content"
-        data-align-trigger={position === "item-aligned"}
         className={cn(
-          "relative z-50 max-h-(--radix-select-content-available-height) min-w-32 origin-(--radix-select-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-100 data-[align-trigger=true]:animate-none data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-50 max-h-(--radix-select-content-available-height) min-w-[8rem] origin-(--radix-select-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg border border-transparent shadow-md",
+          searchable &&
+            "[&_[data-slot=select-item]:hover]:bg-accent [&_[data-slot=select-item]:hover]:text-accent-foreground",
           position === "popper" &&
             "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
           className,
@@ -128,13 +144,77 @@ function SelectContent({
         align={align}
         {...props}
       >
+        {searchable && (
+          <div
+            className="sticky top-0 z-10 bg-popover p-1"
+            onPointerDown={(e) => e.stopPropagation()}
+            onPointerUp={(e) => e.stopPropagation()}
+          >
+            <div className="relative">
+              <Input
+                ref={searchInputRef}
+                size="xs"
+                placeholder={searchPlaceholder || "Search..."}
+                value={searchValue}
+                onChange={(e) => onSearchChange?.(e.target.value)}
+                disableKeyboardStep
+                onKeyDown={(e) => {
+                  // Let arrow keys / Enter / Escape bubble up so Radix can
+                  // move the highlighted item and confirm selection; stop
+                  // everything else from hijacking the Select's typeahead.
+                  if (
+                    e.key === "ArrowUp" ||
+                    e.key === "ArrowDown" ||
+                    e.key === "Home" ||
+                    e.key === "End" ||
+                    e.key === "PageUp" ||
+                    e.key === "PageDown"
+                  ) {
+                    lastNavKeyAtRef.current = Date.now();
+                  } else if (e.key !== "Enter" && e.key !== "Escape") {
+                    e.stopPropagation();
+                  }
+                }}
+                onFocus={() => {
+                  isSearchFocusedRef.current = true;
+                }}
+                onBlur={(e) => {
+                  // Only allow focus transfer to an item when the user just
+                  // pressed a navigation key. Otherwise (e.g. Radix
+                  // re-focusing after the items list updates as search
+                  // results stream in) refocus the search input so typing
+                  // is uninterrupted.
+                  const next = e.relatedTarget as HTMLElement | null;
+                  const isUserNav = Date.now() - lastNavKeyAtRef.current < 150;
+                  if (isUserNav && next?.closest('[role="option"]')) return;
+                  requestAnimationFrame(() => {
+                    if (isSearchFocusedRef.current) {
+                      searchInputRef.current?.focus();
+                    }
+                  });
+                }}
+                className={cn(searchLoading && "pr-7")}
+              />
+              {searchLoading && (
+                <Spinner className="absolute right-2 top-1/2 -translate-y-1/2 size-3.5" />
+              )}
+            </div>
+          </div>
+        )}
         <SelectScrollUpButton />
         <SelectPrimitive.Viewport
-          data-position={position}
           className={cn(
-            "data-[position=popper]:h-(--radix-select-trigger-height) data-[position=popper]:w-full data-[position=popper]:min-w-(--radix-select-trigger-width)",
-            position === "popper" && "",
+            "p-1",
+            position === "popper" &&
+              "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)] scroll-my-1",
           )}
+          onPointerDown={
+            searchable
+              ? () => {
+                  isSearchFocusedRef.current = false;
+                }
+              : undefined
+          }
         >
           {children}
         </SelectPrimitive.Viewport>
@@ -151,13 +231,18 @@ function SelectLabel({
   return (
     <SelectPrimitive.Label
       data-slot="select-label"
-      className={cn("px-2 py-1.5 text-xs text-muted-foreground", className)}
+      className={cn("text-muted-foreground px-2 py-1.5 text-[10px]", className)}
       {...props}
     />
   );
 }
 
-function SelectItem({
+// Memoized so the dozens of right-sidebar `<Select>`s (which keep their items
+// mounted in a hidden DocumentFragment even when closed, for Radix keyboard
+// typeahead) don't re-render every item on every layer-selection cascade.
+// Most call sites pass primitive `value` + string `children`, so the shallow
+// prop compare bails cheaply.
+const SelectItem = React.memo(function SelectItem({
   className,
   children,
   ...props
@@ -166,20 +251,29 @@ function SelectItem({
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "relative flex min-h-7 w-full cursor-default items-center gap-2 rounded-md px-2 py-1 text-xs/relaxed outline-hidden select-none focus:bg-accent focus:text-accent-foreground not-data-[variant=destructive]:focus:**:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
+        "focus:bg-accent focus:text-accent-foreground text-muted-foreground [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-pointer items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-xs outline-hidden select-none overflow-hidden data-[disabled]:opacity-50 data-[disabled]:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}
     >
-      <span className="pointer-events-none absolute right-2 flex items-center justify-center">
+      <span className="absolute right-2 flex size-3.5 items-center justify-center">
         <SelectPrimitive.ItemIndicator>
-          <CheckIcon className="pointer-events-none" />
+          <Icon name="check" className="size-3 opacity-50" />
         </SelectPrimitive.ItemIndicator>
       </span>
-      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      {/*
+        Render ItemText as a flex span so icon + label sit on the same line.
+        Without this, Tailwind preflight forces the icon to display:block and it
+        wraps onto its own line inside Radix's default inline ItemText wrapper.
+      */}
+      <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap [&>span]:overflow-hidden [&>span]:text-ellipsis [&>span]:whitespace-nowrap">
+        <SelectPrimitive.ItemText asChild>
+          <span className="flex items-center gap-2">{children}</span>
+        </SelectPrimitive.ItemText>
+      </span>
     </SelectPrimitive.Item>
   );
-}
+});
 
 function SelectSeparator({
   className,
@@ -188,10 +282,7 @@ function SelectSeparator({
   return (
     <SelectPrimitive.Separator
       data-slot="select-separator"
-      className={cn(
-        "pointer-events-none -mx-1 my-1 h-px bg-border/50",
-        className,
-      )}
+      className={cn("bg-border pointer-events-none -mx-1 my-1 h-px", className)}
       {...props}
     />
   );
@@ -205,12 +296,12 @@ function SelectScrollUpButton({
     <SelectPrimitive.ScrollUpButton
       data-slot="select-scroll-up-button"
       className={cn(
-        "z-10 flex cursor-default items-center justify-center bg-popover py-1 [&_svg:not([class*='size-'])]:size-3.5",
+        "flex cursor-default items-center justify-center py-1",
         className,
       )}
       {...props}
     >
-      <ChevronUpIcon />
+      <ChevronUpIcon className="size-4" />
     </SelectPrimitive.ScrollUpButton>
   );
 }
@@ -223,12 +314,12 @@ function SelectScrollDownButton({
     <SelectPrimitive.ScrollDownButton
       data-slot="select-scroll-down-button"
       className={cn(
-        "z-10 flex cursor-default items-center justify-center bg-popover py-1 [&_svg:not([class*='size-'])]:size-3.5",
+        "flex cursor-default items-center justify-center py-1",
         className,
       )}
       {...props}
     >
-      <ChevronDownIcon />
+      <ChevronDownIcon className="size-4" />
     </SelectPrimitive.ScrollDownButton>
   );
 }

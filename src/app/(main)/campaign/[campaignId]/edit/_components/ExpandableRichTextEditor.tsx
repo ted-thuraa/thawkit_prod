@@ -1,28 +1,42 @@
-'use client';
+"use client";
 
 /**
  * Compact rich-text editor with an "Richtext editor" button that opens
  * a RichTextEditorSheet for full-featured editing.
  */
 
-import { useMemo, useState, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import Icon from '@/components/ui/icon';
+import { useMemo, useState, useCallback } from "react";
+import { Button } from "@/components/ui/button";
+import Icon from "@/components/ui/icon";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import RichTextEditor from './RichTextEditor';
-import RichTextEditorSheet from './RichTextEditorSheet';
-import VariableFormatSelector from './VariableFormatSelector';
-import { CollectionFieldSelector, type FieldSourceType } from './CollectionFieldSelector';
-import { hasLinkOrComponent, getSoleCmsFieldBinding } from '@/lib/tiptap-utils';
-import { getVariableLabel } from '@/lib/cms-variables-utils';
-import { isFormattableFieldType, buildFieldVariableData } from '@/lib/variable-format-utils';
-import { flattenFieldGroups, filterFieldGroupsByType, RICH_TEXT_ONLY_FIELD_TYPES } from '@/lib/collection-field-utils';
-import type { CollectionField, Collection, CollectionFieldType } from '@/types';
-import type { FieldGroup } from '@/lib/collection-field-utils';
+} from "@/components/ui/dropdown-menu";
+import RichTextEditor from "./RichTextEditor";
+import RichTextEditorSheet from "./RichTextEditorSheet";
+import VariableFormatSelector from "./VariableFormatSelector";
+import {
+  CollectionFieldSelector,
+  type FieldSourceType,
+} from "./CollectionFieldSelector";
+import { hasLinkOrComponent, getSoleCmsFieldBinding } from "@/lib/tiptap-utils";
+import { getVariableLabel } from "@/lib/cms-variables-utils";
+import {
+  isFormattableFieldType,
+  buildFieldVariableData,
+} from "@/lib/variable-format-utils";
+import {
+  flattenFieldGroups,
+  filterFieldGroupsByType,
+  RICH_TEXT_ONLY_FIELD_TYPES,
+} from "@/lib/collection-field-utils";
+import type {
+  CollectionField,
+  Collection,
+  CollectionFieldType,
+} from "@/types/funnel";
+import type { FieldGroup } from "@/lib/collection-field-utils";
 
 interface ExpandableRichTextEditorProps {
   value: any;
@@ -50,7 +64,7 @@ export default function ExpandableRichTextEditor({
   value,
   onChange,
   onBlur,
-  placeholder = 'Enter value...',
+  placeholder = "Enter value...",
   sheetTitle,
   sheetDescription,
   fieldGroups,
@@ -71,34 +85,43 @@ export default function ExpandableRichTextEditor({
   }, [buttonOnly, value]);
 
   const richTextBinding = useMemo(() => {
-    return soleBinding?.field_type === 'rich_text' ? soleBinding : null;
+    return soleBinding?.field_type === "rich_text" ? soleBinding : null;
   }, [soleBinding]);
 
   const formattableBinding = useMemo(() => {
-    return soleBinding && isFormattableFieldType(soleBinding.field_type) ? soleBinding : null;
+    return soleBinding && isFormattableFieldType(soleBinding.field_type)
+      ? soleBinding
+      : null;
   }, [soleBinding]);
 
-  const handleFormatChange = useCallback((formatId: string) => {
-    if (!value?.content?.[0]?.content?.[0]?.attrs?.variable) return;
-    const variable = value.content[0].content[0].attrs.variable;
-    const updatedContent = {
-      type: 'doc',
-      content: [{
-        type: 'paragraph',
-        content: [{
-          type: 'dynamicVariable',
-          attrs: {
-            ...value.content[0].content[0].attrs,
-            variable: {
-              ...variable,
-              data: { ...variable.data, format: formatId },
-            },
+  const handleFormatChange = useCallback(
+    (formatId: string) => {
+      if (!value?.content?.[0]?.content?.[0]?.attrs?.variable) return;
+      const variable = value.content[0].content[0].attrs.variable;
+      const updatedContent = {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "dynamicVariable",
+                attrs: {
+                  ...value.content[0].content[0].attrs,
+                  variable: {
+                    ...variable,
+                    data: { ...variable.data, format: formatId },
+                  },
+                },
+              },
+            ],
           },
-        }],
-      }],
-    };
-    onChange(updatedContent);
-  }, [value, onChange]);
+        ],
+      };
+      onChange(updatedContent);
+    },
+    [value, onChange],
+  );
 
   const textFieldGroups = useMemo(
     () => filterFieldGroupsByType(fieldGroups, allowedFieldTypes),
@@ -106,25 +129,37 @@ export default function ExpandableRichTextEditor({
   );
   const canShowVariables = textFieldGroups.length > 0;
 
-  const fields = useMemo(
-    () => flattenFieldGroups(fieldGroups),
-    [fieldGroups],
-  );
+  const fields = useMemo(() => flattenFieldGroups(fieldGroups), [fieldGroups]);
 
-  const handleFieldSelect = (fieldId: string, relationshipPath: string[], source?: FieldSourceType, layerId?: string) => {
-    const field = fields.find(f => f.id === fieldId);
-    const variableData = buildFieldVariableData(fieldId, relationshipPath, field?.type ?? null, source, layerId);
+  const handleFieldSelect = (
+    fieldId: string,
+    relationshipPath: string[],
+    source?: FieldSourceType,
+    layerId?: string,
+  ) => {
+    const field = fields.find((f) => f.id === fieldId);
+    const variableData = buildFieldVariableData(
+      fieldId,
+      relationshipPath,
+      field?.type ?? null,
+      source,
+      layerId,
+    );
     const label = getVariableLabel(variableData, fields, allFields);
 
     const newContent = {
-      type: 'doc',
-      content: [{
-        type: 'paragraph',
-        content: [{
-          type: 'dynamicVariable',
-          attrs: { variable: variableData, label },
-        }],
-      }],
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "dynamicVariable",
+              attrs: { variable: variableData, label },
+            },
+          ],
+        },
+      ],
     };
     onChange(newContent);
     setCmsDropdownOpen(false);
@@ -144,7 +179,9 @@ export default function ExpandableRichTextEditor({
             <div>
               <span className="flex items-center gap-1.5 truncate">
                 <Icon name="database" className="size-3 opacity-60 shrink-0" />
-                <span className="truncate">{activeBinding!.label || 'CMS Field'}</span>
+                <span className="truncate">
+                  {activeBinding!.label || "CMS Field"}
+                </span>
               </span>
               <Button
                 className="size-4! p-0! shrink-0"
@@ -154,7 +191,7 @@ export default function ExpandableRichTextEditor({
                   if (onClear) {
                     onClear();
                   } else {
-                    onChange({ type: 'doc', content: [{ type: 'paragraph' }] });
+                    onChange({ type: "doc", content: [{ type: "paragraph" }] });
                   }
                 }}
               >
@@ -201,7 +238,9 @@ export default function ExpandableRichTextEditor({
           onClick={() => setSheetOpen(true)}
         >
           Expand
-          <span><Icon name="expand" className="size-2.5" /></span>
+          <span>
+            <Icon name="expand" className="size-2.5" />
+          </span>
         </Button>
 
         {buttonOnly && canShowVariables && (

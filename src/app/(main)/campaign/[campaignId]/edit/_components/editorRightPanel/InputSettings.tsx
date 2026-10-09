@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 /**
  * Input Settings Component
@@ -7,11 +7,11 @@
  * Allows configuring type, placeholder, value, and behavior attributes
  */
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from "react";
 
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -19,10 +19,10 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import SettingsPanel from './SettingsPanel';
-import { findAncestor } from '@/lib/layer-utils';
-import type { Layer } from '@/types';
+} from "@/components/ui/select";
+import SettingsPanel from "../SettingsPanel";
+import { findAncestor } from "@/lib/layer-utils";
+import type { Layer } from "@/types/funnel";
 
 interface InputSettingsProps {
   layer: Layer | null;
@@ -32,29 +32,34 @@ interface InputSettingsProps {
 
 // Input type options
 const INPUT_TYPES = [
-  { value: 'text', label: 'Text' },
-  { value: 'number', label: 'Number' },
-  { value: 'password', label: 'Password' },
-  { value: 'email', label: 'Email address' },
-  { value: 'tel', label: 'Phone number' },
-  { value: 'url', label: 'URL' },
-  { value: 'date', label: 'Date' },
-  { value: 'datetime-local', label: 'Date and time' },
-  { value: 'range', label: 'Range' },
+  { value: "text", label: "Text" },
+  { value: "number", label: "Number" },
+  { value: "password", label: "Password" },
+  { value: "email", label: "Email address" },
+  { value: "tel", label: "Phone number" },
+  { value: "url", label: "URL" },
+  { value: "date", label: "Date" },
+  { value: "datetime-local", label: "Date and time" },
+  { value: "range", label: "Range" },
 ];
 
-export default function InputSettings({ layer, allLayers, onLayerUpdate }: InputSettingsProps) {
+export default function InputSettings({
+  layer,
+  allLayers,
+  onLayerUpdate,
+}: InputSettingsProps) {
   const [isOpen, setIsOpen] = useState(true);
 
   // Check if this is a form input element
-  const isInputLayer = layer?.name === 'input';
-  const isTextareaLayer = layer?.name === 'textarea';
-  const isSelectLayer = layer?.name === 'select';
+  const isInputLayer = layer?.name === "input";
+  const isTextareaLayer = layer?.name === "textarea";
+  const isSelectLayer = layer?.name === "select";
   const isFormInputElement = isInputLayer || isTextareaLayer || isSelectLayer;
 
   // Check if this is a checkbox or radio input
-  const isCheckboxInput = isInputLayer && layer?.attributes?.type === 'checkbox';
-  const isRadioInput = isInputLayer && layer?.attributes?.type === 'radio';
+  const isCheckboxInput =
+    isInputLayer && layer?.attributes?.type === "checkbox";
+  const isRadioInput = isInputLayer && layer?.attributes?.type === "radio";
   const isCheckboxOrRadio = isCheckboxInput || isRadioInput;
 
   // Lock name/type for the password input on the 401 page: when this input
@@ -62,24 +67,31 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
   // the verify endpoint relies on type=password / name=password.
   const isLockedPasswordInput = useMemo(() => {
     if (!layer || !isInputLayer || !allLayers) return false;
-    if (layer.restrictions?.copy !== false || layer.restrictions?.delete !== false) return false;
+    if (
+      layer.restrictions?.copy !== false ||
+      layer.restrictions?.delete !== false
+    )
+      return false;
     const parentForm = findAncestor(
       allLayers,
       layer.id,
-      (candidate) => candidate.name === 'form'
-        && candidate.settings?.form?.form_type === 'password_protected'
+      (candidate) =>
+        candidate.name === "form" &&
+        candidate.settings?.form?.form_type === "password_protected",
     );
     return !!parentForm;
   }, [layer, isInputLayer, allLayers]);
 
   // Get current attribute values
   const attributes = layer?.attributes || {};
-  const inputType = attributes.type || 'text';
-  const placeholder = attributes.placeholder || '';
-  const value = attributes.value || '';
-  const name = attributes.name || '';
-  const isRequired = attributes.required === true || attributes.required === 'true';
-  const isAutofocus = attributes.autoFocus === true || attributes.autoFocus === 'true';
+  const inputType = attributes.type || "text";
+  const placeholder = attributes.placeholder || "";
+  const value = attributes.value || "";
+  const name = attributes.name || "";
+  const isRequired =
+    attributes.required === true || attributes.required === "true";
+  const isAutofocus =
+    attributes.autoFocus === true || attributes.autoFocus === "true";
 
   const handleAttributeChange = useCallback(
     (key: string, newValue: any) => {
@@ -87,7 +99,7 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
 
       // Handle boolean attributes (required, autoFocus)
       // If false/unchecked, remove the attribute entirely
-      if (key === 'required' || key === 'autoFocus') {
+      if (key === "required" || key === "autoFocus") {
         const newAttributes = { ...layer.attributes };
         if (newValue) {
           newAttributes[key] = true;
@@ -99,7 +111,7 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
       }
 
       // Handle empty string values - remove the attribute
-      if (newValue === '') {
+      if (newValue === "") {
         const newAttributes = { ...layer.attributes };
         delete newAttributes[key];
         onLayerUpdate(layer.id, { attributes: newAttributes });
@@ -113,7 +125,7 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
         },
       });
     },
-    [layer, onLayerUpdate]
+    [layer, onLayerUpdate],
   );
 
   // Only show for form input elements
@@ -137,7 +149,9 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
               <div className="col-span-2 *:w-full">
                 <Input
                   value={name}
-                  onChange={(e) => handleAttributeChange('name', e.target.value)}
+                  onChange={(e) =>
+                    handleAttributeChange("name", e.target.value)
+                  }
                   placeholder="e.g., plan"
                 />
               </div>
@@ -149,7 +163,9 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
               <div className="col-span-2 *:w-full">
                 <Input
                   value={value}
-                  onChange={(e) => handleAttributeChange('value', e.target.value)}
+                  onChange={(e) =>
+                    handleAttributeChange("value", e.target.value)
+                  }
                   placeholder="e.g., premium"
                 />
               </div>
@@ -157,13 +173,17 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
 
             {/* Behavior section */}
             <div className="grid grid-cols-3 items-start">
-              <Label variant="muted" className="pt-0.5">Behavior</Label>
+              <Label variant="muted" className="pt-0.5">
+                Behavior
+              </Label>
               <div className="col-span-2 flex flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <Checkbox
                     id="required"
                     checked={isRequired}
-                    onCheckedChange={(checked) => handleAttributeChange('required', checked)}
+                    onCheckedChange={(checked) =>
+                      handleAttributeChange("required", checked)
+                    }
                   />
                   <Label
                     htmlFor="required"
@@ -183,7 +203,9 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
               <div className="col-span-2 *:w-full">
                 <Input
                   value={name}
-                  onChange={(e) => handleAttributeChange('name', e.target.value)}
+                  onChange={(e) =>
+                    handleAttributeChange("name", e.target.value)
+                  }
                   placeholder="e.g., agree_terms"
                 />
               </div>
@@ -191,13 +213,17 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
 
             {/* Behavior section */}
             <div className="grid grid-cols-3 items-start">
-              <Label variant="muted" className="pt-0.5">Behavior</Label>
+              <Label variant="muted" className="pt-0.5">
+                Behavior
+              </Label>
               <div className="col-span-2 flex flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <Checkbox
                     id="required"
                     checked={isRequired}
-                    onCheckedChange={(checked) => handleAttributeChange('required', checked)}
+                    onCheckedChange={(checked) =>
+                      handleAttributeChange("required", checked)
+                    }
                   />
                   <Label
                     htmlFor="required"
@@ -217,7 +243,9 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
               <div className="col-span-2 *:w-full">
                 <Input
                   value={name}
-                  onChange={(e) => handleAttributeChange('name', e.target.value)}
+                  onChange={(e) =>
+                    handleAttributeChange("name", e.target.value)
+                  }
                   placeholder="Field"
                   disabled={isLockedPasswordInput}
                 />
@@ -231,7 +259,7 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
                 <div className="col-span-2 *:w-full">
                   <Select
                     value={inputType}
-                    onValueChange={(val) => handleAttributeChange('type', val)}
+                    onValueChange={(val) => handleAttributeChange("type", val)}
                     disabled={isLockedPasswordInput}
                   >
                     <SelectTrigger>
@@ -253,8 +281,8 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
 
             {isLockedPasswordInput && (
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Name and type are locked because this input gates a password-protected page.
-                Restyle it freely.
+                Name and type are locked because this input gates a
+                password-protected page. Restyle it freely.
               </p>
             )}
 
@@ -265,7 +293,9 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
                 <div className="col-span-2 *:w-full">
                   <Input
                     value={placeholder}
-                    onChange={(e) => handleAttributeChange('placeholder', e.target.value)}
+                    onChange={(e) =>
+                      handleAttributeChange("placeholder", e.target.value)
+                    }
                     placeholder="Placeholder text"
                   />
                 </div>
@@ -279,7 +309,9 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
                 <div className="col-span-2 *:w-full">
                   <Input
                     value={value}
-                    onChange={(e) => handleAttributeChange('value', e.target.value)}
+                    onChange={(e) =>
+                      handleAttributeChange("value", e.target.value)
+                    }
                     placeholder="Input value"
                   />
                 </div>
@@ -288,13 +320,17 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
 
             {/* Behavior section */}
             <div className="grid grid-cols-3 items-start">
-              <Label variant="muted" className="pt-0.5">Behavior</Label>
+              <Label variant="muted" className="pt-0.5">
+                Behavior
+              </Label>
               <div className="col-span-2 flex flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <Checkbox
                     id="required"
                     checked={isRequired}
-                    onCheckedChange={(checked) => handleAttributeChange('required', checked)}
+                    onCheckedChange={(checked) =>
+                      handleAttributeChange("required", checked)
+                    }
                   />
                   <Label
                     htmlFor="required"
@@ -307,7 +343,9 @@ export default function InputSettings({ layer, allLayers, onLayerUpdate }: Input
                   <Checkbox
                     id="autofocus"
                     checked={isAutofocus}
-                    onCheckedChange={(checked) => handleAttributeChange('autoFocus', checked)}
+                    onCheckedChange={(checked) =>
+                      handleAttributeChange("autoFocus", checked)
+                    }
                   />
                   <Label
                     htmlFor="autofocus"

@@ -24,15 +24,12 @@ import {
 } from "@/lib/collection-field-utils";
 import { generateLinkHref } from "@/lib/link-utils";
 import { cn } from "@/lib/utils";
-import LinkCollectionItemPicker from "./LinkCollectionItemPicker";
 import {
   FieldSelectDropdown,
   type FieldGroup,
   type FieldSourceType,
-} from "../CollectionFieldSelector";
-import ComponentVariableLabel, {
-  VARIABLE_TYPE_ICONS,
-} from "../ComponentVariableLabel";
+} from "./CollectionFieldSelector";
+
 import {
   Select,
   SelectContent,
@@ -74,6 +71,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import PageSelector from "./PageSelector";
+import ComponentVariableLabel, {
+  VARIABLE_TYPE_ICONS,
+} from "./ComponentVariableLabel";
+import LinkCollectionItemPicker from "./editorRightPanel/LinkCollectionItemPicker";
 
 // Re-export LinkSettingsValue from types for convenience
 export type { LinkSettingsValue } from "@/types/funnel";
@@ -255,13 +256,13 @@ export default function LinkSettings(props: LinkSettingsProps) {
   }, [linkType, pageId, currentPageId, draftsByPageId]);
 
   // Check if selected page is dynamic
-  const isDynamicPage = selectedPage?.is_dynamic || false;
+  const isDynamicPage = selectedPage?.isDynamic || false;
 
   // Check if the current page is dynamic
   const currentPage = currentPageId
     ? pages.find((p) => p.id === currentPageId)
     : null;
-  const isCurrentPageDynamic = currentPage?.is_dynamic || false;
+  const isCurrentPageDynamic = currentPage?.isDynamic || false;
 
   // "Current page item" only makes sense when both pages use the same collection
   const currentPageCollectionId =

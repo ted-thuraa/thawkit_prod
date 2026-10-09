@@ -1,5 +1,5 @@
 /* eslint-disable @next/next/no-img-element */
-'use client';
+"use client";
 
 /**
  * Image Settings Component
@@ -8,44 +8,87 @@
  * Can also be used in standalone mode for just image source selection.
  */
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from "react";
 
-import { Label } from '@/components/ui/label';
-import SettingsPanel from './SettingsPanel';
-import RichTextEditor from './RichTextEditor';
-import { FieldSelectDropdown, type FieldGroup, type FieldSourceType } from './CollectionFieldSelector';
-import ComponentVariableLabel, { VARIABLE_TYPE_ICONS } from './ComponentVariableLabel';
-import type { Layer, CollectionField, Collection, AssetVariable, DynamicTextVariable, FieldVariable, ImageSettingsValue } from '@/types';
-import { createDynamicTextVariable, getDynamicTextContent, createAssetVariable, getImageUrlFromVariable, isAssetVariable, getAssetId, isDynamicTextVariable, isFieldVariable } from '@/lib/variable-utils';
-import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import Icon from '@/components/ui/icon';
-import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from "@/components/ui/label";
+import SettingsPanel from "../SettingsPanel";
+import RichTextEditor from "../RichTextEditor";
+import {
+  FieldSelectDropdown,
+  type FieldGroup,
+  type FieldSourceType,
+} from "../CollectionFieldSelector";
+import ComponentVariableLabel, {
+  VARIABLE_TYPE_ICONS,
+} from "../ComponentVariableLabel";
+import type {
+  Layer,
+  CollectionField,
+  Collection,
+  AssetVariable,
+  DynamicTextVariable,
+  FieldVariable,
+  ImageSettingsValue,
+} from "@/types/funnel";
+import {
+  createDynamicTextVariable,
+  getDynamicTextContent,
+  createAssetVariable,
+  getImageUrlFromVariable,
+  isAssetVariable,
+  getAssetId,
+  isDynamicTextVariable,
+  isFieldVariable,
+} from "@/lib/variable-utils";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import Icon from "@/components/ui/icon";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { useEditorStore } from '@/stores/useEditorStore';
-import { useAssetsStore } from '@/stores/useAssetsStore';
-import { useComponentsStore } from '@/stores/useComponentsStore';
-import { DEFAULT_ASSETS, ASSET_CATEGORIES, isAssetOfType } from '@/lib/asset-utils';
-import { IMAGE_FIELD_TYPES, SIMPLE_TEXT_FIELD_TYPES, filterFieldGroupsByType, flattenFieldGroups } from '@/lib/collection-field-utils';
-import { toast } from 'sonner';
-import { Separator } from '@/components/ui/separator';
+} from "@/components/ui/select";
+import { useEditorStore } from "@/stores/editor/useEditorStore";
+import { useAssetsStore } from "@/stores/editor/useAssetsStore";
+import { useComponentsStore } from "@/stores/editor/useComponentsStore";
+import {
+  DEFAULT_ASSETS,
+  ASSET_CATEGORIES,
+  isAssetOfType,
+} from "@/lib/asset-utils";
+import {
+  IMAGE_FIELD_TYPES,
+  SIMPLE_TEXT_FIELD_TYPES,
+  filterFieldGroupsByType,
+  flattenFieldGroups,
+} from "@/lib/collection-field-utils";
+import { toast } from "sonner";
+import { Separator } from "@/components/ui/separator";
 
 // Image source variable type
-export type ImageSourceVariable = AssetVariable | DynamicTextVariable | FieldVariable;
+export type ImageSourceVariable =
+  | AssetVariable
+  | DynamicTextVariable
+  | FieldVariable;
 
 // Re-export ImageSettingsValue from types for convenience
-export type { ImageSettingsValue } from '@/types';
+export type { ImageSettingsValue } from "@/types/funnel";
 
 // Layer mode props - for editing image layers
 interface LayerModeProps {
-  mode?: 'layer';
+  mode?: "layer";
   layer: Layer | null;
   onLayerUpdate: (layerId: string, updates: Partial<Layer>) => void;
   value?: never;
@@ -54,7 +97,7 @@ interface LayerModeProps {
 
 // Standalone mode props - for complete image settings
 interface StandaloneModeProps {
-  mode: 'standalone';
+  mode: "standalone";
   value: ImageSettingsValue | undefined;
   onChange: (value: ImageSettingsValue) => void;
   layer?: never;
@@ -74,7 +117,7 @@ type ImageSettingsProps = (LayerModeProps | StandaloneModeProps) & CommonProps;
 
 export default function ImageSettings(props: ImageSettingsProps) {
   const { fieldGroups, allFields, collections, onOpenVariablesDialog } = props;
-  const isStandaloneMode = props.mode === 'standalone';
+  const isStandaloneMode = props.mode === "standalone";
 
   // Layer mode props
   const layer = isStandaloneMode ? null : props.layer;
@@ -86,32 +129,56 @@ export default function ImageSettings(props: ImageSettingsProps) {
   const [isOpen, setIsOpen] = useState(true);
   const [selectedField, setSelectedField] = useState<string | null>(null);
   const openFileManager = useEditorStore((state) => state.openFileManager);
-  const editingComponentId = useEditorStore((state) => state.editingComponentId);
+  const editingComponentId = useEditorStore(
+    (state) => state.editingComponentId,
+  );
   const getAsset = useAssetsStore((state) => state.getAsset);
-  const getComponentById = useComponentsStore((state) => state.getComponentById);
-  const addImageVariable = useComponentsStore((state) => state.addImageVariable);
-  const updateTextVariable = useComponentsStore((state) => state.updateTextVariable);
+  const getComponentById = useComponentsStore(
+    (state) => state.getComponentById,
+  );
+  const addImageVariable = useComponentsStore(
+    (state) => state.addImageVariable,
+  );
+  const updateTextVariable = useComponentsStore(
+    (state) => state.updateTextVariable,
+  );
 
   // Get component variables for image linking (when editing a component in layer mode)
-  const editingComponent = !isStandaloneMode && editingComponentId ? getComponentById(editingComponentId) : undefined;
+  const editingComponent =
+    !isStandaloneMode && editingComponentId
+      ? getComponentById(editingComponentId)
+      : undefined;
   const componentVariables = editingComponent?.variables || [];
   // Filter to only image-type variables
-  const imageComponentVariables = componentVariables.filter(v => v.type === 'image');
+  const imageComponentVariables = componentVariables.filter(
+    (v) => v.type === "image",
+  );
 
   // Get image source variable - from layer or standalone value
-  const imageSrc = isStandaloneMode ? standaloneValue?.src : layer?.variables?.image?.src;
+  const imageSrc = isStandaloneMode
+    ? standaloneValue?.src
+    : layer?.variables?.image?.src;
 
   // Get linked image variable ID from layer (stored in src.id)
-  const linkedImageVariableId = !isStandaloneMode && imageSrc ? (imageSrc as any).id : undefined;
-  const linkedImageVariable = imageComponentVariables.find(v => v.id === linkedImageVariableId);
+  const linkedImageVariableId =
+    !isStandaloneMode && imageSrc ? (imageSrc as any).id : undefined;
+  const linkedImageVariable = imageComponentVariables.find(
+    (v) => v.id === linkedImageVariableId,
+  );
 
   // Get effective image source - use variable's default value when linked
-  const linkedVariableDefaultValue = linkedImageVariable?.default_value as ImageSettingsValue | undefined;
-  const effectiveImageSrc = linkedImageVariable ? linkedVariableDefaultValue?.src : imageSrc;
+  const linkedVariableDefaultValue = linkedImageVariable?.default_value as
+    | ImageSettingsValue
+    | undefined;
+  const effectiveImageSrc = linkedImageVariable
+    ? linkedVariableDefaultValue?.src
+    : imageSrc;
 
   // Filter field groups to only show image-bindable field types (image or text for URL)
   const imageFieldGroups = useMemo(() => {
-    return filterFieldGroupsByType(fieldGroups, IMAGE_FIELD_TYPES, { excludeMultipleAsset: true });
+    return filterFieldGroupsByType(fieldGroups, IMAGE_FIELD_TYPES, {
+      excludeMultipleAsset: true,
+    });
   }, [fieldGroups]);
 
   // Flatten for internal lookups
@@ -128,11 +195,11 @@ export default function ImageSettings(props: ImageSettingsProps) {
   }, [effectiveImageSrc]);
 
   // Detect current image type from src variable (use effective source for display)
-  const imageType = useMemo((): 'upload' | 'custom_url' | 'cms' => {
-    if (!effectiveImageSrc) return 'upload';
-    if (effectiveImageSrc.type === 'field') return 'cms';
-    if (isDynamicTextVariable(effectiveImageSrc)) return 'custom_url';
-    return 'upload';
+  const imageType = useMemo((): "upload" | "custom_url" | "cms" => {
+    if (!effectiveImageSrc) return "upload";
+    if (effectiveImageSrc.type === "field") return "cms";
+    if (isDynamicTextVariable(effectiveImageSrc)) return "custom_url";
+    return "upload";
   }, [effectiveImageSrc]);
 
   // Get custom URL value from DynamicTextVariable
@@ -140,102 +207,127 @@ export default function ImageSettings(props: ImageSettingsProps) {
     if (effectiveImageSrc && isDynamicTextVariable(effectiveImageSrc)) {
       return getDynamicTextContent(effectiveImageSrc);
     }
-    return '';
+    return "";
   }, [effectiveImageSrc]);
 
   // Helper to update standalone value
-  const updateStandaloneValue = useCallback((updates: Partial<ImageSettingsValue>) => {
-    if (standaloneOnChange) {
-      standaloneOnChange({ ...standaloneValue, ...updates });
-    }
-  }, [standaloneOnChange, standaloneValue]);
+  const updateStandaloneValue = useCallback(
+    (updates: Partial<ImageSettingsValue>) => {
+      if (standaloneOnChange) {
+        standaloneOnChange({ ...standaloneValue, ...updates });
+      }
+    },
+    [standaloneOnChange, standaloneValue],
+  );
 
   // Helper to update image source (works in both modes)
-  const updateImageSrc = useCallback((newSrc: ImageSourceVariable) => {
-    if (isStandaloneMode) {
-      updateStandaloneValue({ src: newSrc });
-    } else if (layer && onLayerUpdate) {
+  const updateImageSrc = useCallback(
+    (newSrc: ImageSourceVariable) => {
+      if (isStandaloneMode) {
+        updateStandaloneValue({ src: newSrc });
+      } else if (layer && onLayerUpdate) {
+        onLayerUpdate(layer.id, {
+          variables: {
+            ...layer.variables,
+            image: {
+              src: newSrc,
+              alt: layer.variables?.image?.alt || createDynamicTextVariable(""),
+            },
+          },
+        });
+      }
+    },
+    [isStandaloneMode, updateStandaloneValue, layer, onLayerUpdate],
+  );
+
+  const handleImageChange = useCallback(
+    (assetId: string) => {
+      const assetVariable = createAssetVariable(assetId);
+      updateImageSrc(assetVariable);
+    },
+    [updateImageSrc],
+  );
+
+  const handleFieldSelect = useCallback(
+    (
+      fieldId: string,
+      relationshipPath: string[],
+      source?: FieldSourceType,
+      layerId?: string,
+    ) => {
+      const field = imageFields.find((f) => f.id === fieldId);
+      const fieldVariable: FieldVariable = {
+        type: "field",
+        data: {
+          field_id: fieldId,
+          relationships: relationshipPath,
+          field_type: field?.type || null,
+          source,
+          collection_layer_id: layerId,
+        },
+      };
+      updateImageSrc(fieldVariable);
+      setSelectedField(fieldId);
+    },
+    [updateImageSrc, imageFields],
+  );
+
+  const handleTypeChange = useCallback(
+    (type: "upload" | "custom_url" | "cms") => {
+      if (type === "custom_url") {
+        updateImageSrc(createDynamicTextVariable(""));
+      } else if (type === "cms") {
+        const fieldVariable: FieldVariable = {
+          type: "field",
+          data: {
+            field_id: null,
+            relationships: [],
+            field_type: null,
+          },
+        };
+        updateImageSrc(fieldVariable);
+        setSelectedField(null);
+      } else {
+        updateImageSrc(createAssetVariable(""));
+        setSelectedField(null);
+      }
+    },
+    [updateImageSrc],
+  );
+
+  const handleUrlChange = useCallback(
+    (value: string) => {
+      updateImageSrc(createDynamicTextVariable(value));
+    },
+    [updateImageSrc],
+  );
+
+  // Handle linking image to a component variable
+  const handleLinkImageVariable = useCallback(
+    (variableId: string) => {
+      if (!layer || !onLayerUpdate) return;
+
+      const currentSrc = layer.variables?.image?.src;
+
       onLayerUpdate(layer.id, {
         variables: {
           ...layer.variables,
           image: {
-            src: newSrc,
-            alt: layer.variables?.image?.alt || createDynamicTextVariable(''),
+            ...layer.variables?.image,
+            src: currentSrc
+              ? ({ ...currentSrc, id: variableId } as any)
+              : ({
+                  type: "asset",
+                  id: variableId,
+                  data: { asset_id: null },
+                } as any),
+            alt: layer.variables?.image?.alt || createDynamicTextVariable(""),
           },
         },
       });
-    }
-  }, [isStandaloneMode, updateStandaloneValue, layer, onLayerUpdate]);
-
-  const handleImageChange = useCallback((assetId: string) => {
-    const assetVariable = createAssetVariable(assetId);
-    updateImageSrc(assetVariable);
-  }, [updateImageSrc]);
-
-  const handleFieldSelect = useCallback((
-    fieldId: string,
-    relationshipPath: string[],
-    source?: FieldSourceType,
-    layerId?: string
-  ) => {
-    const field = imageFields.find(f => f.id === fieldId);
-    const fieldVariable: FieldVariable = {
-      type: 'field',
-      data: {
-        field_id: fieldId,
-        relationships: relationshipPath,
-        field_type: field?.type || null,
-        source,
-        collection_layer_id: layerId,
-      },
-    };
-    updateImageSrc(fieldVariable);
-    setSelectedField(fieldId);
-  }, [updateImageSrc, imageFields]);
-
-  const handleTypeChange = useCallback((type: 'upload' | 'custom_url' | 'cms') => {
-    if (type === 'custom_url') {
-      updateImageSrc(createDynamicTextVariable(''));
-    } else if (type === 'cms') {
-      const fieldVariable: FieldVariable = {
-        type: 'field',
-        data: {
-          field_id: null,
-          relationships: [],
-          field_type: null,
-        },
-      };
-      updateImageSrc(fieldVariable);
-      setSelectedField(null);
-    } else {
-      updateImageSrc(createAssetVariable(''));
-      setSelectedField(null);
-    }
-  }, [updateImageSrc]);
-
-  const handleUrlChange = useCallback((value: string) => {
-    updateImageSrc(createDynamicTextVariable(value));
-  }, [updateImageSrc]);
-
-  // Handle linking image to a component variable
-  const handleLinkImageVariable = useCallback((variableId: string) => {
-    if (!layer || !onLayerUpdate) return;
-
-    const currentSrc = layer.variables?.image?.src;
-
-    onLayerUpdate(layer.id, {
-      variables: {
-        ...layer.variables,
-        image: {
-          ...layer.variables?.image,
-          src: currentSrc
-            ? { ...currentSrc, id: variableId } as any
-            : { type: 'asset', id: variableId, data: { asset_id: null } } as any,
-          alt: layer.variables?.image?.alt || createDynamicTextVariable(''),
-        },
-      },
-    });
-  }, [layer, onLayerUpdate]);
+    },
+    [layer, onLayerUpdate],
+  );
 
   // Handle unlinking image from a component variable
   const handleUnlinkImageVariable = useCallback(() => {
@@ -253,88 +345,102 @@ export default function ImageSettings(props: ImageSettingsProps) {
           image: {
             ...layer.variables?.image,
             src: srcWithoutId,
-            alt: layer.variables?.image?.alt || createDynamicTextVariable(''),
+            alt: layer.variables?.image?.alt || createDynamicTextVariable(""),
           },
         },
       });
     }
   }, [layer, onLayerUpdate]);
 
-  const handleAltChange = useCallback((value: string) => {
-    const altVariable = createDynamicTextVariable(value);
+  const handleAltChange = useCallback(
+    (value: string) => {
+      const altVariable = createDynamicTextVariable(value);
 
-    if (isStandaloneMode) {
-      updateStandaloneValue({ alt: altVariable });
-    } else if (layer && onLayerUpdate) {
-      onLayerUpdate(layer.id, {
-        variables: {
-          ...layer.variables,
-          image: {
-            ...layer.variables?.image,
-            src: layer.variables?.image?.src || createDynamicTextVariable(''),
-            alt: altVariable,
+      if (isStandaloneMode) {
+        updateStandaloneValue({ alt: altVariable });
+      } else if (layer && onLayerUpdate) {
+        onLayerUpdate(layer.id, {
+          variables: {
+            ...layer.variables,
+            image: {
+              ...layer.variables?.image,
+              src: layer.variables?.image?.src || createDynamicTextVariable(""),
+              alt: altVariable,
+            },
           },
-        },
-      });
-    }
-  }, [isStandaloneMode, updateStandaloneValue, layer, onLayerUpdate]);
-
-  const handleWidthChange = useCallback((value: string) => {
-    // Drop empty/zero values — `width="0"` short-circuits the asset-dimension
-    // fallback at render time and produces broken sizes/srcset math.
-    const trimmed = value.trim();
-    const sanitized = trimmed && parseInt(trimmed, 10) > 0 ? trimmed : undefined;
-    if (isStandaloneMode) {
-      updateStandaloneValue({ width: sanitized });
-    } else if (layer && onLayerUpdate) {
-      const newAttributes = { ...layer.attributes };
-      if (sanitized) {
-        newAttributes.width = sanitized;
-      } else {
-        delete newAttributes.width;
+        });
       }
-      onLayerUpdate(layer.id, { attributes: newAttributes });
-    }
-  }, [isStandaloneMode, updateStandaloneValue, layer, onLayerUpdate]);
+    },
+    [isStandaloneMode, updateStandaloneValue, layer, onLayerUpdate],
+  );
 
-  const handleHeightChange = useCallback((value: string) => {
-    const trimmed = value.trim();
-    const sanitized = trimmed && parseInt(trimmed, 10) > 0 ? trimmed : undefined;
-    if (isStandaloneMode) {
-      updateStandaloneValue({ height: sanitized });
-    } else if (layer && onLayerUpdate) {
-      const newAttributes = { ...layer.attributes };
-      if (sanitized) {
-        newAttributes.height = sanitized;
-      } else {
-        delete newAttributes.height;
+  const handleWidthChange = useCallback(
+    (value: string) => {
+      // Drop empty/zero values — `width="0"` short-circuits the asset-dimension
+      // fallback at render time and produces broken sizes/srcset math.
+      const trimmed = value.trim();
+      const sanitized =
+        trimmed && parseInt(trimmed, 10) > 0 ? trimmed : undefined;
+      if (isStandaloneMode) {
+        updateStandaloneValue({ width: sanitized });
+      } else if (layer && onLayerUpdate) {
+        const newAttributes = { ...layer.attributes };
+        if (sanitized) {
+          newAttributes.width = sanitized;
+        } else {
+          delete newAttributes.width;
+        }
+        onLayerUpdate(layer.id, { attributes: newAttributes });
       }
-      onLayerUpdate(layer.id, { attributes: newAttributes });
-    }
-  }, [isStandaloneMode, updateStandaloneValue, layer, onLayerUpdate]);
+    },
+    [isStandaloneMode, updateStandaloneValue, layer, onLayerUpdate],
+  );
 
-  const handleLazyChange = useCallback((checked: boolean) => {
-    if (isStandaloneMode) {
-      updateStandaloneValue({ loading: checked ? 'lazy' : 'eager' });
-    } else if (layer && onLayerUpdate) {
-      onLayerUpdate(layer.id, {
-        attributes: {
-          ...layer.attributes,
-          loading: checked ? 'lazy' : 'eager',
-        },
-      });
-    }
-  }, [isStandaloneMode, updateStandaloneValue, layer, onLayerUpdate]);
+  const handleHeightChange = useCallback(
+    (value: string) => {
+      const trimmed = value.trim();
+      const sanitized =
+        trimmed && parseInt(trimmed, 10) > 0 ? trimmed : undefined;
+      if (isStandaloneMode) {
+        updateStandaloneValue({ height: sanitized });
+      } else if (layer && onLayerUpdate) {
+        const newAttributes = { ...layer.attributes };
+        if (sanitized) {
+          newAttributes.height = sanitized;
+        } else {
+          delete newAttributes.height;
+        }
+        onLayerUpdate(layer.id, { attributes: newAttributes });
+      }
+    },
+    [isStandaloneMode, updateStandaloneValue, layer, onLayerUpdate],
+  );
+
+  const handleLazyChange = useCallback(
+    (checked: boolean) => {
+      if (isStandaloneMode) {
+        updateStandaloneValue({ loading: checked ? "lazy" : "eager" });
+      } else if (layer && onLayerUpdate) {
+        onLayerUpdate(layer.id, {
+          attributes: {
+            ...layer.attributes,
+            loading: checked ? "lazy" : "eager",
+          },
+        });
+      }
+    },
+    [isStandaloneMode, updateStandaloneValue, layer, onLayerUpdate],
+  );
 
   // In layer mode, only show for image layers
-  if (!isStandaloneMode && (!layer || layer.name !== 'image')) {
+  if (!isStandaloneMode && (!layer || layer.name !== "image")) {
     return null;
   }
 
   // Get current URL value from variables.image.src (use effective source for display)
   const urlValue = (() => {
     const url = getImageUrlFromVariable(effectiveImageSrc, getAsset);
-    return url && url.trim() !== '' ? url : DEFAULT_ASSETS.IMAGE;
+    return url && url.trim() !== "" ? url : DEFAULT_ASSETS.IMAGE;
   })();
 
   // Get values from layer or standalone value
@@ -342,20 +448,20 @@ export default function ImageSettings(props: ImageSettingsProps) {
     ? getDynamicTextContent(standaloneValue?.alt)
     : getDynamicTextContent(layer?.variables?.image?.alt);
   const widthValue = isStandaloneMode
-    ? (standaloneValue?.width || '')
-    : ((layer?.attributes?.width as string) || '');
+    ? standaloneValue?.width || ""
+    : (layer?.attributes?.width as string) || "";
   const heightValue = isStandaloneMode
-    ? (standaloneValue?.height || '')
-    : ((layer?.attributes?.height as string) || '');
+    ? standaloneValue?.height || ""
+    : (layer?.attributes?.height as string) || "";
   const lazyValue = isStandaloneMode
-    ? (standaloneValue?.loading ?? 'lazy') === 'lazy'
-    : (layer?.attributes?.loading === 'lazy');
+    ? (standaloneValue?.loading ?? "lazy") === "lazy"
+    : layer?.attributes?.loading === "lazy";
 
   // Shared source picker content
   const sourcePickerContent = (
     <div className="flex flex-col gap-3">
       {/* Source Section */}
-      <div className={isStandaloneMode ? '' : 'grid grid-cols-3 items-center'}>
+      <div className={isStandaloneMode ? "" : "grid grid-cols-3 items-center"}>
         {!isStandaloneMode && (
           <div className="flex items-start gap-1 py-1">
             <ComponentVariableLabel
@@ -365,23 +471,32 @@ export default function ImageSettings(props: ImageSettingsProps) {
               linkedVariableId={linkedImageVariableId}
               onLinkVariable={handleLinkImageVariable}
               onManageVariables={() => onOpenVariablesDialog?.()}
-              onCreateVariable={editingComponentId ? async () => {
-                const newId = await addImageVariable(editingComponentId, 'Image');
-                if (newId) {
-                  const currentValue: ImageSettingsValue = {
-                    src: layer?.variables?.image?.src,
-                    alt: layer?.variables?.image?.alt,
-                  };
-                  await updateTextVariable(editingComponentId, newId, { default_value: currentValue });
-                  handleLinkImageVariable(newId);
-                  onOpenVariablesDialog?.(newId);
-                }
-              } : undefined}
+              onCreateVariable={
+                editingComponentId
+                  ? async () => {
+                      const newId = await addImageVariable(
+                        editingComponentId,
+                        "Image",
+                      );
+                      if (newId) {
+                        const currentValue: ImageSettingsValue = {
+                          src: layer?.variables?.image?.src,
+                          alt: layer?.variables?.image?.alt,
+                        };
+                        await updateTextVariable(editingComponentId, newId, {
+                          default_value: currentValue,
+                        });
+                        handleLinkImageVariable(newId);
+                        onOpenVariablesDialog?.(newId);
+                      }
+                    }
+                  : undefined
+              }
             />
           </div>
         )}
 
-        <div className={isStandaloneMode ? '' : 'col-span-2'}>
+        <div className={isStandaloneMode ? "" : "col-span-2"}>
           {linkedImageVariable ? (
             <Button
               asChild
@@ -391,15 +506,22 @@ export default function ImageSettings(props: ImageSettingsProps) {
             >
               <div>
                 <span className="flex items-center gap-1.5">
-                  {linkedImageVariable.type && VARIABLE_TYPE_ICONS[linkedImageVariable.type] && (
-                    <Icon name={VARIABLE_TYPE_ICONS[linkedImageVariable.type]} className="size-3 opacity-60" />
-                  )}
+                  {linkedImageVariable.type &&
+                    VARIABLE_TYPE_ICONS[linkedImageVariable.type] && (
+                      <Icon
+                        name={VARIABLE_TYPE_ICONS[linkedImageVariable.type]}
+                        className="size-3 opacity-60"
+                      />
+                    )}
                   {linkedImageVariable.name}
                 </span>
                 <Button
                   className="size-4! p-0!"
                   variant="outline"
-                  onClick={(e) => { e.stopPropagation(); handleUnlinkImageVariable(); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleUnlinkImageVariable();
+                  }}
                 >
                   <Icon name="x" className="size-2" />
                 </Button>
@@ -411,9 +533,15 @@ export default function ImageSettings(props: ImageSettingsProps) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="upload"><Icon name="folder" className="size-3" /> File manager</SelectItem>
-                <SelectItem value="custom_url"><Icon name="link" className="size-3" /> Custom URL</SelectItem>
-                <SelectItem value="cms" disabled={imageFields.length === 0}><Icon name="database" className="size-3" /> CMS field</SelectItem>
+                <SelectItem value="upload">
+                  <Icon name="folder" className="size-3" /> File manager
+                </SelectItem>
+                <SelectItem value="custom_url">
+                  <Icon name="link" className="size-3" /> Custom URL
+                </SelectItem>
+                <SelectItem value="cms" disabled={imageFields.length === 0}>
+                  <Icon name="database" className="size-3" /> CMS field
+                </SelectItem>
               </SelectContent>
             </Select>
           )}
@@ -421,76 +549,91 @@ export default function ImageSettings(props: ImageSettingsProps) {
       </div>
 
       {/* File Manager Upload - hidden when linked to variable */}
-      {!linkedImageVariable && imageType === 'upload' && (() => {
-        // Get current asset ID and asset for display
-        const currentAssetId = (() => {
-          if (isAssetVariable(imageSrc)) {
-            return getAssetId(imageSrc);
-          }
-          return null;
-        })();
+      {!linkedImageVariable &&
+        imageType === "upload" &&
+        (() => {
+          // Get current asset ID and asset for display
+          const currentAssetId = (() => {
+            if (isAssetVariable(imageSrc)) {
+              return getAssetId(imageSrc);
+            }
+            return null;
+          })();
 
-        const currentAsset = currentAssetId ? getAsset(currentAssetId) : null;
-        const assetFilename = currentAsset?.filename || null;
+          const currentAsset = currentAssetId ? getAsset(currentAssetId) : null;
+          const assetFilename = currentAsset?.filename || null;
 
-        // Handler to open file manager
-        const handleOpenFileManager = () => {
-          openFileManager(
-            (asset) => {
-              // Validate asset type - allow both images and icons (SVGs)
-              const isImage = asset.mime_type && isAssetOfType(asset.mime_type, ASSET_CATEGORIES.IMAGES);
-              const isSvg = asset.mime_type && isAssetOfType(asset.mime_type, ASSET_CATEGORIES.ICONS);
+          // Handler to open file manager
+          const handleOpenFileManager = () => {
+            openFileManager(
+              (asset) => {
+                // Validate asset type - allow both images and icons (SVGs)
+                const isImage =
+                  asset.mime_type &&
+                  isAssetOfType(asset.mime_type, ASSET_CATEGORIES.IMAGES);
+                const isSvg =
+                  asset.mime_type &&
+                  isAssetOfType(asset.mime_type, ASSET_CATEGORIES.ICONS);
 
-              if (!isImage && !isSvg) {
-                toast.error('Invalid asset type', {
-                  description: 'Please select an image or SVG file.',
-                });
-                return false; // Don't close file manager
-              }
+                if (!isImage && !isSvg) {
+                  toast.error("Invalid asset type", {
+                    description: "Please select an image or SVG file.",
+                  });
+                  return false; // Don't close file manager
+                }
 
-              handleImageChange(asset.id);
-            },
-            currentAssetId,
-            // Show both images and icons (SVGs)
-            [ASSET_CATEGORIES.IMAGES, ASSET_CATEGORIES.ICONS]
-          );
-        };
+                handleImageChange(asset.id);
+              },
+              currentAssetId,
+              // Show both images and icons (SVGs)
+              [ASSET_CATEGORIES.IMAGES, ASSET_CATEGORIES.ICONS],
+            );
+          };
 
-        return (
-          <div className={isStandaloneMode ? '' : 'grid grid-cols-3 items-start'}>
-            {!isStandaloneMode && <Label variant="muted" className="pt-2">File</Label>}
+          return (
+            <div
+              className={isStandaloneMode ? "" : "grid grid-cols-3 items-start"}
+            >
+              {!isStandaloneMode && (
+                <Label variant="muted" className="pt-2">
+                  File
+                </Label>
+              )}
 
-            <div className={isStandaloneMode ? '' : 'col-span-2'}>
-              <div
-                className="relative group bg-secondary/30 hover:bg-secondary/60 rounded-md w-full aspect-3/2 overflow-hidden cursor-pointer"
-                onClick={handleOpenFileManager}
-              >
-                {/* Checkerboard pattern for transparency */}
-                <div className="absolute inset-0 opacity-5 bg-checkerboard" />
-                <img
-                  src={urlValue}
-                  className="relative w-full h-full object-contain z-10"
-                  alt="Image preview"
-                />
+              <div className={isStandaloneMode ? "" : "col-span-2"}>
+                <div
+                  className="relative group bg-secondary/30 hover:bg-secondary/60 rounded-md w-full aspect-3/2 overflow-hidden cursor-pointer"
+                  onClick={handleOpenFileManager}
+                >
+                  {/* Checkerboard pattern for transparency */}
+                  <div className="absolute inset-0 opacity-5 bg-checkerboard" />
+                  <img
+                    src={urlValue}
+                    className="relative w-full h-full object-contain z-10"
+                    alt="Image preview"
+                  />
 
-                <div className="absolute inset-0 bg-black/50 flex items-center justify-center px-2 py-1 opacity-0 group-hover:opacity-100 z-20">
-                  <Button
-                    type="button" variant="overlay"
-                    size="sm"
-                  >{assetFilename ? 'Change file' : 'Choose file'}</Button>
+                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center px-2 py-1 opacity-0 group-hover:opacity-100 z-20">
+                    <Button type="button" variant="overlay" size="sm">
+                      {assetFilename ? "Change file" : "Choose file"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        );
-      })()}
+          );
+        })()}
 
       {/* Custom URL Section - hidden when linked to variable */}
-      {!linkedImageVariable && imageType === 'custom_url' && (
-        <div className={isStandaloneMode ? '' : 'grid grid-cols-3 items-start'}>
-          {!isStandaloneMode && <Label variant="muted" className="pt-2">URL</Label>}
+      {!linkedImageVariable && imageType === "custom_url" && (
+        <div className={isStandaloneMode ? "" : "grid grid-cols-3 items-start"}>
+          {!isStandaloneMode && (
+            <Label variant="muted" className="pt-2">
+              URL
+            </Label>
+          )}
 
-          <div className={isStandaloneMode ? '' : 'col-span-2'}>
+          <div className={isStandaloneMode ? "" : "col-span-2"}>
             <RichTextEditor
               value={customUrlValue}
               onChange={handleUrlChange}
@@ -504,11 +647,13 @@ export default function ImageSettings(props: ImageSettingsProps) {
       )}
 
       {/* CMS Field Section - hidden when linked to variable */}
-      {!linkedImageVariable && imageType === 'cms' && (
-        <div className={isStandaloneMode ? '' : 'grid grid-cols-3 items-center'}>
+      {!linkedImageVariable && imageType === "cms" && (
+        <div
+          className={isStandaloneMode ? "" : "grid grid-cols-3 items-center"}
+        >
           {!isStandaloneMode && <Label variant="muted">Field</Label>}
 
-          <div className={isStandaloneMode ? 'w-full' : 'col-span-2 w-full'}>
+          <div className={isStandaloneMode ? "w-full" : "col-span-2 w-full"}>
             <FieldSelectDropdown
               fieldGroups={imageFieldGroups}
               allFields={allFields || {}}
@@ -527,11 +672,15 @@ export default function ImageSettings(props: ImageSettingsProps) {
   // Additional fields content (alt, size, behavior)
   const additionalFieldsContent = (
     <>
-      <div className={isStandaloneMode ? 'mt-2.5' : 'grid grid-cols-3'}>
+      <div className={isStandaloneMode ? "mt-2.5" : "grid grid-cols-3"}>
         {!isStandaloneMode && <Label variant="muted">ALT</Label>}
-        {isStandaloneMode && <Label variant="muted" className="mb-1.5">ALT</Label>}
+        {isStandaloneMode && (
+          <Label variant="muted" className="mb-1.5">
+            ALT
+          </Label>
+        )}
 
-        <div className={isStandaloneMode ? '' : 'col-span-2 *:w-full'}>
+        <div className={isStandaloneMode ? "" : "col-span-2 *:w-full"}>
           <RichTextEditor
             value={altValue}
             onChange={handleAltChange}
@@ -544,11 +693,21 @@ export default function ImageSettings(props: ImageSettingsProps) {
         </div>
       </div>
 
-      <div className={isStandaloneMode ? 'mt-2.5' : 'grid grid-cols-3'}>
+      <div className={isStandaloneMode ? "mt-2.5" : "grid grid-cols-3"}>
         {!isStandaloneMode && <Label variant="muted">Size</Label>}
-        {isStandaloneMode && <Label variant="muted" className="mb-1.5">Size</Label>}
+        {isStandaloneMode && (
+          <Label variant="muted" className="mb-1.5">
+            Size
+          </Label>
+        )}
 
-        <div className={isStandaloneMode ? 'grid grid-cols-2 gap-2' : 'col-span-2 *:w-full grid grid-cols-2 gap-2'}>
+        <div
+          className={
+            isStandaloneMode
+              ? "grid grid-cols-2 gap-2"
+              : "col-span-2 *:w-full grid grid-cols-2 gap-2"
+          }
+        >
           <InputGroup>
             <InputGroupAddon>
               <div className="flex">
@@ -591,15 +750,25 @@ export default function ImageSettings(props: ImageSettingsProps) {
       </div>
 
       {/* Behavior Section */}
-      <div className={isStandaloneMode ? 'mt-2.5' : 'grid grid-cols-3 gap-2'}>
+      <div className={isStandaloneMode ? "mt-2.5" : "grid grid-cols-3 gap-2"}>
         {!isStandaloneMode && (
           <div className="pt-0.5">
             <Label variant="muted">Behavior</Label>
           </div>
         )}
-        {isStandaloneMode && <Label variant="muted" className="mb-1.5">Behavior</Label>}
+        {isStandaloneMode && (
+          <Label variant="muted" className="mb-1.5">
+            Behavior
+          </Label>
+        )}
 
-        <div className={isStandaloneMode ? 'flex flex-col gap-2' : 'col-span-2 flex flex-col gap-2'}>
+        <div
+          className={
+            isStandaloneMode
+              ? "flex flex-col gap-2"
+              : "col-span-2 flex flex-col gap-2"
+          }
+        >
           <div className="flex items-center gap-2">
             <Checkbox
               id="image-lazy"

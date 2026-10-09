@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 /**
  * Code Embed Settings Component
@@ -6,38 +6,44 @@
  * Settings panel for custom code layers with code editor
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback } from "react";
 
-import { CodeEditor } from '@/components/ui/code-editor';
-import SettingsPanel from './SettingsPanel';
-import type { Layer } from '@/types';
+import { CodeEditor } from "@/components/ui/code-editor";
+import SettingsPanel from "../SettingsPanel";
+import type { Layer } from "@/types/funnel";
 
 interface HTMLEmbedSettingsProps {
   layer: Layer | null;
   onLayerUpdate: (layerId: string, updates: Partial<Layer>) => void;
 }
 
-export default function HTMLEmbedSettings({ layer, onLayerUpdate }: HTMLEmbedSettingsProps) {
+export default function HTMLEmbedSettings({
+  layer,
+  onLayerUpdate,
+}: HTMLEmbedSettingsProps) {
   const [isOpen, setIsOpen] = useState(true);
 
   // Get current code from settings
-  const currentCode = layer?.settings?.htmlEmbed?.code || '';
+  const currentCode = layer?.settings?.htmlEmbed?.code || "";
 
-  const handleCodeChange = useCallback((value: string) => {
-    if (!layer) return;
+  const handleCodeChange = useCallback(
+    (value: string) => {
+      if (!layer) return;
 
-    onLayerUpdate(layer.id, {
-      settings: {
-        ...layer.settings,
-        htmlEmbed: {
-          code: value,
+      onLayerUpdate(layer.id, {
+        settings: {
+          ...layer.settings,
+          htmlEmbed: {
+            code: value,
+          },
         },
-      },
-    });
-  }, [layer, onLayerUpdate]);
+      });
+    },
+    [layer, onLayerUpdate],
+  );
 
   // Only show for htmlEmbed layers
-  if (!layer || layer.name !== 'htmlEmbed') {
+  if (!layer || layer.name !== "htmlEmbed") {
     return null;
   }
 

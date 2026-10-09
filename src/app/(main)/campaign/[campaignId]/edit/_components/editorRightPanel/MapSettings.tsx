@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 /**
  * Map Settings Component
@@ -8,37 +8,56 @@
  * location/zoom/marker settings and provider-specific style/behavior.
  */
 
-import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import Link from 'next/link';
+import React, {
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
+import Link from "next/link";
 
-import { Button } from '@/components/ui/button';
-import { Icon } from '@/components/ui/icon';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Popover, PopoverContent, PopoverAnchor } from '@/components/ui/popover';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Slider } from '@/components/ui/slider';
-import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverAnchor,
+} from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Slider } from "@/components/ui/slider";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from "@/components/ui/select";
 
-import ColorPicker from './ColorPicker';
-import SettingsPanel from './SettingsPanel';
+import ColorPicker from "../ColorPicker";
+import SettingsPanel from "../SettingsPanel";
 
-import { useSettingsStore } from '@/stores/useSettingsStore';
+import { useSettingsStore } from "@/stores/editor/useSettingsStore";
 import {
   DEFAULT_MAP_SETTINGS,
   MAP_PROVIDER_OPTIONS,
   getStyleOptions,
   getProviderConfig,
-} from '@/lib/map-utils';
-import { useDebounce } from '@/hooks/use-debounce';
-import type { Layer, MapSettings as MapSettingsType, MapProvider, MapProviderSettings } from '@/types';
+} from "@/lib/map-utils";
+import { useDebounce } from "@/hooks/use-debounce";
+import type {
+  Layer,
+  MapSettings as MapSettingsType,
+  MapProvider,
+  MapProviderSettings,
+} from "@/types/funnel";
 
 type SearchResult = { place_name: string; center: [number, number] };
 
@@ -53,32 +72,43 @@ interface MapSettingsProps {
   onLayerUpdate: (layerId: string, updates: Partial<Layer>) => void;
 }
 
-export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) {
+export default function MapSettings({
+  layer,
+  onLayerUpdate,
+}: MapSettingsProps) {
   const [isOpen, setIsOpen] = useState(true);
   const mapSettings = useMemo(
     () => ({
       ...DEFAULT_MAP_SETTINGS,
       ...layer?.settings?.map,
-      mapbox: { ...DEFAULT_MAP_SETTINGS.mapbox, ...layer?.settings?.map?.mapbox },
-      google: { ...DEFAULT_MAP_SETTINGS.google, ...layer?.settings?.map?.google },
+      mapbox: {
+        ...DEFAULT_MAP_SETTINGS.mapbox,
+        ...layer?.settings?.map?.mapbox,
+      },
+      google: {
+        ...DEFAULT_MAP_SETTINGS.google,
+        ...layer?.settings?.map?.google,
+      },
     }),
-    [layer?.settings?.map]
+    [layer?.settings?.map],
   );
 
   const provider = mapSettings.provider;
   const providerSettings = mapSettings[provider];
   const providerConfig = getProviderConfig(provider);
-  const hasToken = !!useSettingsStore((s) => s.getSettingByKey(providerConfig.tokenSettingKey));
+  const hasToken = !!useSettingsStore((s) =>
+    s.getSettingByKey(providerConfig.tokenSettingKey),
+  );
 
-  const zoomMax = provider === 'google' ? ZOOM_MAX_GOOGLE : ZOOM_MAX_MAPBOX;
-  const zoomStep = provider === 'google' ? ZOOM_STEP_GOOGLE : ZOOM_STEP_MAPBOX;
+  const zoomMax = provider === "google" ? ZOOM_MAX_GOOGLE : ZOOM_MAX_MAPBOX;
+  const zoomStep = provider === "google" ? ZOOM_STEP_GOOGLE : ZOOM_STEP_MAPBOX;
 
   // Local input state for lat/lng/zoom to allow free typing
   const [latInput, setLatInput] = useState(String(mapSettings.latitude));
   const [lngInput, setLngInput] = useState(String(mapSettings.longitude));
   const [zoomInput, setZoomInput] = useState(String(mapSettings.zoom));
 
-  const [addressQuery, setAddressQuery] = useState(mapSettings.search || '');
+  const [addressQuery, setAddressQuery] = useState(mapSettings.search || "");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isAddressFocused, setIsAddressFocused] = useState(false);
@@ -90,7 +120,7 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
     setLatInput(String(mapSettings.latitude));
     setLngInput(String(mapSettings.longitude));
     setZoomInput(String(mapSettings.zoom));
-    setAddressQuery(mapSettings.search || '');
+    setAddressQuery(mapSettings.search || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layer?.id]);
 
@@ -108,7 +138,7 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
         },
       });
     },
-    [layer, mapSettings, onLayerUpdate]
+    [layer, mapSettings, onLayerUpdate],
   );
 
   /** Update a field inside the active provider's nested settings */
@@ -118,16 +148,21 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
         [provider]: { ...providerSettings, ...updates },
       });
     },
-    [provider, providerSettings, updateMapSettings]
+    [provider, providerSettings, updateMapSettings],
   );
 
-  const debouncedUpdateRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const debouncedUpdateRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
   const debouncedUpdateMapSettings = useCallback(
     (updates: Partial<MapSettingsType>) => {
       clearTimeout(debouncedUpdateRef.current);
-      debouncedUpdateRef.current = setTimeout(() => updateMapSettings(updates), 300);
+      debouncedUpdateRef.current = setTimeout(
+        () => updateMapSettings(updates),
+        300,
+      );
     },
-    [updateMapSettings]
+    [updateMapSettings],
   );
   useEffect(() => () => clearTimeout(debouncedUpdateRef.current), []);
 
@@ -139,7 +174,7 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
         debouncedUpdateMapSettings({ latitude: num });
       }
     },
-    [debouncedUpdateMapSettings]
+    [debouncedUpdateMapSettings],
   );
 
   const handleLngChange = useCallback(
@@ -150,7 +185,7 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
         debouncedUpdateMapSettings({ longitude: num });
       }
     },
-    [debouncedUpdateMapSettings]
+    [debouncedUpdateMapSettings],
   );
 
   const handleZoomChange = useCallback(
@@ -162,7 +197,7 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
         debouncedUpdateMapSettings({ zoom: clamped });
       }
     },
-    [debouncedUpdateMapSettings, zoomMax]
+    [debouncedUpdateMapSettings, zoomMax],
   );
 
   const handleSliderZoomChange = useCallback(
@@ -171,7 +206,7 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
       setZoomInput(String(zoom));
       debouncedUpdateMapSettings({ zoom });
     },
-    [debouncedUpdateMapSettings]
+    [debouncedUpdateMapSettings],
   );
 
   // Geocoding search via API route
@@ -186,9 +221,12 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
     searchAbortRef.current = controller;
 
     setIsSearching(true);
-    fetch(`/ycode/api/maps/geocode?q=${encodeURIComponent(debouncedQuery)}&provider=${provider}`, {
-      signal: controller.signal,
-    })
+    fetch(
+      `/ycode/api/maps/geocode?q=${encodeURIComponent(debouncedQuery)}&provider=${provider}`,
+      {
+        signal: controller.signal,
+      },
+    )
       .then((res) => res.json())
       .then((json) => {
         if (json.data) {
@@ -196,7 +234,7 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
         }
       })
       .catch((err) => {
-        if (err.name !== 'AbortError') {
+        if (err.name !== "AbortError") {
           setSearchResults([]);
         }
       })
@@ -210,12 +248,16 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
       setLngInput(String(lng));
       setAddressQuery(result.place_name);
       setSearchResults([]);
-      updateMapSettings({ latitude: lat, longitude: lng, search: result.place_name });
+      updateMapSettings({
+        latitude: lat,
+        longitude: lng,
+        search: result.place_name,
+      });
     },
-    [updateMapSettings]
+    [updateMapSettings],
   );
 
-  if (!layer || layer.name !== 'map') {
+  if (!layer || layer.name !== "map") {
     return null;
   }
 
@@ -243,10 +285,7 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
               </SelectTrigger>
               <SelectContent>
                 {MAP_PROVIDER_OPTIONS.map((opt) => (
-                  <SelectItem
-                    key={opt.value}
-                    value={opt.value}
-                  >
+                  <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </SelectItem>
                 ))}
@@ -257,15 +296,19 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
                 <Button
                   asChild
                   size="sm"
-                  variant={hasToken ? 'secondary' : 'default'}
+                  variant={hasToken ? "secondary" : "default"}
                   className="shrink-0"
                 >
-                  <Link href={`/ycode/integrations/apps?type=maps&app=${providerConfig.appId}`}>
+                  <Link
+                    href={`/ycode/integrations/apps?type=maps&app=${providerConfig.appId}`}
+                  >
                     <Icon name="settings" />
                   </Link>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Set {providerConfig.label} API key</TooltipContent>
+              <TooltipContent>
+                Set {providerConfig.label} API key
+              </TooltipContent>
             </Tooltip>
           </div>
         </div>
@@ -273,14 +316,18 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
         {/* Address search */}
         <Popover open={isAddressFocused && searchResults.length > 0}>
           <div className="grid grid-cols-3 items-start">
-            <Label variant="muted" className="pt-2">Address</Label>
+            <Label variant="muted" className="pt-2">
+              Address
+            </Label>
             <div className="col-span-2 relative">
               <PopoverAnchor asChild>
                 <Input
                   value={addressQuery}
                   onChange={(e) => setAddressQuery(e.target.value)}
                   onFocus={() => setIsAddressFocused(true)}
-                  onBlur={() => setTimeout(() => setIsAddressFocused(false), 150)}
+                  onBlur={() =>
+                    setTimeout(() => setIsAddressFocused(false), 150)
+                  }
                   placeholder="Search for an address..."
                 />
               </PopoverAnchor>
@@ -374,10 +421,7 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
               </SelectTrigger>
               <SelectContent>
                 {styleOptions.map((opt) => (
-                  <SelectItem
-                    key={opt.value}
-                    value={opt.value}
-                  >
+                  <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </SelectItem>
                 ))}
@@ -387,13 +431,15 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
         </div>
 
         {/* Marker (Mapbox only — Embed API uses default pin) */}
-        {provider === 'mapbox' && (
+        {provider === "mapbox" && (
           <div className="grid grid-cols-3 items-center gap-2">
             <Label variant="muted">Marker</Label>
             <div className="col-span-2 [&>div]:w-full [&>button]:w-full">
               <ColorPicker
-                value={mapSettings.markerColor || ''}
-                onChange={(value) => updateMapSettings({ markerColor: value || null })}
+                value={mapSettings.markerColor || ""}
+                onChange={(value) =>
+                  updateMapSettings({ markerColor: value || null })
+                }
                 onClear={() => updateMapSettings({ markerColor: null })}
                 defaultValue="#2e79d6"
                 placeholder="No marker"
@@ -404,7 +450,7 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
         )}
 
         {/* Behavior (Mapbox only — Embed API controls interactivity) */}
-        {provider === 'mapbox' && (
+        {provider === "mapbox" && (
           <div className="grid grid-cols-3 items-start gap-2">
             <Label variant="muted">Behavior</Label>
             <div className="col-span-2 flex flex-col gap-2">

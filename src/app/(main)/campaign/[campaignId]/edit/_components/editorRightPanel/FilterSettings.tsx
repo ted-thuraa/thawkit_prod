@@ -1,21 +1,24 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
+import React, { useState } from "react";
 
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
-import SettingsPanel from './SettingsPanel';
-import type { Layer } from '@/types';
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import SettingsPanel from "../SettingsPanel";
+import type { Layer } from "@/types/funnel";
 
 interface FilterSettingsProps {
   layer: Layer | null;
   onLayerUpdate: (layerId: string, updates: Partial<Layer>) => void;
 }
 
-export default function FilterSettings({ layer, onLayerUpdate }: FilterSettingsProps) {
+export default function FilterSettings({
+  layer,
+  onLayerUpdate,
+}: FilterSettingsProps) {
   const [isOpen, setIsOpen] = useState(true);
 
-  if (!layer || layer.name !== 'filter') {
+  if (!layer || layer.name !== "filter") {
     return null;
   }
 

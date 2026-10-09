@@ -172,6 +172,10 @@ import FormSettings from "./editorRightPanel/FormSettings";
 import FilterSettings from "./editorRightPanel/FilterSettings";
 import SliderSettings from "./editorRightPanel/SliderSettings";
 import InputSettings from "./editorRightPanel/InputSettings";
+import { VARIABLE_TYPE_ICONS } from "./ComponentVariableLabel";
+import ConditionalVisibilitySettings from "./editorRightPanel/ConditionalVisibilitySettings";
+import SelectOptionsSettings from "./editorRightPanel/SelectOptionsSettings";
+import CustomAttributeRow from "./editorRightPanel/CustomAttributeRow";
 
 interface RightPanelContentProps {
   onLayerUpdate: (layerId: string, updates: Partial<Layer>) => void;
@@ -227,8 +231,8 @@ const RightPanelContent = React.memo(function RightPanelContent({
 }: RightPanelContentProps) {
   const selectedLayerId = useEditorStore((state) => state.selectedLayerId);
 
-  const { openComponent, urlState, updateQueryParams } = useEditorActions();
-  const { routeType } = useCampaignEditorUrl();
+  //   const { openComponent, urlState, updateQueryParams } = useEditorActions();
+  //   const { routeType } = useCampaignEditorUrl();
   const { isLocalizing, currentLocale, defaultLocale } = useLocalizationMode();
 
   // Translation editor state + store actions used by the per-layer Translate
@@ -264,7 +268,8 @@ const RightPanelContent = React.memo(function RightPanelContent({
   // Local state for immediate UI feedback
   const [activeTab, setActiveTab] = useState<
     "design" | "settings" | "interactions" | undefined
-  >(urlState.rightTab || "design");
+  >("design");
+  //>(urlState.rightTab || "design");
 
   // Track last user-initiated change to prevent URL→state sync loops
   const lastUserChangeRef = useRef<number>(0);
@@ -299,11 +304,11 @@ const RightPanelContent = React.memo(function RightPanelContent({
       return;
     }
 
-    const urlTab = urlState.rightTab || "design";
+    const urlTab = "design";
     if (urlTab !== activeTab) {
       setActiveTab(urlTab);
     }
-  }, [urlState.rightTab, activeTab]);
+  }, [activeTab]);
 
   const [currentClassInput, setCurrentClassInput] = useState<string>("");
   const classInputRef = useRef<HTMLInputElement>(null);
@@ -347,15 +352,15 @@ const RightPanelContent = React.memo(function RightPanelContent({
   const setSelectedLayerId = useEditorStore(
     (state) => state.setSelectedLayerId,
   );
-  const setInteractionHighlights = useEditorStore(
-    (state) => state.setInteractionHighlights,
-  );
-  const setActiveInteraction = useEditorStore(
-    (state) => state.setActiveInteraction,
-  );
-  const clearActiveInteraction = useEditorStore(
-    (state) => state.clearActiveInteraction,
-  );
+  //   const setInteractionHighlights = useEditorStore(
+  //     (state) => state.setInteractionHighlights,
+  //   );
+  //   const setActiveInteraction = useEditorStore(
+  //     (state) => state.setActiveInteraction,
+  //   );
+  //   const clearActiveInteraction = useEditorStore(
+  //     (state) => state.clearActiveInteraction,
+  //   );
   const activeTextStyleKey = useEditorStore(
     (state) => state.activeTextStyleKey,
   );
@@ -380,10 +385,10 @@ const RightPanelContent = React.memo(function RightPanelContent({
   );
 
   // Collaboration hooks - re-enabled
-  const layerLocks = useLayerLocks();
+  //const layerLocks = useLayerLocks();
   // Store in ref to avoid dependency changes triggering infinite loops
-  const layerLocksRef = useRef(layerLocks);
-  layerLocksRef.current = layerLocks;
+  //const layerLocksRef = useRef(layerLocks);
+  //layerLocksRef.current = layerLocks;
 
   const currentDraft = usePagesStore((state) =>
     currentPageId ? state.draftsByPageId[currentPageId] : null,
@@ -610,19 +615,14 @@ const RightPanelContent = React.memo(function RightPanelContent({
       });
 
       if (targetIds.size > 0) {
-        setActiveInteraction(interactionOwnerLayer.id, Array.from(targetIds));
+        //setActiveInteraction(interactionOwnerLayer.id, Array.from(targetIds));
       } else {
-        clearActiveInteraction();
+        //clearActiveInteraction();
       }
     } else {
-      clearActiveInteraction();
+      //clearActiveInteraction();
     }
-  }, [
-    activeTab,
-    interactionOwnerLayer,
-    setActiveInteraction,
-    clearActiveInteraction,
-  ]);
+  }, [activeTab, interactionOwnerLayer]);
 
   // Compute interaction highlights from all layers (always shown, styling varies by tab)
   useEffect(() => {
@@ -650,8 +650,8 @@ const RightPanelContent = React.memo(function RightPanelContent({
     };
 
     collectInteractions(allLayers);
-    setInteractionHighlights(Array.from(triggerIds), Array.from(targetIds));
-  }, [allLayers, setInteractionHighlights]);
+    //setInteractionHighlights(Array.from(triggerIds), Array.from(targetIds));
+  }, [allLayers]);
 
   // Handle all interaction state changes from InteractionsPanel
   const handleInteractionStateChange = useCallback(
@@ -829,13 +829,13 @@ const RightPanelContent = React.memo(function RightPanelContent({
   };
 
   // Check if the selected layer is locked by another user
-  const isLayerLocked = selectedLayerId
-    ? layerLocks.isLayerLocked(selectedLayerId)
-    : false;
-  const canEditLayer = selectedLayerId
-    ? layerLocks.canEditLayer(selectedLayerId)
-    : false;
-  const isLockedByOther = isLayerLocked && !canEditLayer;
+  //   const isLayerLocked = selectedLayerId
+  //     ? layerLocks.isLayerLocked(selectedLayerId)
+  //     : false;
+  //   const canEditLayer = selectedLayerId
+  //     ? layerLocks.canEditLayer(selectedLayerId)
+  //     : false;
+  //const false = isLayerLocked && !canEditLayer;
 
   // Track previous layer ID to handle lock release
   const previousLayerIdRef = useRef<string | null>(null);
@@ -848,16 +848,16 @@ const RightPanelContent = React.memo(function RightPanelContent({
   // We don't want to release/re-acquire locks just because editingComponentId changed.
   useEffect(() => {
     const prevLayerId = previousLayerIdRef.current;
-    const locks = layerLocksRef.current;
+    //const locks = layerLocksRef.current;
 
     // Release lock on previously selected layer
     if (prevLayerId && prevLayerId !== selectedLayerId) {
-      locks.releaseLock(prevLayerId);
+      //locks.releaseLock(prevLayerId);
     }
 
     // Acquire lock on newly selected layer (for both pages and components)
     if (selectedLayerId) {
-      locks.acquireLock(selectedLayerId);
+      //locks.acquireLock(selectedLayerId);
     }
 
     previousLayerIdRef.current = selectedLayerId;
@@ -957,13 +957,9 @@ const RightPanelContent = React.memo(function RightPanelContent({
   // Lock-aware update function.
   const handleLayerUpdate = useCallback(
     (layerId: string, updates: Partial<Layer>) => {
-      if (isLockedByOther) {
-        console.warn("Cannot update layer - locked by another user");
-        return;
-      }
       onLayerUpdate(layerId, updates);
     },
-    [isLockedByOther, onLayerUpdate],
+    [onLayerUpdate],
   );
 
   // Parse classes into array
@@ -1473,7 +1469,9 @@ const RightPanelContent = React.memo(function RightPanelContent({
                 editingComponentId
               ]?.[activeComponentVariantId]
             : currentPageId
-              ? usePagesStore.getState().draftsByPageId[currentPageId]?.layers
+              ? usePagesStore
+                  .getState()
+                  .pages.find((page) => page.id === currentPageId)?.layers
               : null;
 
         if (!currentLayers) return;
@@ -2045,8 +2043,10 @@ const RightPanelContent = React.memo(function RightPanelContent({
         ] || []
       );
     } else if (currentPageId) {
-      const draft = usePagesStore.getState().draftsByPageId[currentPageId];
-      return draft ? draft.layers : [];
+      const page = usePagesStore
+        .getState()
+        .pages.find((page) => page.id === currentPageId);
+      return page ? page.layers : [];
     }
     return [];
   };
@@ -2220,7 +2220,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
       collectionId = undefined;
     }
 
-    if (!collectionId && !editingComponentId && currentPage?.is_dynamic) {
+    if (!collectionId && !editingComponentId && currentPage?.isDynamic) {
       collectionId = currentPage.settings?.cms?.collection_id || undefined;
     }
 
@@ -2326,7 +2326,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
   // Get reference fields from dynamic page's source collection (for top-level collection layers on dynamic pages)
   // Not available when editing a component — components are page-agnostic
   const dynamicPageReferenceFields = useMemo(() => {
-    if (editingComponentId || !currentPage?.is_dynamic) return [];
+    if (editingComponentId || !currentPage?.isDynamic) return [];
     const collectionId = currentPage.settings?.cms?.collection_id;
     if (!collectionId) return [];
     const collectionFields = fields[collectionId] || [];
@@ -2345,7 +2345,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
   // Get multi-asset fields from dynamic page's source collection
   // Not available when editing a component — components are page-agnostic
   const dynamicPageMultiAssetFields = useMemo(() => {
-    if (editingComponentId || !currentPage?.is_dynamic) return [];
+    if (editingComponentId || !currentPage?.isDynamic) return [];
     const collectionId = currentPage.settings?.cms?.collection_id;
     if (!collectionId) return [];
     const collectionFields = fields[collectionId] || [];
@@ -2361,7 +2361,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
       : null;
     let collectionId = collectionVariable?.id;
     if (collectionId === MULTI_ASSET_COLLECTION_ID) collectionId = undefined;
-    if (!collectionId && !editingComponentId && currentPage?.is_dynamic) {
+    if (!collectionId && !editingComponentId && currentPage?.isDynamic) {
       collectionId = currentPage.settings?.cms?.collection_id || undefined;
     }
     if (!collectionId) return [];
@@ -2377,7 +2377,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
   // Inverse reference fields for dynamic page context (top-level collection layers on dynamic pages)
   // Not available when editing a component — components are page-agnostic
   const dynamicPageInverseReferenceFields = useMemo(() => {
-    if (editingComponentId || !currentPage?.is_dynamic) return [];
+    if (editingComponentId || !currentPage?.isDynamic) return [];
     const collectionId = currentPage.settings?.cms?.collection_id;
     if (!collectionId) return [];
     return getInverseReferenceFields(collectionId, fields, collections);
@@ -2462,22 +2462,22 @@ const RightPanelContent = React.memo(function RightPanelContent({
     : null;
 
   // If it's a component instance, show component sidebar instead of design properties
-  if (isComponentInstance && component) {
-    return (
-      <ComponentInstanceSidebar
-        selectedLayerId={selectedLayerId!}
-        selectedLayer={selectedLayer}
-        component={component}
-        onLayerUpdate={onLayerUpdate}
-        allLayers={allLayers}
-        fieldGroups={fieldGroups}
-        fields={fields}
-        collections={collections}
-        isInsideCollectionLayer={!!parentCollectionLayer}
-        embedded={embedded}
-      />
-    );
-  }
+  //   if (isComponentInstance && component) {
+  //     return (
+  //       <ComponentInstanceSidebar
+  //         selectedLayerId={selectedLayerId!}
+  //         selectedLayer={selectedLayer}
+  //         component={component}
+  //         onLayerUpdate={onLayerUpdate}
+  //         allLayers={allLayers}
+  //         fieldGroups={fieldGroups}
+  //         fields={fields}
+  //         collections={collections}
+  //         isInsideCollectionLayer={!!parentCollectionLayer}
+  //         embedded={embedded}
+  //       />
+  //     );
+  //   }
 
   return (
     <div
@@ -2650,10 +2650,10 @@ const RightPanelContent = React.memo(function RightPanelContent({
                     onChange={(e) => setCurrentClassInput(e.target.value)}
                     onKeyDown={handleKeyPress}
                     placeholder="Type class and press Enter..."
-                    disabled={isLockedByOther}
+                    disabled={false}
                     className={cn(
                       "pr-8",
-                      isLockedByOther && "opacity-50 cursor-not-allowed",
+                      false && "opacity-50 cursor-not-allowed",
                     )}
                   />
                   {currentClassInput && (
@@ -2662,7 +2662,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                       size="xs"
                       className="absolute right-2 top-1/2 -translate-y-1/2 size-6 p-0"
                       onClick={() => setCurrentClassInput("")}
-                      disabled={isLockedByOther}
+                      disabled={false}
                       aria-label="Clear class input"
                     >
                       <Icon name="x" className="size-3" />
@@ -2682,7 +2682,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                         <button
                           type="button"
                           onClick={() => editClass(cls)}
-                          disabled={isLockedByOther}
+                          disabled={false}
                           className="truncate cursor-pointer select-none disabled:cursor-not-allowed"
                           title="Edit class"
                         >
@@ -2692,7 +2692,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                           onClick={() => removeClass(cls)}
                           className="size-4! p-0! -mr-1"
                           variant="outline"
-                          disabled={isLockedByOther}
+                          disabled={false}
                         >
                           <Icon name="x" className="size-2" />
                         </Button>
@@ -2725,7 +2725,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                           <button
                             type="button"
                             onClick={() => editClass(cls)}
-                            disabled={isLockedByOther}
+                            disabled={false}
                             className="truncate cursor-pointer select-none disabled:cursor-not-allowed"
                             title="Edit class"
                           >
@@ -2735,7 +2735,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                             onClick={() => removeStyleClass(cls)}
                             className="size-4! p-0! -mr-1"
                             variant="outline"
-                            disabled={isLockedByOther}
+                            disabled={false}
                           >
                             <Icon name="x" className="size-2" />
                           </Button>
@@ -2791,7 +2791,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                   </div>
                 )}
 
-                {translatableItemsExcludingCmsText.length === 0 &&
+                {/* {translatableItemsExcludingCmsText.length === 0 &&
                 !layerCmsTextBinding ? (
                   <Empty>
                     <EmptyMedia variant="icon">
@@ -2847,7 +2847,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                       })}
                     </div>
                   ))
-                ) : null}
+                ) : null} */}
               </div>
             )}
 
@@ -2863,7 +2863,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                         value={customId}
                         onChange={(e) => handleIdChange(e.target.value)}
                         placeholder="For in-page linking"
-                        disabled={isLockedByOther}
+                        disabled={false}
                       />
                     </div>
                   </div>
@@ -3151,7 +3151,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                       fieldGroups={fieldGroups}
                       allFields={fields}
                       collections={collections}
-                      isLockedByOther={isLockedByOther}
+                      //isLockedByOther={false}
                       isInsideCollectionLayer={!!parentCollectionLayer}
                       onOpenVariablesDialog={openVariablesDialog}
                     />
@@ -3328,7 +3328,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                                 </SelectContent>
                               </Select>
                             ) : !editingComponentId &&
-                              currentPage?.is_dynamic ? (
+                              currentPage?.isDynamic ? (
                               /* On dynamic pages, show CMS page data fields + all collections (not in component edit mode) */
                               <Select
                                 value={
@@ -3746,7 +3746,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                                 <div className="grid grid-cols-3">
                                   <Label variant="muted">Pagination</Label>
                                   <div className="col-span-2 *:w-full">
-                                    <ToggleGroup
+                                    <ToggleGroupCustom
                                       options={[
                                         { label: "Off", value: false },
                                         { label: "On", value: true },
@@ -3872,10 +3872,10 @@ const RightPanelContent = React.memo(function RightPanelContent({
                   onLayerUpdate={handleLayerUpdate}
                 />
 
-                <MapSettings
+                {/* <MapSettings
                   layer={selectedLayer}
                   onLayerUpdate={handleLayerUpdate}
-                />
+                /> */}
 
                 <FormSettings
                   layer={selectedLayer}
@@ -3925,7 +3925,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                 />
 
                 {/* Collection Filters - only for layers bound to a real collection source */}
-                {selectedLayer &&
+                {/* {selectedLayer &&
                   hasBoundCollectionSource(
                     getCollectionVariable(selectedLayer),
                   ) && (
@@ -3934,7 +3934,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                       onLayerUpdate={handleLayerUpdate}
                       collectionId={getCollectionVariable(selectedLayer)!.id}
                     />
-                  )}
+                  )} */}
 
                 <ConditionalVisibilitySettings
                   layer={selectedLayer}
@@ -4036,17 +4036,18 @@ const RightPanelContent = React.memo(function RightPanelContent({
           className="flex-1 overflow-y-auto no-scrollbar mt-0 data-[state=inactive]:hidden"
         >
           {interactionOwnerLayer ? (
-            <InteractionsPanel
-              triggerLayer={interactionOwnerLayer}
-              allLayers={allLayers}
-              onLayerUpdate={handleLayerUpdate}
-              selectedLayerId={selectedLayerId}
-              resetKey={interactionResetKey}
-              activeBreakpoint={activeBreakpoint}
-              onStateChange={handleInteractionStateChange}
-              onSelectLayer={setSelectedLayerId}
-            />
+            <div>interactions go here</div>
           ) : (
+            // <InteractionsPanel
+            //   triggerLayer={interactionOwnerLayer}
+            //   allLayers={allLayers}
+            //   onLayerUpdate={handleLayerUpdate}
+            //   selectedLayerId={selectedLayerId}
+            //   resetKey={interactionResetKey}
+            //   activeBreakpoint={activeBreakpoint}
+            //   onStateChange={handleInteractionStateChange}
+            //   onSelectLayer={setSelectedLayerId}
+            // />
             <Empty>
               <EmptyTitle>No Layer Selected</EmptyTitle>
               <EmptyDescription>
@@ -4058,7 +4059,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
       </Tabs>
 
       {/* Component Variables Dialog */}
-      <ComponentVariablesDialog
+      {/* <ComponentVariablesDialog
         open={variablesDialogOpen}
         onOpenChange={(open) => {
           setVariablesDialogOpen(open);
@@ -4066,7 +4067,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
         }}
         componentId={editingComponentId}
         initialVariableId={variablesDialogInitialId}
-      />
+      /> */}
     </div>
   );
 });

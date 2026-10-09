@@ -875,17 +875,17 @@ export const usePagesStore = create<PagesStore>((set, get) => ({
   updateStyleOnLayers: (styleId, stylesById) => {
     const { pages } = get();
 
-    const updatedDrafts = { ...pages };
+    const updatedPages = { ...pages };
 
-    Object.keys(updatedDrafts).forEach((pageId) => {
-      const draft = updatedDrafts[pageId];
-      updatedDrafts[pageId] = {
+    Object.keys(updatedPages).forEach((pageId) => {
+      const draft = updatedPages[pageId];
+      updatedPages[pageId] = {
         ...draft,
         layers: updateLayersWithStyle(draft.layers, styleId, stylesById),
       };
     });
 
-    set({ pages: updatedDrafts });
+    set({ pages: updatedPages });
   },
 
   /**
