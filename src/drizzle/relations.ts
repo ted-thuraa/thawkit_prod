@@ -96,6 +96,7 @@ export const relations = defineRelations(schema, (r) => ({
     activeSessions: r.many.session(),
     campaigns: r.many.campaign(),
     assets: r.many.asset(),
+    assetFolders: r.many.assetFolder(),
     //funnels: r.many.funnel(),
     // components: r.many.component(),
     // layerStyles: r.many.layerStyle(),
@@ -107,6 +108,37 @@ export const relations = defineRelations(schema, (r) => ({
       from: r.asset.organizationId,
       to: r.organization.id,
       optional: false,
+    }),
+    // Draft rows join draft folders, published rows published folders.
+    folder: r.one.assetFolder({
+      from: [r.asset.assetFolderId, r.asset.isPublished],
+      to: [r.assetFolder.id, r.assetFolder.isPublished],
+      optional: true,
+    }),
+  },
+
+  // ── Asset Folder ──────────────────────────────────────────────────────────
+  assetFolder: {
+    organization: r.one.organization({
+      from: r.assetFolder.organizationId,
+      to: r.organization.id,
+      optional: false,
+    }),
+    // Self-referencing tree: `parent` / `children` share one alias.
+    parent: r.one.assetFolder({
+      from: [r.assetFolder.assetFolderId, r.assetFolder.isPublished],
+      to: [r.assetFolder.id, r.assetFolder.isPublished],
+      optional: true,
+      alias: "assetFolderTree",
+    }),
+    children: r.many.assetFolder({
+      from: [r.assetFolder.id, r.assetFolder.isPublished],
+      to: [r.assetFolder.assetFolderId, r.assetFolder.isPublished],
+      alias: "assetFolderTree",
+    }),
+    assets: r.many.asset({
+      from: [r.assetFolder.id, r.assetFolder.isPublished],
+      to: [r.asset.assetFolderId, r.asset.isPublished],
     }),
   },
 
