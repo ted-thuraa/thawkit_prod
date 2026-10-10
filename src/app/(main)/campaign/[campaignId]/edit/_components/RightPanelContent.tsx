@@ -42,7 +42,10 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 // 5. Stores
-import { useEditorStore } from "@/stores/editor/useEditorStore";
+import {
+  EditorSidebarTab,
+  useEditorStore,
+} from "@/stores/editor/useEditorStore";
 import { useComponentsStore } from "@/stores/editor/useComponentsStore";
 import { usePagesStore } from "@/stores/editor/usePagesStore";
 import { useCollectionsStore } from "@/stores/editor/useCollectionsStore";
@@ -230,7 +233,9 @@ const RightPanelContent = React.memo(function RightPanelContent({
   embedded = false,
 }: RightPanelContentProps) {
   const selectedLayerId = useEditorStore((state) => state.selectedLayerId);
-
+  const activeSidebarTab: EditorSidebarTab = useEditorStore(
+    (s) => s.activeSidebarTab,
+  );
   //   const { openComponent, urlState, updateQueryParams } = useEditorActions();
   //   const { routeType } = useCampaignEditorUrl();
   const { isLocalizing, currentLocale, defaultLocale } = useLocalizationMode();
@@ -287,14 +292,14 @@ const RightPanelContent = React.memo(function RightPanelContent({
 
       // Background URL update
       if (
-        routeType === "page" ||
-        routeType === "layers" ||
-        routeType === "component"
+        activeSidebarTab === "pages" ||
+        activeSidebarTab === "layers" ||
+        activeSidebarTab === "cms"
       ) {
-        updateQueryParams({ tab: newTab });
+        //updateQueryParams({ tab: newTab });
       }
     },
-    [routeType, updateQueryParams],
+    [activeSidebarTab],
   );
 
   // Sync URL→state only for external navigation (back/forward, direct URL)

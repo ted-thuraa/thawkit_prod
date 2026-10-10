@@ -1,20 +1,27 @@
 "use client";
 
-import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import {
+  ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { toast } from "sonner";
 import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
 import { DEFAULT_LAYER_ID, type Viewport } from "@/lib/editor/editor-url";
 import { findLayerById } from "@/lib/editor/layer-tree-utils";
 import type { Layer } from "@/types/funnel";
 import type { EditorBootstrapContext } from "@/lib/editor/resolve-editor-bootstrap";
-import { pagesFromRows } from "@/lib/editor/page-from-row";
-import {
-  componentsFromRows,
-  layerStylesFromRows,
-} from "@/lib/editor/design-system-from-row";
 import { usePagesStore } from "@/stores/editor/usePagesStore";
 import { useComponentsStore } from "@/stores/editor/useComponentsStore";
-import { useLayerStylesStore } from "@/stores/editor/useLayerStylesStore";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
+import {
+  selectIsHydratedFor,
+  useEditorBootstrapStore,
+} from "@/stores/editor/useEditorBootstrapStore";
+import { hydrateEditorStores } from "@/stores/editor/hydrate-editor-stores";
 import LeftPanel from "./LeftPanel";
 import RightPanelDrawer from "./RightPanelDrawer";
 import EditorToolbar from "./EditorToolbar";
@@ -111,22 +118,15 @@ export function CampaignEditorMain({
   const [viewportMode, setViewportModeState] = useState<Viewport>(
     urlState.view || "desktop",
   );
-  useEffect(() => {
-    // Order matters: reset first (it also clears usePagesStore and restores
-    // the store-owned sidebar tab to "layers"), THEN hydrate.
-    useEditorStore.getState().resetForNewCampaign();
-    usePagesStore
-      .getState()
-      .hydrateFromBootstrap(pagesFromRows(bootstrap.pages));
-    // Styles and components hydrate in the same effect (before any retained
-    // canvas / layer-menu code resolves references), and the components store
-    // also drops the previous campaign's drafts and pending saves.
-    useLayerStylesStore
-      .getState()
-      .hydrateFromBootstrap(layerStylesFromRows(bootstrap.layerStyles));
-    useComponentsStore
-      .getState()
-      .hydrateFromBootstrap(componentsFromRows(bootstrap.components));
+  // Hydrate in a LAYOUT effect: it runs after the DOM commit but before the
+  // browser paints, and the synchronous store update it triggers re-renders
+  // before paint too — so the user never sees a frame of empty stores (the
+  // old passive-effect hydration flashed "This funnel has no pages yet.").
+  // It must not run during render: the stores are module singletons, which
+  // on the server are shared across requests. See hydrate-editor-stores.ts
+  // for the reset → critical → optional → mark-ready order.
+  useLayoutEffect(() => {
+    hydrateEditorStores(bootstrap);
     // Intentionally keyed on campaignId alone, not on `bootstrap` itself:
     // `bootstrap` is a fresh object reference on every server render, but
     // re-hydrating (and wiping in-progress local edits) on every
@@ -136,6 +136,28 @@ export function CampaignEditorMain({
     // data now."
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId]);
+
+  // True only once the stores hold exactly THIS campaign's data. During a
+  // client-side campaign switch the singletons still hold the previous
+  // campaign's data until the layout effect above runs, so "stores are
+  // non-empty" is not a safe signal.
+  const isHydrated = useEditorBootstrapStore(selectIsHydratedFor(campaignId));
+
+  // Optional sections (media library, CMS) degrade instead of failing the
+  // editor — so tell the user once, rather than letting images or CMS
+  // content silently go missing. The server has already logged the cause.
+  const sectionErrors = useEditorBootstrapStore((state) => state.sectionErrors);
+  useEffect(() => {
+    if (!isHydrated) return;
+    const failed: string[] = [];
+    if (sectionErrors.assets) failed.push("media library");
+    if (sectionErrors.collections) failed.push("CMS collections");
+    if (failed.length === 0) return;
+    toast.error(`Couldn't load your ${failed.join(" and ")}`, {
+      description:
+        "You can keep editing, but some images or dynamic content may not appear. Reload to try again.",
+    });
+  }, [isHydrated, sectionErrors]);
 
   const pages = usePagesStore((state) => state.pages);
   const setCurrentPageId = useEditorStore((state) => state.setCurrentPageId);
@@ -288,6 +310,17 @@ export function CampaignEditorMain({
     },
     [],
   );
+
+  // Server render and the first client render land here (stores not yet
+  // hydrated): render a neutral, identical placeholder on both sides, so
+  // there is no hydration mismatch and no misleading empty-state message.
+  if (!isHydrated) {
+    return (
+      <div className="h-full w-full" role="status" aria-busy="true">
+        <span className="sr-only">Loading editor…</span>
+      </div>
+    );
+  }
 
   if (needsPageRedirect) {
     if (pages.length === 0) {

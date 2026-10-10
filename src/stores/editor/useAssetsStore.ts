@@ -49,6 +49,20 @@ interface AssetsActions {
   fetchAssets: (params: FetchAssetsParams) => Promise<FetchAssetsResult>;
   setAssets: (assets: Asset[]) => void;
   setFolders: (folders: AssetFolder[]) => void;
+  /**
+   * Atomically seed the store from the server bootstrap (one store update,
+   * one subscriber notification). `assets` is a SUBSET of the library — the
+   * referenced assets plus the first library page — not the whole library.
+   */
+  hydrateFromBootstrap: (data: {
+    assets: Asset[];
+    folders: AssetFolder[];
+  }) => void;
+  /**
+   * The bootstrap's assets section failed. Marks the store loaded-with-error
+   * so nothing falls through to the legacy `/ycode/api` fetch paths.
+   */
+  setLoadError: (message: string) => void;
   getAsset: (id: string) => Asset | null;
   addAsset: (asset: Asset) => void;
   addAssetsToCache: (assets: Asset[]) => void;
@@ -93,6 +107,27 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
       assetsById,
       isLoaded: true,
     });
+  },
+
+  hydrateFromBootstrap: ({ assets, folders }) => {
+    const normalized = assets.map(normalizeAssetForEditor);
+    const assetsById: Record<string, Asset> = {};
+    normalized.forEach((asset) => {
+      assetsById[asset.id] = asset;
+    });
+
+    set({
+      assets: normalized,
+      assetsById,
+      folders,
+      isLoading: false,
+      isLoaded: true,
+      error: null,
+    });
+  },
+
+  setLoadError: (message: string) => {
+    set({ ...initialState, isLoaded: true, error: message });
   },
 
   /**
@@ -469,6 +504,9 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
    * Reset store to initial state
    */
   reset: () => {
+    // The in-flight set is module-level, not store state — clear it too, or
+    // a fetch started for the previous campaign blocks the same id here.
+    pendingFetches.clear();
     set(initialState);
   },
 }));

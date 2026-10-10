@@ -462,11 +462,25 @@ function isBitmapImageMime(mimeType?: string | null): boolean {
 }
 
 /**
+ * Whether the `/a/{hash}/{slug}.{ext}` image proxy exists in this deployment.
+ *
+ * Ycode ships that route (Sharp resize + cache); ThawKit does not yet. With
+ * the rewrite on and no route, every bitmap asset URL would 404 in the
+ * editor. Off by default — set `NEXT_PUBLIC_ASSET_PROXY_ENABLED=true` once
+ * the proxy route is implemented. (`NEXT_PUBLIC_*` is inlined at build time,
+ * so this reads the same on server and client.)
+ */
+export function isAssetProxyEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_ASSET_PROXY_ENABLED === "true";
+}
+
+/**
  * Build an editor-optimized URL for a bitmap image asset. Routes through the
  * `/a/{hash}/{slug}.{ext}` proxy with `?width=&quality=` so Sharp can downscale
  * before the browser decodes the bitmap.
  *
  * Returns the asset's existing `public_url` unchanged when:
+ *   - the proxy is not enabled in this deployment (see isAssetProxyEnabled)
  *   - the asset isn't a bitmap image (SVG, video, document, …)
  *   - there's no `storage_path` (external/inline asset)
  *   - the URL has already been rewritten to the proxy by an upstream consumer
@@ -483,6 +497,7 @@ export function getEditorImageUrl(
   quality: number = EDITOR_DEFAULT_IMAGE_QUALITY,
 ): string | null {
   const existing = asset.public_url ?? null;
+  if (!isAssetProxyEnabled()) return existing;
   if (!isBitmapImageMime(asset.mime_type)) return existing;
   if (!asset.storage_path) return existing;
 

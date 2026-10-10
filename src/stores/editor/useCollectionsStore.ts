@@ -18,6 +18,7 @@ import type {
   CreateCollectionFieldData,
   UpdateCollectionFieldData,
 } from "@/types/funnel";
+import type { CollectionsBootstrapData } from "@/lib/editor/bootstrap/types";
 import { useAssetsStore } from "./useAssetsStore";
 import { usePagesStore } from "./usePagesStore";
 
@@ -57,6 +58,18 @@ interface CollectionsActions {
   // Collections
   loadCollections: () => Promise<void>;
   preloadCollectionsAndItems: (collections: Collection[]) => Promise<void>;
+  /**
+   * Atomically seed the store from the server bootstrap — collections,
+   * fields, and the first page of items per collection — in ONE update with
+   * no network. Replaces the `loadCollections` → `loadFields(null)` →
+   * `preloadCollectionsAndItems` client waterfall for the editor's initial
+   * load (those legacy actions remain for on-demand refreshes).
+   */
+  hydrateFromBootstrap: (data: CollectionsBootstrapData) => void;
+  /** The bootstrap's collections section failed — surface it, show nothing stale. */
+  setLoadError: (message: string) => void;
+  /** Back to the empty state (campaign switch). */
+  reset: () => void;
   createCollection: (data: CreateCollectionData) => Promise<Collection>;
   createSampleCollection: (sampleId: string) => Promise<Collection>;
   updateCollection: (id: string, data: UpdateCollectionData) => Promise<void>;
@@ -149,8 +162,7 @@ interface CollectionsActions {
 
 type CollectionsStore = CollectionsState & CollectionsActions;
 
-export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
-  // Initial state
+const emptyState: CollectionsState = {
   collections: [],
   fields: {},
   items: {},
@@ -160,8 +172,32 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
   crossCollectionSlugs: {},
   isLoading: false,
   error: null,
+};
+
+export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
+  // Initial state
+  ...emptyState,
 
   // Collections
+  hydrateFromBootstrap: (data) => {
+    set({
+      ...emptyState,
+      collections: sortCollectionsByOrder(data.collections),
+      fields: data.fields,
+      items: data.items,
+      itemsTotalCount: data.itemsTotalCount,
+      lastItemsQuery: data.lastItemsQuery,
+    });
+  },
+
+  setLoadError: (message) => {
+    set({ ...emptyState, error: message });
+  },
+
+  reset: () => {
+    set(emptyState);
+  },
+
   loadCollections: async () => {
     set({ isLoading: true, error: null });
 

@@ -12,21 +12,64 @@ import {
   type CampaignRow,
 } from "@/lib/auth/require-campaign-permission";
 import { logger } from "@/lib/logger";
+import type {
+  Asset,
+  AssetFolder,
+  Component,
+  LayerStyle,
+  Page,
+} from "@/types/funnel";
+import { pagesFromRows } from "@/lib/editor/page-from-row";
+import {
+  componentsFromRows,
+  layerStylesFromRows,
+} from "@/lib/editor/design-system-from-row";
+import { collectReferencedAssetIds } from "@/lib/editor/bootstrap/collect-asset-ids";
+import { runSection } from "@/lib/editor/bootstrap/instrument";
+import {
+  loadAssetFoldersAndLibraryPage,
+  loadAssetsByIds,
+  mergeAssets,
+} from "@/lib/editor/bootstrap/load-assets";
+import { loadCollectionsBootstrap } from "@/lib/editor/bootstrap/load-collections";
+import type {
+  AssetsBootstrapData,
+  BootstrapSection,
+  CollectionsBootstrapData,
+} from "@/lib/editor/bootstrap/types";
 
 export type FunnelRow = InferSelectModel<typeof funnel>;
 export type PageRow = InferSelectModel<typeof page>;
 export type ComponentRow = InferSelectModel<typeof component>;
 export type LayerStyleRow = InferSelectModel<typeof layerStyle>;
 
+/**
+ * The server → client editor payload. Everything below `funnel` is already
+ * mapped to the domain types the Zustand stores speak (plain JSON-safe data,
+ * no Drizzle rows), so the client hydrates with zero transformation.
+ */
 export interface EditorBootstrapContext {
   campaign: CampaignRow;
   funnel: FunnelRow;
   /** Ordered by `page.order` ascending — the funnel's step sequence. */
-  pages: PageRow[];
+  pages: Page[];
   /** Org-wide reusable components — see design-system-schema.ts's TENANCY note. */
-  components: ComponentRow[];
+  components: Component[];
   /** Org-wide reusable style chips — same scope as `components`. */
-  layerStyles: LayerStyleRow[];
+  layerStyles: LayerStyle[];
+  /**
+   * Media library (organization-scoped): all folders + a bounded asset
+   * subset. OPTIONAL section — a failure degrades to `status: "error"`
+   * instead of failing the editor.
+   */
+  assets: BootstrapSection<AssetsBootstrapData>;
+  /**
+   * CMS collections (funnel-scoped): collections, fields, and the first page
+   * of items per collection. OPTIONAL section, same degradation rule.
+   */
+  collections: BootstrapSection<CollectionsBootstrapData>;
+  /** ISO timestamp of when the server assembled this payload. */
+  generatedAt: string;
 }
 
 /**
@@ -49,17 +92,28 @@ export interface EditorBootstrapContext {
  * the persistent-builder pattern is designed for, just achieved server-side
  * instead of via a persisted client store.
  *
- * SCOPE (this pass): loads what the editor's canvas/tree actually needs —
- * a funnel's pages (ordered), and the organization's reusable
- * components/layer-styles. Deliberately excludes:
- *   - `funnelVersions` — publish snapshots, not editable draft data; no
- *     canvas mode reads these.
- *   - `questionCategories`/`audiences` — CMS/Collections and the campaign
- *     audience system are out of scope for the editor itself.
- *   - Ycode's folders/settings/collections/locales/assets/asset-folders/
- *     fonts/mapbox/google-maps entries — folders were rejected in the
- *     schema-design pass (see funnel-content-schema.ts's decision note on
- *     `pages.order`); the rest have no Thawkit backing yet.
+ * SCOPE: pages (ordered), the organization's reusable components/layer
+ * styles, the media library (assets + folders) and the funnel's CMS
+ * collections. Deliberately excludes `funnelVersions` (publish snapshots,
+ * not editable draft data) and Ycode's settings/locales/fonts/maps entries,
+ * which have no ThawKit backing yet.
+ *
+ * TWO TIERS:
+ *   - CRITICAL (pages, components, layerStyles): all-or-nothing, as before.
+ *   - OPTIONAL (assets, collections): isolated by `runSection` — a failure
+ *     is logged against the section and delivered as `status: "error"`, so
+ *     page editing never dies because a CMS or media query broke.
+ *
+ * LOAD ORDER: wave 1 runs the critical reads, the collections loader and the
+ * independent half of the assets loader (folders + first library page) in
+ * parallel. Wave 2 loads the assets the content REFERENCES — their ids can
+ * only be known once pages, components, styles and CMS values are in hand.
+ * Every query is tenant-scoped from `campaign` / `funnelRow` (validated
+ * above), never from client input.
+ *
+ * MAPPING happens here, on the server: rows never cross the RSC boundary,
+ * and the client payload carries only the fields the editor's domain types
+ * define.
  *
  * DIAGNOSTIC PATTERN: uses `Promise.allSettled` + per-task failure
  * logging, then re-throws if anything failed — ported directly from
@@ -118,6 +172,17 @@ export const resolveEditorBootstrap = cache(
       }),
     } as const;
 
+    // OPTIONAL sections start now so they overlap the critical reads. They
+    // never reject (runSection converts failures), so there is no unhandled
+    // rejection even if the critical tier throws first.
+    const logContext = { campaignId, funnelId: funnelRow.id };
+    const collectionsPromise = runSection("collections", logContext, () =>
+      loadCollectionsBootstrap(funnelRow.id),
+    );
+    const assetsBasePromise = runSection("assets", logContext, () =>
+      loadAssetFoldersAndLibraryPage(campaign.organizationId),
+    );
+
     const taskKeys = Object.keys(tasks) as (keyof typeof tasks)[];
     const settled = await Promise.allSettled(Object.values(tasks));
 
@@ -150,12 +215,69 @@ export const resolveEditorBootstrap = cache(
       (result) => (result as PromiseFulfilledResult<unknown>).value,
     ) as [PageRow[], ComponentRow[], LayerStyleRow[]];
 
+    const pages = pagesFromRows(pageRows);
+    const components = componentsFromRows(componentRows);
+    const layerStyles = layerStylesFromRows(layerStyleRows);
+
+    const [collections, assetsBase] = await Promise.all([
+      collectionsPromise,
+      assetsBasePromise,
+    ]);
+
+    // Wave 2 — assets referenced by the content just loaded.
+    const assets = await resolveAssetsSection(
+      assetsBase,
+      campaign.organizationId,
+      logContext,
+      {
+        json: [pages, components, layerStyles],
+        fields: collections.status === "ready" ? collections.data.fields : {},
+        items: collections.status === "ready" ? collections.data.items : {},
+      },
+    );
+
     return {
       campaign,
       funnel: funnelRow,
-      pages: pageRows,
-      components: componentRows,
-      layerStyles: layerStyleRows,
+      pages,
+      components,
+      layerStyles,
+      assets,
+      collections,
+      generatedAt: new Date().toISOString(),
     };
   },
 );
+
+/**
+ * Merges the base assets section (folders + library page) with the assets the
+ * content references. If either half fails the whole section is `error` —
+ * a half-populated library would silently render missing images.
+ */
+async function resolveAssetsSection(
+  base: BootstrapSection<{ folders: AssetFolder[]; assets: Asset[] }>,
+  organizationId: string,
+  logContext: Record<string, unknown>,
+  sources: Parameters<typeof collectReferencedAssetIds>[0],
+): Promise<BootstrapSection<AssetsBootstrapData>> {
+  if (base.status === "error") return base;
+
+  const referencedIds = collectReferencedAssetIds(sources);
+  const referenced = await runSection(
+    "assets:referenced",
+    { ...logContext, referencedCount: referencedIds.length },
+    () => loadAssetsByIds(organizationId, referencedIds),
+  );
+  if (referenced.status === "error") {
+    return { status: "error", error: "Failed to load assets." };
+  }
+
+  return {
+    status: "ready",
+    data: {
+      folders: base.data.folders,
+      // Referenced first: they are the ones the canvas needs to paint.
+      assets: mergeAssets(referenced.data, base.data.assets),
+    },
+  };
+}

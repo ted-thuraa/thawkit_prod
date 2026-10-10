@@ -1,0 +1,1598 @@
+diff --git a/src/app/(main)/campaign/[campaignId]/edit/_components/builderMain.tsx b/src/app/(main)/campaign/[campaignId]/edit/_components/builderMain.tsx
+index a1c89aa..be0c0d5 100644
+--- a/src/app/(main)/campaign/[campaignId]/edit/_components/builderMain.tsx
++++ b/src/app/(main)/campaign/[campaignId]/edit/_components/builderMain.tsx
+@@ -1,20 +1,27 @@
+ "use client";
+ 
+-import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
++import {
++  ReactNode,
++  useCallback,
++  useEffect,
++  useLayoutEffect,
++  useRef,
++  useState,
++} from "react";
++import { toast } from "sonner";
+ import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
+ import { DEFAULT_LAYER_ID, type Viewport } from "@/lib/editor/editor-url";
+ import { findLayerById } from "@/lib/editor/layer-tree-utils";
+ import type { Layer } from "@/types/funnel";
+ import type { EditorBootstrapContext } from "@/lib/editor/resolve-editor-bootstrap";
+-import { pagesFromRows } from "@/lib/editor/page-from-row";
+-import {
+-  componentsFromRows,
+-  layerStylesFromRows,
+-} from "@/lib/editor/design-system-from-row";
+ import { usePagesStore } from "@/stores/editor/usePagesStore";
+ import { useComponentsStore } from "@/stores/editor/useComponentsStore";
+-import { useLayerStylesStore } from "@/stores/editor/useLayerStylesStore";
+ import { useEditorStore } from "@/stores/editor/useEditorStore";
++import {
++  selectIsHydratedFor,
++  useEditorBootstrapStore,
++} from "@/stores/editor/useEditorBootstrapStore";
++import { hydrateEditorStores } from "@/stores/editor/hydrate-editor-stores";
+ import LeftPanel from "./LeftPanel";
+ import RightPanelDrawer from "./RightPanelDrawer";
+ import EditorToolbar from "./EditorToolbar";
+@@ -111,22 +118,15 @@ export function CampaignEditorMain({
+   const [viewportMode, setViewportModeState] = useState<Viewport>(
+     urlState.view || "desktop",
+   );
+-  useEffect(() => {
+-    // Order matters: reset first (it also clears usePagesStore and restores
+-    // the store-owned sidebar tab to "layers"), THEN hydrate.
+-    useEditorStore.getState().resetForNewCampaign();
+-    usePagesStore
+-      .getState()
+-      .hydrateFromBootstrap(pagesFromRows(bootstrap.pages));
+-    // Styles and components hydrate in the same effect (before any retained
+-    // canvas / layer-menu code resolves references), and the components store
+-    // also drops the previous campaign's drafts and pending saves.
+-    useLayerStylesStore
+-      .getState()
+-      .hydrateFromBootstrap(layerStylesFromRows(bootstrap.layerStyles));
+-    useComponentsStore
+-      .getState()
+-      .hydrateFromBootstrap(componentsFromRows(bootstrap.components));
++  // Hydrate in a LAYOUT effect: it runs after the DOM commit but before the
++  // browser paints, and the synchronous store update it triggers re-renders
++  // before paint too — so the user never sees a frame of empty stores (the
++  // old passive-effect hydration flashed "This funnel has no pages yet.").
++  // It must not run during render: the stores are module singletons, which
++  // on the server are shared across requests. See hydrate-editor-stores.ts
++  // for the reset → critical → optional → mark-ready order.
++  useLayoutEffect(() => {
++    hydrateEditorStores(bootstrap);
+     // Intentionally keyed on campaignId alone, not on `bootstrap` itself:
+     // `bootstrap` is a fresh object reference on every server render, but
+     // re-hydrating (and wiping in-progress local edits) on every
+@@ -137,6 +137,28 @@ export function CampaignEditorMain({
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [campaignId]);
+ 
++  // True only once the stores hold exactly THIS campaign's data. During a
++  // client-side campaign switch the singletons still hold the previous
++  // campaign's data until the layout effect above runs, so "stores are
++  // non-empty" is not a safe signal.
++  const isHydrated = useEditorBootstrapStore(selectIsHydratedFor(campaignId));
++
++  // Optional sections (media library, CMS) degrade instead of failing the
++  // editor — so tell the user once, rather than letting images or CMS
++  // content silently go missing. The server has already logged the cause.
++  const sectionErrors = useEditorBootstrapStore((state) => state.sectionErrors);
++  useEffect(() => {
++    if (!isHydrated) return;
++    const failed: string[] = [];
++    if (sectionErrors.assets) failed.push("media library");
++    if (sectionErrors.collections) failed.push("CMS collections");
++    if (failed.length === 0) return;
++    toast.error(`Couldn't load your ${failed.join(" and ")}`, {
++      description:
++        "You can keep editing, but some images or dynamic content may not appear. Reload to try again.",
++    });
++  }, [isHydrated, sectionErrors]);
++
+   const pages = usePagesStore((state) => state.pages);
+   const setCurrentPageId = useEditorStore((state) => state.setCurrentPageId);
+ 
+@@ -289,6 +311,17 @@ export function CampaignEditorMain({
+     [],
+   );
+ 
++  // Server render and the first client render land here (stores not yet
++  // hydrated): render a neutral, identical placeholder on both sides, so
++  // there is no hydration mismatch and no misleading empty-state message.
++  if (!isHydrated) {
++    return (
++      <div className="h-full w-full" role="status" aria-busy="true">
++        <span className="sr-only">Loading editor…</span>
++      </div>
++    );
++  }
++
+   if (needsPageRedirect) {
+     if (pages.length === 0) {
+       return (
+diff --git a/src/lib/asset-utils.ts b/src/lib/asset-utils.ts
+index ed10bc6..15c95fb 100644
+--- a/src/lib/asset-utils.ts
++++ b/src/lib/asset-utils.ts
+@@ -461,12 +461,26 @@ function isBitmapImageMime(mimeType?: string | null): boolean {
+   return true;
+ }
+ 
++/**
++ * Whether the `/a/{hash}/{slug}.{ext}` image proxy exists in this deployment.
++ *
++ * Ycode ships that route (Sharp resize + cache); ThawKit does not yet. With
++ * the rewrite on and no route, every bitmap asset URL would 404 in the
++ * editor. Off by default — set `NEXT_PUBLIC_ASSET_PROXY_ENABLED=true` once
++ * the proxy route is implemented. (`NEXT_PUBLIC_*` is inlined at build time,
++ * so this reads the same on server and client.)
++ */
++export function isAssetProxyEnabled(): boolean {
++  return process.env.NEXT_PUBLIC_ASSET_PROXY_ENABLED === "true";
++}
++
+ /**
+  * Build an editor-optimized URL for a bitmap image asset. Routes through the
+  * `/a/{hash}/{slug}.{ext}` proxy with `?width=&quality=` so Sharp can downscale
+  * before the browser decodes the bitmap.
+  *
+  * Returns the asset's existing `public_url` unchanged when:
++ *   - the proxy is not enabled in this deployment (see isAssetProxyEnabled)
+  *   - the asset isn't a bitmap image (SVG, video, document, …)
+  *   - there's no `storage_path` (external/inline asset)
+  *   - the URL has already been rewritten to the proxy by an upstream consumer
+@@ -483,6 +497,7 @@ export function getEditorImageUrl(
+   quality: number = EDITOR_DEFAULT_IMAGE_QUALITY,
+ ): string | null {
+   const existing = asset.public_url ?? null;
++  if (!isAssetProxyEnabled()) return existing;
+   if (!isBitmapImageMime(asset.mime_type)) return existing;
+   if (!asset.storage_path) return existing;
+ 
+diff --git a/src/lib/editor/bootstrap/collect-asset-ids.ts b/src/lib/editor/bootstrap/collect-asset-ids.ts
+new file mode 100644
+index 0000000..831ebd9
+--- /dev/null
++++ b/src/lib/editor/bootstrap/collect-asset-ids.ts
+@@ -0,0 +1,143 @@
++// path: src/lib/editor/bootstrap/collect-asset-ids.ts
++
++/**
++ * Finds every asset id a funnel's content references, so the bootstrap can
++ * load exactly those assets (plus the library's first page) instead of the
++ * whole library.
++ *
++ * Pure and isomorphic. Defensive by design: layer trees are free-form jsonb
++ * written by many editor features over time, so this scans structurally
++ * rather than trusting a schema, and validates every candidate as a UUID —
++ * `assets.id` is a Postgres `uuid`, and a single non-UUID string (an external
++ * URL in `lightbox.files`, a legacy id) would otherwise make the whole
++ * `IN (...)` query throw.
++ *
++ * Reference shapes recognised:
++ *   - AssetVariable:           { type: "asset", data: { asset_id } }
++ *   - any `asset_id` / `assetId` string property
++ *   - link settings:           { asset: { id } }
++ *   - lightbox / file lists:   { files: string[] }
++ *   - CMS values of image / audio / video / document fields: a single id, or
++ *     a JSON array of ids (multi-asset); and link-field JSON values with
++ *     `{ asset: { id } }`.
++ *
++ * Known gap: asset ids embedded inside rich-text HTML are not extracted.
++ * They are covered by the on-demand fetch path, not the preload.
++ */
++
++import type { CollectionField } from "@/types/funnel";
++
++const UUID_RE =
++  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
++
++export function isUuid(value: unknown): value is string {
++  return typeof value === "string" && UUID_RE.test(value);
++}
++
++const ASSET_FIELD_TYPES = new Set(["image", "audio", "video", "document"]);
++
++function add(out: Set<string>, candidate: unknown): void {
++  if (isUuid(candidate)) out.add(candidate.toLowerCase());
++}
++
++/** Iterative deep scan — layer trees can be deep, so no recursion. */
++export function collectAssetIdsFromJson(
++  root: unknown,
++  out: Set<string> = new Set(),
++): Set<string> {
++  const stack: unknown[] = [root];
++
++  while (stack.length > 0) {
++    const node = stack.pop();
++    if (node === null || typeof node !== "object") continue;
++
++    if (Array.isArray(node)) {
++      for (const child of node) stack.push(child);
++      continue;
++    }
++
++    const record = node as Record<string, unknown>;
++
++    // AssetVariable
++    if (record.type === "asset") {
++      const data = record.data as Record<string, unknown> | undefined;
++      add(out, data?.asset_id);
++    }
++
++    for (const [key, value] of Object.entries(record)) {
++      if (key === "asset_id" || key === "assetId") {
++        add(out, value);
++      } else if (key === "asset" && value && typeof value === "object") {
++        add(out, (value as Record<string, unknown>).id);
++      } else if (key === "files" && Array.isArray(value)) {
++        for (const entry of value) add(out, entry);
++      }
++
++      if (value !== null && typeof value === "object") stack.push(value);
++    }
++  }
++
++  return out;
++}
++
++/** Ids referenced by a CMS value, given the field it belongs to. */
++function collectAssetIdsFromValue(
++  fieldType: string,
++  value: string,
++  out: Set<string>,
++): void {
++  if (ASSET_FIELD_TYPES.has(fieldType)) {
++    const trimmed = value.trim();
++    if (trimmed.startsWith("[")) {
++      try {
++        const parsed: unknown = JSON.parse(trimmed);
++        if (Array.isArray(parsed)) for (const id of parsed) add(out, id);
++      } catch {
++        // Malformed multi-asset value — nothing to preload.
++      }
++    } else {
++      add(out, trimmed);
++    }
++    return;
++  }
++
++  if (fieldType === "link" && value.trim().startsWith("{")) {
++    try {
++      collectAssetIdsFromJson(JSON.parse(value), out);
++    } catch {
++      // Not JSON (a plain URL, say) — nothing to preload.
++    }
++  }
++}
++
++export interface ReferencedAssetSources {
++  /** Any jsonb that may hold asset variables: page layers + settings, component layers/variants/variables, layer-style design. */
++  json: readonly unknown[];
++  fields: Readonly<Record<string, readonly CollectionField[]>>;
++  items: Readonly<
++    Record<string, ReadonlyArray<{ values: Readonly<Record<string, string>> }>>
++  >;
++}
++
++export function collectReferencedAssetIds(
++  sources: ReferencedAssetSources,
++): string[] {
++  const out = new Set<string>();
++
++  for (const blob of sources.json) collectAssetIdsFromJson(blob, out);
++
++  for (const [collectionId, items] of Object.entries(sources.items)) {
++    const typeByFieldId = new Map<string, string>();
++    for (const field of sources.fields[collectionId] ?? []) {
++      typeByFieldId.set(field.id, field.type);
++    }
++    for (const item of items) {
++      for (const [fieldId, value] of Object.entries(item.values)) {
++        const type = typeByFieldId.get(fieldId);
++        if (type) collectAssetIdsFromValue(type, value, out);
++      }
++    }
++  }
++
++  return [...out];
++}
+diff --git a/src/lib/editor/bootstrap/instrument.ts b/src/lib/editor/bootstrap/instrument.ts
+new file mode 100644
+index 0000000..da243f9
+--- /dev/null
++++ b/src/lib/editor/bootstrap/instrument.ts
+@@ -0,0 +1,49 @@
++// path: src/lib/editor/bootstrap/instrument.ts
++
++import "server-only";
++import { logger } from "@/lib/logger";
++import type { BootstrapSection } from "./types";
++
++/**
++ * Tenant ids come from the already-validated campaign row, never from the
++ * client — but RQB v2 silently DROPS a filter whose value is `undefined`, so
++ * an empty id would turn a scoped query into a table scan. Fail loudly
++ * instead (same rationale as `assertOrganizationId` in tenant-scope.ts, which
++ * is a "use server" module and so cannot export a sync helper).
++ */
++export function assertTenantId(label: string, value: string | null | undefined): string {
++  if (!value || value.trim() === "") {
++    throw new Error(`Editor bootstrap: missing ${label} for a tenant-scoped query.`);
++  }
++  return value;
++}
++
++/**
++ * Runs one OPTIONAL bootstrap section, times it, and converts a failure into
++ * `{ status: "error" }` instead of throwing. The full error is logged against
++ * the section name; the client only ever receives the generic message.
++ */
++export async function runSection<T>(
++  name: string,
++  context: Record<string, unknown>,
++  task: () => Promise<T>,
++): Promise<BootstrapSection<T>> {
++  const startedAt = performance.now();
++  try {
++    const data = await task();
++    logger.info("Editor bootstrap section loaded", {
++      ...context,
++      section: name,
++      durationMs: Math.round(performance.now() - startedAt),
++    });
++    return { status: "ready", data };
++  } catch (error) {
++    logger.error(`Editor bootstrap: "${name}" failed`, {
++      ...context,
++      section: name,
++      durationMs: Math.round(performance.now() - startedAt),
++      error,
++    });
++    return { status: "error", error: `Failed to load ${name}.` };
++  }
++}
+diff --git a/src/lib/editor/bootstrap/load-assets.ts b/src/lib/editor/bootstrap/load-assets.ts
+new file mode 100644
+index 0000000..d7f6642
+--- /dev/null
++++ b/src/lib/editor/bootstrap/load-assets.ts
+@@ -0,0 +1,117 @@
++// path: src/lib/editor/bootstrap/load-assets.ts
++
++import "server-only";
++import { db } from "@/drizzle/db";
++import type { Asset, AssetFolder } from "@/types/funnel";
++import { assertTenantId } from "./instrument";
++import { assetFolderFromRow, assetFromRow } from "./mappers";
++
++/**
++ * ─────────────────────────────────────────────────────────────────────────
++ * Media-library bootstrap loaders. TENANCY: assets and folders are scoped
++ * directly by `organizationId` (see assets-schema.ts) — every query below
++ * carries it, including the by-id lookup, so a layer that references another
++ * organization's asset id can never resolve it.
++ *
++ * Every query also pins `is_published = false` (the editor only ever works
++ * on draft rows; the composite key means a published copy shares the id) and
++ * `deleted_at IS NULL`.
++ *
++ * Unlike Ycode's `getAllAssets` (the whole library, 1000 rows per round
++ * trip), the bootstrap loads a bounded subset: referenced assets + the first
++ * page of the library root + all folders. Folders are small and form a tree
++ * the panel needs whole; assets are unbounded per organization.
++ * ─────────────────────────────────────────────────────────────────────────
++ */
++
++/** First page of the library root shown when the Assets panel opens. */
++export const ASSET_LIBRARY_PAGE_SIZE = 50;
++
++// Postgres caps bind parameters at 65,535; chunk far below that so one huge
++// funnel cannot build a pathological IN-list.
++const ID_CHUNK_SIZE = 1000;
++
++export interface AssetFoldersAndLibrary {
++  folders: AssetFolder[];
++  assets: Asset[];
++}
++
++/** Independent of page content — safe to start before pages have loaded. */
++export async function loadAssetFoldersAndLibraryPage(
++  organizationId: string,
++): Promise<AssetFoldersAndLibrary> {
++  const orgId = assertTenantId("organizationId", organizationId);
++
++  const [folderRows, assetRows] = await Promise.all([
++    db.query.assetFolder.findMany({
++      where: {
++        organizationId: orgId,
++        isPublished: false,
++        deletedAt: { isNull: true },
++      },
++      orderBy: { order: "asc", name: "asc", id: "asc" },
++    }),
++    db.query.asset.findMany({
++      where: {
++        organizationId: orgId,
++        isPublished: false,
++        deletedAt: { isNull: true },
++        assetFolderId: { isNull: true },
++      },
++      orderBy: { createdAt: "desc", id: "asc" },
++      limit: ASSET_LIBRARY_PAGE_SIZE,
++    }),
++  ]);
++
++  return {
++    folders: folderRows.map(assetFolderFromRow),
++    assets: assetRows.map(assetFromRow),
++  };
++}
++
++/**
++ * Loads the assets a funnel's content references. `ids` must already be
++ * UUID-validated (collect-asset-ids.ts does this) — `assets.id` is a uuid
++ * column and a malformed value would make the query throw.
++ */
++export async function loadAssetsByIds(
++  organizationId: string,
++  ids: readonly string[],
++): Promise<Asset[]> {
++  const orgId = assertTenantId("organizationId", organizationId);
++  if (ids.length === 0) return [];
++
++  const chunks: string[][] = [];
++  for (let i = 0; i < ids.length; i += ID_CHUNK_SIZE) {
++    chunks.push(ids.slice(i, i + ID_CHUNK_SIZE));
++  }
++
++  const results = await Promise.all(
++    chunks.map((chunk) =>
++      db.query.asset.findMany({
++        where: {
++          organizationId: orgId,
++          isPublished: false,
++          deletedAt: { isNull: true },
++          id: { in: chunk },
++        },
++      }),
++    ),
++  );
++
++  return results.flat().map(assetFromRow);
++}
++
++/** Merges asset lists by id (first occurrence wins), preserving order. */
++export function mergeAssets(...lists: readonly Asset[][]): Asset[] {
++  const seen = new Set<string>();
++  const merged: Asset[] = [];
++  for (const list of lists) {
++    for (const asset of list) {
++      if (seen.has(asset.id)) continue;
++      seen.add(asset.id);
++      merged.push(asset);
++    }
++  }
++  return merged;
++}
+diff --git a/src/lib/editor/bootstrap/load-collections.ts b/src/lib/editor/bootstrap/load-collections.ts
+new file mode 100644
+index 0000000..0f70040
+--- /dev/null
++++ b/src/lib/editor/bootstrap/load-collections.ts
+@@ -0,0 +1,380 @@
++// path: src/lib/editor/bootstrap/load-collections.ts
++
++import "server-only";
++import { alias } from "drizzle-orm/pg-core";
++import {
++  and,
++  asc,
++  count,
++  eq,
++  getTableColumns,
++  inArray,
++  isNull,
++  lte,
++  sql,
++} from "drizzle-orm";
++import { db } from "@/drizzle/db";
++import {
++  collection,
++  collectionItem,
++  collectionItemValue,
++  type CollectionFieldRow,
++  type CollectionItemRow,
++} from "@/drizzle/schemas/collections-schema";
++import { getSortParams } from "@/lib/collection-utils";
++import type {
++  CollectionField,
++  CollectionItemWithValues,
++  CollectionSorting,
++} from "@/types/funnel";
++import { isUuid } from "./collect-asset-ids";
++import { assertTenantId } from "./instrument";
++import {
++  collectionFieldFromRow,
++  collectionFromRow,
++  collectionItemFromRow,
++  foldItemValues,
++} from "./mappers";
++import type { CollectionsBootstrapData } from "./types";
++
++/**
++ * ─────────────────────────────────────────────────────────────────────────
++ * CMS bootstrap loader — the server-side replacement for Ycode's
++ * `collectionsStore.loadCollections()` → `loadFields(null)` →
++ * `getTopItemsPerCollection()` client waterfall (three dependent network
++ * round-trips after mount).
++ *
++ * TENANCY: collections are scoped by `funnelId` (ownership decision in
++ * collections-schema.ts); children are reached only through composite FKs to
++ * a collection loaded here, so no child query needs its own tenant column.
++ * `funnelId` always comes from the validated campaign's funnel.
++ *
++ * DRAFT/PUBLISHED: every query pins `is_published = false` and
++ * `deleted_at IS NULL`. The composite `(id, is_published)` keys mean a
++ * published copy of every row shares its id — omitting the pin would double
++ * every collection, field, item and value.
++ *
++ * QUERY PLAN (constant in the number of collections):
++ *   1. collections
++ *   2. in parallel: fields · per-collection item counts · published ids ·
++ *      top-N items (one window query for all manual/small collections, plus
++ *      one sorted query per field-sorted collection with > N items)
++ *   3. values for every selected item
++ * ─────────────────────────────────────────────────────────────────────────
++ */
++
++/** Items preloaded per collection — matches Ycode's PRELOAD_LIMIT. */
++export const COLLECTION_PRELOAD_LIMIT = 25;
++
++const ID_CHUNK_SIZE = 1000;
++
++const EMPTY: CollectionsBootstrapData = {
++  collections: [],
++  fields: {},
++  items: {},
++  itemsTotalCount: {},
++  lastItemsQuery: {},
++};
++
++function chunk<T>(list: readonly T[], size: number): T[][] {
++  const out: T[][] = [];
++  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
++  return out;
++}
++
++/**
++ * Same comparator the client store used after its batch preload: numeric when
++ * both sides parse as numbers, otherwise locale string order. Applied to
++ * small collections whose sort is by field value (a collection with <= N
++ * items is fully loaded, so sorting in JS is exact).
++ */
++function sortItemsByValue(
++  items: CollectionItemWithValues[],
++  sorting: CollectionSorting,
++): CollectionItemWithValues[] {
++  return [...items].sort((a, b) => {
++    const aValue = a.values[sorting.field] || "";
++    const bValue = b.values[sorting.field] || "";
++    const aNum = parseFloat(String(aValue));
++    const bNum = parseFloat(String(bValue));
++    if (!isNaN(aNum) && !isNaN(bNum)) {
++      return sorting.direction === "asc" ? aNum - bNum : bNum - aNum;
++    }
++    const cmp = String(aValue).localeCompare(String(bValue));
++    return sorting.direction === "asc" ? cmp : -cmp;
++  });
++}
++
++/** Manual order, then newest first, then id — deterministic. */
++function compareManual(a: CollectionItemRow, b: CollectionItemRow): number {
++  if (a.manualOrder !== b.manualOrder) return a.manualOrder - b.manualOrder;
++  const aTime = a.createdAt?.getTime() ?? 0;
++  const bTime = b.createdAt?.getTime() ?? 0;
++  if (aTime !== bTime) return bTime - aTime;
++  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
++}
++
++/**
++ * Top-N items per collection for every collection in `collectionIds`, in ONE
++ * query, via `row_number() OVER (PARTITION BY collection_id ...)`.
++ */
++async function loadTopItemsWindowed(
++  collectionIds: readonly string[],
++): Promise<CollectionItemRow[]> {
++  if (collectionIds.length === 0) return [];
++
++  const ranked = db
++    .select({
++      ...getTableColumns(collectionItem),
++      rn: sql<number>`row_number() over (
++        partition by ${collectionItem.collectionId}
++        order by ${collectionItem.manualOrder} asc,
++                 ${collectionItem.createdAt} desc,
++                 ${collectionItem.id} asc
++      )`.as("rn"),
++    })
++    .from(collectionItem)
++    .where(
++      and(
++        inArray(collectionItem.collectionId, [...collectionIds]),
++        eq(collectionItem.isPublished, false),
++        isNull(collectionItem.deletedAt),
++      ),
++    )
++    .as("ranked");
++
++  return db
++    .select()
++    .from(ranked)
++    .where(lte(ranked.rn, COLLECTION_PRELOAD_LIMIT));
++}
++
++/**
++ * Top-N items for ONE collection sorted by a field's value (collections with
++ * more than N items, where the first page cannot be sorted client-side).
++ * Items with no value sort last (ASC) / first (DESC), matching what a
++ * client-side sort would produce. Number-typed fields sort numerically —
++ * Ycode sorts the raw text, which orders "10" before "9".
++ */
++async function loadTopItemsSorted(
++  collectionId: string,
++  sortFieldId: string,
++  direction: "asc" | "desc",
++  sortFieldType: string | undefined,
++): Promise<CollectionItemRow[]> {
++  const civ = alias(collectionItemValue, "civ");
++
++  const numeric = sortFieldType === "number" || sortFieldType === "count";
++  // `[.]` rather than `\.` — a backslash would be eaten by the template literal.
++  const sortExpr = numeric
++    ? sql`CASE WHEN ${civ.value} ~ '^-?[0-9]+([.][0-9]+)?$' THEN ${civ.value}::numeric END`
++    : sql`${civ.value}`;
++
++  return db
++    .select(getTableColumns(collectionItem))
++    .from(collectionItem)
++    .leftJoin(
++      civ,
++      and(
++        eq(civ.itemId, collectionItem.id),
++        eq(civ.isPublished, false),
++        eq(civ.fieldId, sortFieldId),
++        isNull(civ.deletedAt),
++      ),
++    )
++    .where(
++      and(
++        eq(collectionItem.collectionId, collectionId),
++        eq(collectionItem.isPublished, false),
++        isNull(collectionItem.deletedAt),
++      ),
++    )
++    .orderBy(
++      direction === "desc"
++        ? sql`${sortExpr} DESC NULLS FIRST`
++        : sql`${sortExpr} ASC NULLS LAST`,
++      asc(collectionItem.manualOrder),
++      asc(collectionItem.id),
++    )
++    .limit(COLLECTION_PRELOAD_LIMIT);
++}
++
++export async function loadCollectionsBootstrap(
++  funnelId: string,
++): Promise<CollectionsBootstrapData> {
++  const scopedFunnelId = assertTenantId("funnelId", funnelId);
++
++  // 1 ── collections
++  const collectionRows = await db.query.collection.findMany({
++    where: {
++      funnelId: scopedFunnelId,
++      isPublished: false,
++      deletedAt: { isNull: true },
++    },
++    orderBy: { order: "asc", createdAt: "desc" },
++  });
++
++  if (collectionRows.length === 0) return EMPTY;
++
++  const collectionIds = collectionRows.map((row) => row.id);
++
++  // 2 ── fields · counts · published ids (parallel)
++  const [fieldRows, countRows, publishedRows] = await Promise.all([
++    db.query.collectionField.findMany({
++      where: {
++        collectionId: { in: collectionIds },
++        isPublished: false,
++        deletedAt: { isNull: true },
++      },
++      orderBy: { order: "asc", id: "asc" },
++    }),
++    db
++      .select({
++        collectionId: collectionItem.collectionId,
++        total: count(),
++      })
++      .from(collectionItem)
++      .where(
++        and(
++          inArray(collectionItem.collectionId, collectionIds),
++          eq(collectionItem.isPublished, false),
++          isNull(collectionItem.deletedAt),
++        ),
++      )
++      .groupBy(collectionItem.collectionId),
++    db
++      .select({ id: collection.id })
++      .from(collection)
++      .where(
++        and(
++          inArray(collection.id, collectionIds),
++          eq(collection.isPublished, true),
++          isNull(collection.deletedAt),
++        ),
++      ),
++  ]);
++
++  const totalByCollection = new Map(
++    countRows.map((row) => [row.collectionId, Number(row.total)]),
++  );
++  const publishedIds = new Set(publishedRows.map((row) => row.id));
++
++  const fieldsByCollection = new Map<string, CollectionFieldRow[]>();
++  for (const row of fieldRows) {
++    const list = fieldsByCollection.get(row.collectionId);
++    if (list) list.push(row);
++    else fieldsByCollection.set(row.collectionId, [row]);
++  }
++
++  // Which collections need a field-sorted query: a non-manual sort over a
++  // real field (UUID — `field_id` is a uuid column) with more items than fit
++  // in the first page. Everything else is covered by the window query.
++  const serverSorted = collectionRows.filter((row) => {
++    const sorting = row.sorting;
++    return (
++      sorting !== null &&
++      sorting.direction !== "manual" &&
++      isUuid(sorting.field) &&
++      (totalByCollection.get(row.id) ?? 0) > COLLECTION_PRELOAD_LIMIT
++    );
++  });
++  const serverSortedIds = new Set(serverSorted.map((row) => row.id));
++  const windowedIds = collectionIds.filter((id) => !serverSortedIds.has(id));
++
++  const [windowedRows, ...sortedResults] = await Promise.all([
++    loadTopItemsWindowed(windowedIds),
++    ...serverSorted.map((row) => {
++      const sorting = row.sorting as CollectionSorting;
++      const sortField = fieldsByCollection
++        .get(row.id)
++        ?.find((field) => field.id === sorting.field);
++      return loadTopItemsSorted(
++        row.id,
++        sorting.field,
++        sorting.direction === "desc" ? "desc" : "asc",
++        sortField?.type,
++      );
++    }),
++  ]);
++
++  const itemRowsByCollection = new Map<string, CollectionItemRow[]>();
++  for (const row of windowedRows) {
++    const list = itemRowsByCollection.get(row.collectionId);
++    if (list) list.push(row);
++    else itemRowsByCollection.set(row.collectionId, [row]);
++  }
++  // Window rows arrive unordered across partitions — order each collection.
++  for (const list of itemRowsByCollection.values()) list.sort(compareManual);
++  serverSorted.forEach((row, index) => {
++    itemRowsByCollection.set(row.id, sortedResults[index]);
++  });
++
++  // 3 ── values for every selected item
++  const itemIds = [...itemRowsByCollection.values()].flatMap((rows) =>
++    rows.map((row) => row.id),
++  );
++  const valueRows = (
++    await Promise.all(
++      chunk(itemIds, ID_CHUNK_SIZE).map((ids) =>
++        db
++          .select({
++            itemId: collectionItemValue.itemId,
++            fieldId: collectionItemValue.fieldId,
++            value: collectionItemValue.value,
++          })
++          .from(collectionItemValue)
++          .where(
++            and(
++              inArray(collectionItemValue.itemId, ids),
++              eq(collectionItemValue.isPublished, false),
++              isNull(collectionItemValue.deletedAt),
++            ),
++          ),
++      ),
++    )
++  ).flat();
++  const valuesByItem = foldItemValues(valueRows);
++
++  // Assemble
++  const fields: Record<string, CollectionField[]> = {};
++  const items: Record<string, CollectionItemWithValues[]> = {};
++  const itemsTotalCount: Record<string, number> = {};
++  const lastItemsQuery: CollectionsBootstrapData["lastItemsQuery"] = {};
++
++  for (const row of collectionRows) {
++    const total = totalByCollection.get(row.id) ?? 0;
++    fields[row.id] = (fieldsByCollection.get(row.id) ?? []).map(
++      collectionFieldFromRow,
++    );
++
++    let collectionItems = (itemRowsByCollection.get(row.id) ?? []).map((item) =>
++      collectionItemFromRow(item, valuesByItem.get(item.id) ?? {}),
++    );
++    // Fully-loaded collection sorted by a field value: sort here, exactly as
++    // the client store did after its batch preload.
++    if (
++      row.sorting &&
++      row.sorting.direction !== "manual" &&
++      !serverSortedIds.has(row.id)
++    ) {
++      collectionItems = sortItemsByValue(collectionItems, row.sorting);
++    }
++
++    items[row.id] = collectionItems;
++    itemsTotalCount[row.id] = total;
++    lastItemsQuery[row.id] = {
++      page: 1,
++      limit: COLLECTION_PRELOAD_LIMIT,
++      ...getSortParams(row.sorting),
++    };
++  }
++
++  const collections = collectionRows.map((row) =>
++    collectionFromRow(row, {
++      draftItemsCount: totalByCollection.get(row.id) ?? 0,
++      hasPublishedVersion: publishedIds.has(row.id),
++    }),
++  );
++
++  return { collections, fields, items, itemsTotalCount, lastItemsQuery };
++}
+diff --git a/src/lib/editor/bootstrap/mappers.ts b/src/lib/editor/bootstrap/mappers.ts
+new file mode 100644
+index 0000000..e906da4
+--- /dev/null
++++ b/src/lib/editor/bootstrap/mappers.ts
+@@ -0,0 +1,167 @@
++// path: src/lib/editor/bootstrap/mappers.ts
++
++/**
++ * Pure, isomorphic row → domain mappers for the assets and collections
++ * bootstrap sections. No I/O, no `server-only`, so they are unit-testable
++ * and safe to import anywhere.
++ *
++ * Why they exist: the Drizzle rows are camelCase with `Date` timestamps and
++ * nullable columns, while the editor's `Asset` / `AssetFolder` / `Collection*`
++ * domain types are snake_case with ISO-string timestamps and a few
++ * non-nullable fields that the database allows to be NULL (inline-SVG assets
++ * have no file size or mime type). All of that reconciliation lives here.
++ */
++
++import type {
++  Asset,
++  AssetFolder,
++  Collection,
++  CollectionField,
++  CollectionItemWithValues,
++} from "@/types/funnel";
++import type {
++  AssetFolderRow,
++  AssetRow,
++} from "@/drizzle/schemas/assets-schema";
++import type {
++  CollectionFieldRow,
++  CollectionItemRow,
++  CollectionRow,
++} from "@/drizzle/schemas/collections-schema";
++
++// Columns are `timestamp ... DEFAULT now()` and therefore nullable in the
++// schema; the domain types require a string. Epoch keeps the value a valid
++// ISO date instead of leaking `null`/"" into date formatting code.
++const EPOCH_ISO = new Date(0).toISOString();
++
++function iso(value: Date | null | undefined): string {
++  return value ? value.toISOString() : EPOCH_ISO;
++}
++
++function isoOrNull(value: Date | null | undefined): string | null {
++  return value ? value.toISOString() : null;
++}
++
++// ─── Assets ─────────────────────────────────────────────────────────────────
++
++export function assetFromRow(row: AssetRow): Asset {
++  // Inline-SVG icon assets have `content` and no file; give them the mime
++  // type the rest of the editor expects instead of a generic fallback.
++  const mimeType =
++    row.mimeType ?? (row.content ? "image/svg+xml" : "application/octet-stream");
++
++  return {
++    id: row.id,
++    filename: row.filename,
++    storage_path: row.storagePath,
++    public_url: row.publicUrl,
++    file_size: row.fileSize ?? 0,
++    mime_type: mimeType,
++    width: row.width,
++    height: row.height,
++    source: row.source,
++    asset_folder_id: row.assetFolderId,
++    content: row.content,
++    content_hash: row.contentHash,
++    is_published: row.isPublished,
++    created_at: iso(row.createdAt),
++    updated_at: iso(row.updatedAt),
++    deleted_at: isoOrNull(row.deletedAt),
++  };
++}
++
++export function assetFolderFromRow(row: AssetFolderRow): AssetFolder {
++  return {
++    id: row.id,
++    asset_folder_id: row.assetFolderId,
++    name: row.name,
++    depth: row.depth,
++    order: row.order,
++    is_published: row.isPublished,
++    created_at: iso(row.createdAt),
++    updated_at: iso(row.updatedAt),
++    deleted_at: isoOrNull(row.deletedAt),
++  };
++}
++
++// ─── Collections ────────────────────────────────────────────────────────────
++
++export function collectionFromRow(
++  row: CollectionRow,
++  extras: { draftItemsCount: number; hasPublishedVersion: boolean },
++): Collection {
++  return {
++    id: row.id,
++    name: row.name,
++    uuid: row.uuid,
++    created_at: iso(row.createdAt),
++    updated_at: iso(row.updatedAt),
++    deleted_at: isoOrNull(row.deletedAt),
++    sorting: row.sorting ?? null,
++    order: row.order,
++    is_published: row.isPublished,
++    draft_items_count: extras.draftItemsCount,
++    has_published_version: extras.hasPublishedVersion,
++  };
++}
++
++export function collectionFieldFromRow(row: CollectionFieldRow): CollectionField {
++  return {
++    id: row.id,
++    name: row.name,
++    key: row.key,
++    type: row.type,
++    default: row.defaultValue,
++    fillable: row.fillable,
++    order: row.order,
++    collection_id: row.collectionId,
++    reference_collection_id: row.referenceCollectionId,
++    created_at: iso(row.createdAt),
++    updated_at: iso(row.updatedAt),
++    deleted_at: isoOrNull(row.deletedAt),
++    hidden: row.hidden,
++    is_computed: row.isComputed,
++    data: row.data ?? {},
++    is_published: row.isPublished,
++  };
++}
++
++export function collectionItemFromRow(
++  row: CollectionItemRow,
++  values: Record<string, string>,
++): CollectionItemWithValues {
++  return {
++    id: row.id,
++    collection_id: row.collectionId,
++    created_at: iso(row.createdAt),
++    updated_at: iso(row.updatedAt),
++    deleted_at: isoOrNull(row.deletedAt),
++    manual_order: row.manualOrder,
++    is_published: row.isPublished,
++    is_publishable: row.isPublishable,
++    content_hash: row.contentHash,
++    values,
++  };
++}
++
++/**
++ * Folds EAV value rows into the `field_id → value` map the editor reads.
++ * NULL values are dropped (the domain type is `Record<string, string>` and an
++ * absent key already means "no value"). Rows are expected to be draft + live
++ * only; the partial unique index guarantees one row per (item, field).
++ */
++export function foldItemValues(
++  rows: ReadonlyArray<{ itemId: string; fieldId: string; value: string | null }>,
++): Map<string, Record<string, string>> {
++  const byItem = new Map<string, Record<string, string>>();
++  for (const { itemId, fieldId, value } of rows) {
++    if (value === null) continue;
++    let values = byItem.get(itemId);
++    if (!values) {
++      values = {};
++      byItem.set(itemId, values);
++    }
++    values[fieldId] = value;
++  }
++  return byItem;
++}
+diff --git a/src/lib/editor/bootstrap/types.ts b/src/lib/editor/bootstrap/types.ts
+new file mode 100644
+index 0000000..6593182
+--- /dev/null
++++ b/src/lib/editor/bootstrap/types.ts
+@@ -0,0 +1,62 @@
++// path: src/lib/editor/bootstrap/types.ts
++
++import type {
++  Asset,
++  AssetFolder,
++  Collection,
++  CollectionField,
++  CollectionItemWithValues,
++} from "@/types/funnel";
++
++/**
++ * Wire types for the editor bootstrap payload (server → client).
++ *
++ * Everything here is plain JSON: timestamps are ISO strings, nothing is a
++ * Drizzle row, and every shape is already the domain type the Zustand stores
++ * speak. Row → domain mapping happens on the SERVER (see mappers.ts), so rows
++ * never cross the RSC boundary for the new sections and the stores can
++ * hydrate with zero transformation.
++ */
++
++/**
++ * An optional section can fail without taking the editor down. Page editing
++ * must not die because a CMS or media-library query broke, so these sections
++ * degrade to `{ status: "error" }` (logged server-side with full detail) and
++ * the client surfaces a notice. The message is deliberately generic — no
++ * internal error text reaches the browser.
++ */
++export type BootstrapSection<T> =
++  | { status: "ready"; data: T }
++  | { status: "error"; error: string };
++
++export interface AssetsBootstrapData {
++  /** Every live draft folder in the organization's library. */
++  folders: AssetFolder[];
++  /**
++   * A SUBSET of the library: assets referenced by this funnel's pages,
++   * components, styles and CMS values, plus the first page of the library
++   * root. Anything else is fetched on demand — the store must not assume
++   * completeness.
++   */
++  assets: Asset[];
++}
++
++export interface CollectionItemsQuery {
++  page: number;
++  limit: number;
++  sortBy?: string;
++  sortOrder?: string;
++}
++
++export interface CollectionsBootstrapData {
++  /** Ordered like `sortCollectionsByOrder` (order asc, then name). */
++  collections: Collection[];
++  /** Keyed by collection id. Every collection has an entry (possibly `[]`). */
++  fields: Record<string, CollectionField[]>;
++  /** Keyed by collection id: the first page only. */
++  items: Record<string, CollectionItemWithValues[]>;
++  /** Keyed by collection id: total live draft items (for pagination). */
++  itemsTotalCount: Record<string, number>;
++  /** Keyed by collection id: the query that produced `items`. */
++  lastItemsQuery: Record<string, CollectionItemsQuery>;
++}
+diff --git a/src/lib/editor/resolve-editor-bootstrap.ts b/src/lib/editor/resolve-editor-bootstrap.ts
+index 6127528..a3084d4 100644
+--- a/src/lib/editor/resolve-editor-bootstrap.ts
++++ b/src/lib/editor/resolve-editor-bootstrap.ts
+@@ -12,21 +12,64 @@ import {
+   type CampaignRow,
+ } from "@/lib/auth/require-campaign-permission";
+ import { logger } from "@/lib/logger";
++import type {
++  Asset,
++  AssetFolder,
++  Component,
++  LayerStyle,
++  Page,
++} from "@/types/funnel";
++import { pagesFromRows } from "@/lib/editor/page-from-row";
++import {
++  componentsFromRows,
++  layerStylesFromRows,
++} from "@/lib/editor/design-system-from-row";
++import { collectReferencedAssetIds } from "@/lib/editor/bootstrap/collect-asset-ids";
++import { runSection } from "@/lib/editor/bootstrap/instrument";
++import {
++  loadAssetFoldersAndLibraryPage,
++  loadAssetsByIds,
++  mergeAssets,
++} from "@/lib/editor/bootstrap/load-assets";
++import { loadCollectionsBootstrap } from "@/lib/editor/bootstrap/load-collections";
++import type {
++  AssetsBootstrapData,
++  BootstrapSection,
++  CollectionsBootstrapData,
++} from "@/lib/editor/bootstrap/types";
+ 
+ export type FunnelRow = InferSelectModel<typeof funnel>;
+ export type PageRow = InferSelectModel<typeof page>;
+ export type ComponentRow = InferSelectModel<typeof component>;
+ export type LayerStyleRow = InferSelectModel<typeof layerStyle>;
+ 
++/**
++ * The server → client editor payload. Everything below `funnel` is already
++ * mapped to the domain types the Zustand stores speak (plain JSON-safe data,
++ * no Drizzle rows), so the client hydrates with zero transformation.
++ */
+ export interface EditorBootstrapContext {
+   campaign: CampaignRow;
+   funnel: FunnelRow;
+   /** Ordered by `page.order` ascending — the funnel's step sequence. */
+-  pages: PageRow[];
++  pages: Page[];
+   /** Org-wide reusable components — see design-system-schema.ts's TENANCY note. */
+-  components: ComponentRow[];
++  components: Component[];
+   /** Org-wide reusable style chips — same scope as `components`. */
+-  layerStyles: LayerStyleRow[];
++  layerStyles: LayerStyle[];
++  /**
++   * Media library (organization-scoped): all folders + a bounded asset
++   * subset. OPTIONAL section — a failure degrades to `status: "error"`
++   * instead of failing the editor.
++   */
++  assets: BootstrapSection<AssetsBootstrapData>;
++  /**
++   * CMS collections (funnel-scoped): collections, fields, and the first page
++   * of items per collection. OPTIONAL section, same degradation rule.
++   */
++  collections: BootstrapSection<CollectionsBootstrapData>;
++  /** ISO timestamp of when the server assembled this payload. */
++  generatedAt: string;
+ }
+ 
+ /**
+@@ -49,17 +92,28 @@ export interface EditorBootstrapContext {
+  * the persistent-builder pattern is designed for, just achieved server-side
+  * instead of via a persisted client store.
+  *
+- * SCOPE (this pass): loads what the editor's canvas/tree actually needs —
+- * a funnel's pages (ordered), and the organization's reusable
+- * components/layer-styles. Deliberately excludes:
+- *   - `funnelVersions` — publish snapshots, not editable draft data; no
+- *     canvas mode reads these.
+- *   - `questionCategories`/`audiences` — CMS/Collections and the campaign
+- *     audience system are out of scope for the editor itself.
+- *   - Ycode's folders/settings/collections/locales/assets/asset-folders/
+- *     fonts/mapbox/google-maps entries — folders were rejected in the
+- *     schema-design pass (see funnel-content-schema.ts's decision note on
+- *     `pages.order`); the rest have no Thawkit backing yet.
++ * SCOPE: pages (ordered), the organization's reusable components/layer
++ * styles, the media library (assets + folders) and the funnel's CMS
++ * collections. Deliberately excludes `funnelVersions` (publish snapshots,
++ * not editable draft data) and Ycode's settings/locales/fonts/maps entries,
++ * which have no ThawKit backing yet.
++ *
++ * TWO TIERS:
++ *   - CRITICAL (pages, components, layerStyles): all-or-nothing, as before.
++ *   - OPTIONAL (assets, collections): isolated by `runSection` — a failure
++ *     is logged against the section and delivered as `status: "error"`, so
++ *     page editing never dies because a CMS or media query broke.
++ *
++ * LOAD ORDER: wave 1 runs the critical reads, the collections loader and the
++ * independent half of the assets loader (folders + first library page) in
++ * parallel. Wave 2 loads the assets the content REFERENCES — their ids can
++ * only be known once pages, components, styles and CMS values are in hand.
++ * Every query is tenant-scoped from `campaign` / `funnelRow` (validated
++ * above), never from client input.
++ *
++ * MAPPING happens here, on the server: rows never cross the RSC boundary,
++ * and the client payload carries only the fields the editor's domain types
++ * define.
+  *
+  * DIAGNOSTIC PATTERN: uses `Promise.allSettled` + per-task failure
+  * logging, then re-throws if anything failed — ported directly from
+@@ -118,6 +172,17 @@ export const resolveEditorBootstrap = cache(
+       }),
+     } as const;
+ 
++    // OPTIONAL sections start now so they overlap the critical reads. They
++    // never reject (runSection converts failures), so there is no unhandled
++    // rejection even if the critical tier throws first.
++    const logContext = { campaignId, funnelId: funnelRow.id };
++    const collectionsPromise = runSection("collections", logContext, () =>
++      loadCollectionsBootstrap(funnelRow.id),
++    );
++    const assetsBasePromise = runSection("assets", logContext, () =>
++      loadAssetFoldersAndLibraryPage(campaign.organizationId),
++    );
++
+     const taskKeys = Object.keys(tasks) as (keyof typeof tasks)[];
+     const settled = await Promise.allSettled(Object.values(tasks));
+ 
+@@ -150,12 +215,69 @@ export const resolveEditorBootstrap = cache(
+       (result) => (result as PromiseFulfilledResult<unknown>).value,
+     ) as [PageRow[], ComponentRow[], LayerStyleRow[]];
+ 
++    const pages = pagesFromRows(pageRows);
++    const components = componentsFromRows(componentRows);
++    const layerStyles = layerStylesFromRows(layerStyleRows);
++
++    const [collections, assetsBase] = await Promise.all([
++      collectionsPromise,
++      assetsBasePromise,
++    ]);
++
++    // Wave 2 — assets referenced by the content just loaded.
++    const assets = await resolveAssetsSection(
++      assetsBase,
++      campaign.organizationId,
++      logContext,
++      {
++        json: [pages, components, layerStyles],
++        fields: collections.status === "ready" ? collections.data.fields : {},
++        items: collections.status === "ready" ? collections.data.items : {},
++      },
++    );
++
+     return {
+       campaign,
+       funnel: funnelRow,
+-      pages: pageRows,
+-      components: componentRows,
+-      layerStyles: layerStyleRows,
++      pages,
++      components,
++      layerStyles,
++      assets,
++      collections,
++      generatedAt: new Date().toISOString(),
+     };
+   },
+ );
++
++/**
++ * Merges the base assets section (folders + library page) with the assets the
++ * content references. If either half fails the whole section is `error` —
++ * a half-populated library would silently render missing images.
++ */
++async function resolveAssetsSection(
++  base: BootstrapSection<{ folders: AssetFolder[]; assets: Asset[] }>,
++  organizationId: string,
++  logContext: Record<string, unknown>,
++  sources: Parameters<typeof collectReferencedAssetIds>[0],
++): Promise<BootstrapSection<AssetsBootstrapData>> {
++  if (base.status === "error") return base;
++
++  const referencedIds = collectReferencedAssetIds(sources);
++  const referenced = await runSection(
++    "assets:referenced",
++    { ...logContext, referencedCount: referencedIds.length },
++    () => loadAssetsByIds(organizationId, referencedIds),
++  );
++  if (referenced.status === "error") {
++    return { status: "error", error: "Failed to load assets." };
++  }
++
++  return {
++    status: "ready",
++    data: {
++      folders: base.data.folders,
++      // Referenced first: they are the ones the canvas needs to paint.
++      assets: mergeAssets(referenced.data, base.data.assets),
++    },
++  };
++}
+diff --git a/src/stores/editor/hydrate-editor-stores.ts b/src/stores/editor/hydrate-editor-stores.ts
+new file mode 100644
+index 0000000..69e6ac2
+--- /dev/null
++++ b/src/stores/editor/hydrate-editor-stores.ts
+@@ -0,0 +1,76 @@
++// path: src/stores/editor/hydrate-editor-stores.ts
++
++import type { EditorBootstrapContext } from "@/lib/editor/resolve-editor-bootstrap";
++import { useAssetsStore } from "./useAssetsStore";
++import { useCollectionLayerStore } from "./useCollectionLayerStore";
++import { useCollectionsStore } from "./useCollectionsStore";
++import { useComponentsStore } from "./useComponentsStore";
++import {
++  useEditorBootstrapStore,
++  type BootstrapSectionName,
++} from "./useEditorBootstrapStore";
++import { useEditorStore } from "./useEditorStore";
++import { useLayerStylesStore } from "./useLayerStylesStore";
++import { usePagesStore } from "./usePagesStore";
++
++/**
++ * The single entry point that turns a server bootstrap payload into editor
++ * state. Synchronous and network-free: the payload is already in the domain
++ * shape the stores speak (mapping happened on the server).
++ *
++ * Call it from a LAYOUT effect, never during render — it writes to module
++ * singletons, which on the server are shared across requests.
++ *
++ * Order matters and is preserved from the previous inline effect:
++ *   1. reset everything bound to the previous campaign (the editor store's
++ *      reset also clears the pages store and restores the sidebar tab),
++ *   2. hydrate critical data (pages → styles → components),
++ *   3. hydrate optional sections (assets, collections),
++ *   4. mark this campaign as hydrated — the UI gates on this last step.
++ *
++ * Idempotent: running it twice for the same payload (React StrictMode's
++ * dev-only double effect) lands in the same state.
++ */
++export function hydrateEditorStores(bootstrap: EditorBootstrapContext): void {
++  // 1 ── reset
++  useEditorBootstrapStore.getState().reset();
++  useEditorStore.getState().resetForNewCampaign();
++  useAssetsStore.getState().reset();
++  useCollectionsStore.getState().reset();
++  // Cached layer-level CMS data derived from the previous campaign's collections.
++  useCollectionLayerStore.getState().clearAllLayerData();
++
++  // 2 ── critical
++  usePagesStore.getState().hydrateFromBootstrap(bootstrap.pages);
++  // Styles and components hydrate before any retained canvas / layer-menu
++  // code resolves references; the components store also drops the previous
++  // campaign's drafts and pending saves.
++  useLayerStylesStore.getState().hydrateFromBootstrap(bootstrap.layerStyles);
++  useComponentsStore.getState().hydrateFromBootstrap(bootstrap.components);
++
++  // 3 ── optional sections (a failed section is recorded, never thrown)
++  const sectionErrors: Partial<Record<BootstrapSectionName, string>> = {};
++
++  if (bootstrap.assets.status === "ready") {
++    useAssetsStore.getState().hydrateFromBootstrap(bootstrap.assets.data);
++  } else {
++    sectionErrors.assets = bootstrap.assets.error;
++    useAssetsStore.getState().setLoadError(bootstrap.assets.error);
++  }
++
++  if (bootstrap.collections.status === "ready") {
++    useCollectionsStore
++      .getState()
++      .hydrateFromBootstrap(bootstrap.collections.data);
++  } else {
++    sectionErrors.collections = bootstrap.collections.error;
++    useCollectionsStore.getState().setLoadError(bootstrap.collections.error);
++  }
++
++  // 4 ── mark ready
++  useEditorBootstrapStore.getState().markReady({
++    campaignId: bootstrap.campaign.id,
++    generatedAt: bootstrap.generatedAt,
++    sectionErrors,
++  });
++}
+diff --git a/src/stores/editor/useAssetsStore.ts b/src/stores/editor/useAssetsStore.ts
+index fff17fb..66599e7 100644
+--- a/src/stores/editor/useAssetsStore.ts
++++ b/src/stores/editor/useAssetsStore.ts
+@@ -49,6 +49,20 @@ interface AssetsActions {
+   fetchAssets: (params: FetchAssetsParams) => Promise<FetchAssetsResult>;
+   setAssets: (assets: Asset[]) => void;
+   setFolders: (folders: AssetFolder[]) => void;
++  /**
++   * Atomically seed the store from the server bootstrap (one store update,
++   * one subscriber notification). `assets` is a SUBSET of the library — the
++   * referenced assets plus the first library page — not the whole library.
++   */
++  hydrateFromBootstrap: (data: {
++    assets: Asset[];
++    folders: AssetFolder[];
++  }) => void;
++  /**
++   * The bootstrap's assets section failed. Marks the store loaded-with-error
++   * so nothing falls through to the legacy `/ycode/api` fetch paths.
++   */
++  setLoadError: (message: string) => void;
+   getAsset: (id: string) => Asset | null;
+   addAsset: (asset: Asset) => void;
+   addAssetsToCache: (assets: Asset[]) => void;
+@@ -95,6 +109,27 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
+     });
+   },
+ 
++  hydrateFromBootstrap: ({ assets, folders }) => {
++    const normalized = assets.map(normalizeAssetForEditor);
++    const assetsById: Record<string, Asset> = {};
++    normalized.forEach((asset) => {
++      assetsById[asset.id] = asset;
++    });
++
++    set({
++      assets: normalized,
++      assetsById,
++      folders,
++      isLoading: false,
++      isLoaded: true,
++      error: null,
++    });
++  },
++
++  setLoadError: (message: string) => {
++    set({ ...initialState, isLoaded: true, error: message });
++  },
++
+   /**
+    * Set asset folders directly (used during initial load)
+    */
+@@ -469,6 +504,9 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
+    * Reset store to initial state
+    */
+   reset: () => {
++    // The in-flight set is module-level, not store state — clear it too, or
++    // a fetch started for the previous campaign blocks the same id here.
++    pendingFetches.clear();
+     set(initialState);
+   },
+ }));
+diff --git a/src/stores/editor/useCollectionsStore.ts b/src/stores/editor/useCollectionsStore.ts
+index b0d674a..a118073 100644
+--- a/src/stores/editor/useCollectionsStore.ts
++++ b/src/stores/editor/useCollectionsStore.ts
+@@ -18,6 +18,7 @@ import type {
+   CreateCollectionFieldData,
+   UpdateCollectionFieldData,
+ } from "@/types/funnel";
++import type { CollectionsBootstrapData } from "@/lib/editor/bootstrap/types";
+ import { useAssetsStore } from "./useAssetsStore";
+ import { usePagesStore } from "./usePagesStore";
+ 
+@@ -57,6 +58,18 @@ interface CollectionsActions {
+   // Collections
+   loadCollections: () => Promise<void>;
+   preloadCollectionsAndItems: (collections: Collection[]) => Promise<void>;
++  /**
++   * Atomically seed the store from the server bootstrap — collections,
++   * fields, and the first page of items per collection — in ONE update with
++   * no network. Replaces the `loadCollections` → `loadFields(null)` →
++   * `preloadCollectionsAndItems` client waterfall for the editor's initial
++   * load (those legacy actions remain for on-demand refreshes).
++   */
++  hydrateFromBootstrap: (data: CollectionsBootstrapData) => void;
++  /** The bootstrap's collections section failed — surface it, show nothing stale. */
++  setLoadError: (message: string) => void;
++  /** Back to the empty state (campaign switch). */
++  reset: () => void;
+   createCollection: (data: CreateCollectionData) => Promise<Collection>;
+   createSampleCollection: (sampleId: string) => Promise<Collection>;
+   updateCollection: (id: string, data: UpdateCollectionData) => Promise<void>;
+@@ -149,8 +162,7 @@ interface CollectionsActions {
+ 
+ type CollectionsStore = CollectionsState & CollectionsActions;
+ 
+-export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
+-  // Initial state
++const emptyState: CollectionsState = {
+   collections: [],
+   fields: {},
+   items: {},
+@@ -160,8 +172,32 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
+   crossCollectionSlugs: {},
+   isLoading: false,
+   error: null,
++};
++
++export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
++  // Initial state
++  ...emptyState,
+ 
+   // Collections
++  hydrateFromBootstrap: (data) => {
++    set({
++      ...emptyState,
++      collections: sortCollectionsByOrder(data.collections),
++      fields: data.fields,
++      items: data.items,
++      itemsTotalCount: data.itemsTotalCount,
++      lastItemsQuery: data.lastItemsQuery,
++    });
++  },
++
++  setLoadError: (message) => {
++    set({ ...emptyState, error: message });
++  },
++
++  reset: () => {
++    set(emptyState);
++  },
++
+   loadCollections: async () => {
+     set({ isLoading: true, error: null });
+ 
+diff --git a/src/stores/editor/useEditorBootstrapStore.ts b/src/stores/editor/useEditorBootstrapStore.ts
+new file mode 100644
+index 0000000..83f4174
+--- /dev/null
++++ b/src/stores/editor/useEditorBootstrapStore.ts
+@@ -0,0 +1,59 @@
++// path: src/stores/editor/useEditorBootstrapStore.ts
++
++import { create } from "zustand";
++
++/**
++ * Tracks WHICH campaign's server bootstrap the editor stores currently hold.
++ *
++ * Why this exists: the editor stores are module singletons, so "are the
++ * stores populated?" is not enough — they may hold the PREVIOUS campaign's
++ * data during a client-side campaign switch. The editor gates its first
++ * render on `isHydratedFor(campaignId)`, which is true only after
++ * `hydrateEditorStores` has run for exactly that campaign. It also records
++ * which optional sections degraded so the UI can say so.
++ *
++ * SSR note: nothing ever writes this store on the server (hydration runs in
++ * a layout effect, which does not run during SSR), so the server always sees
++ * `idle` and renders the neutral skeleton — no per-request state can leak
++ * through this module-level singleton.
++ */
++
++export type BootstrapSectionName = "assets" | "collections";
++
++interface EditorBootstrapState {
++  status: "idle" | "ready";
++  campaignId: string | null;
++  generatedAt: string | null;
++  /** Optional sections that failed to load, with the generic server message. */
++  sectionErrors: Partial<Record<BootstrapSectionName, string>>;
++}
++
++interface EditorBootstrapActions {
++  markReady: (params: {
++    campaignId: string;
++    generatedAt: string;
++    sectionErrors: Partial<Record<BootstrapSectionName, string>>;
++  }) => void;
++  reset: () => void;
++}
++
++const initialState: EditorBootstrapState = {
++  status: "idle",
++  campaignId: null,
++  generatedAt: null,
++  sectionErrors: {},
++};
++
++export const useEditorBootstrapStore = create<
++  EditorBootstrapState & EditorBootstrapActions
++>((set) => ({
++  ...initialState,
++  markReady: ({ campaignId, generatedAt, sectionErrors }) =>
++    set({ status: "ready", campaignId, generatedAt, sectionErrors }),
++  reset: () => set(initialState),
++}));
++
++/** Selector: have the stores been hydrated for exactly this campaign? */
++export const selectIsHydratedFor =
++  (campaignId: string) => (state: EditorBootstrapState) =>
++    state.status === "ready" && state.campaignId === campaignId;
