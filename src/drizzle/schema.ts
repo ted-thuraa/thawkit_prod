@@ -26,4 +26,5 @@ export * from "./schemas/campaigns-schema";
 export * from "./schemas/funnel-content-schema";
 export * from "./schemas/design-system-schema";
 export * from "./schemas/assets-schema";
+export * from "./schemas/collections-schema";
 export * from "./schemas/runtime-schema";

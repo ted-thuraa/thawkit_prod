@@ -110,8 +110,8 @@ import RichTextImagePopover from "./RichTextImagePopover";
 import RichTextComponentPicker from "./RichTextComponentPicker";
 import RichTextComponentBlock from "./RichTextComponentBlock";
 import RichTextImageBlock from "./RichTextImageBlock";
-import RichTextHtmlEmbedBlock from "./RichTextHtmlEmbedBlock";
-import RichTextHtmlEmbedDialog from "./RichTextHtmlEmbedDialog";
+// import RichTextHtmlEmbedBlock from "./RichTextHtmlEmbedBlock";
+// import RichTextHtmlEmbedDialog from "./RichTextHtmlEmbedDialog";
 import type {
   CollectionFieldType,
   Layer,
@@ -374,15 +374,15 @@ const RichTextHtmlEmbedWithNodeView = RichTextHtmlEmbed.extend({
           }
         };
 
-        root.render(
-          <RichTextHtmlEmbedBlock
-            code={code}
-            isEditable={editor.isEditable}
-            isSelected={isSelected}
-            onEditClick={handleEditClick}
-            onDelete={handleDelete}
-          />,
-        );
+        // root.render(
+        //   <RichTextHtmlEmbedBlock
+        //     code={code}
+        //     isEditable={editor.isEditable}
+        //     isSelected={isSelected}
+        //     onEditClick={handleEditClick}
+        //     onDelete={handleDelete}
+        //   />,
+        // );
       };
 
       queueMicrotask(renderBlock);
@@ -2010,7 +2010,7 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(
           disabled={disabled}
         />
 
-        <RichTextHtmlEmbedDialog
+        {/* <RichTextHtmlEmbedDialog
           open={htmlEmbedDialogOpen}
           onOpenChange={setHtmlEmbedDialogOpen}
           code={htmlEmbedDialogCode}
@@ -2029,7 +2029,7 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(
             }
             htmlEmbedDialogPosRef.current = null;
           }}
-        />
+        /> */}
       </div>
     );
   },

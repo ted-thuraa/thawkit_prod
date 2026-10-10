@@ -180,6 +180,7 @@ export const relations = defineRelations(schema, (r) => ({
       optional: false,
     }),
     pages: r.many.page(),
+    collections: r.many.collection(),
     funnelVersions: r.many.funnelVersions(),
     //questionCategories: r.many.questionCategories(),
   },
@@ -197,6 +198,51 @@ export const relations = defineRelations(schema, (r) => ({
     funnel: r.one.funnel({
       from: r.page.funnelId,
       to: r.funnel.id,
+    }),
+  },
+
+  // ── Collection (CMS) ──────────────────────────────────────────────────────
+  // Scoped to a funnel — see the ownership decision in collections-schema.ts.
+  // Child links go through the composite (id, is_published) key so a draft
+  // row only ever joins draft children and a published row only published.
+  collection: {
+    funnel: r.one.funnel({
+      from: r.collection.funnelId,
+      to: r.funnel.id,
+      optional: false,
+    }),
+    fields: r.many.collectionField(),
+    items: r.many.collectionItem(),
+  },
+
+  collectionField: {
+    collection: r.one.collection({
+      from: [r.collectionField.collectionId, r.collectionField.isPublished],
+      to: [r.collection.id, r.collection.isPublished],
+      optional: false,
+    }),
+    values: r.many.collectionItemValue(),
+  },
+
+  collectionItem: {
+    collection: r.one.collection({
+      from: [r.collectionItem.collectionId, r.collectionItem.isPublished],
+      to: [r.collection.id, r.collection.isPublished],
+      optional: false,
+    }),
+    values: r.many.collectionItemValue(),
+  },
+
+  collectionItemValue: {
+    item: r.one.collectionItem({
+      from: [r.collectionItemValue.itemId, r.collectionItemValue.isPublished],
+      to: [r.collectionItem.id, r.collectionItem.isPublished],
+      optional: false,
+    }),
+    field: r.one.collectionField({
+      from: [r.collectionItemValue.fieldId, r.collectionItemValue.isPublished],
+      to: [r.collectionField.id, r.collectionField.isPublished],
+      optional: false,
     }),
   },
 
