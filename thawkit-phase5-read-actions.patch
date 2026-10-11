@@ -1,0 +1,2166 @@
+diff --git a/src/actions/editor/editor-read-actions.ts b/src/actions/editor/editor-read-actions.ts
+new file mode 100644
+index 0000000..7252025
+--- /dev/null
++++ b/src/actions/editor/editor-read-actions.ts
+@@ -0,0 +1,212 @@
++// path: src/actions/editor/editor-read-actions.ts
++
++"use server";
++
++import { loadCollectionsBootstrap } from "@/lib/editor/bootstrap/load-collections";
++import { toErrorResult } from "@/lib/editor/read/action-result";
++import {
++  queryAssetsByIds,
++  queryAssetsPage,
++  loadAssetFolders,
++} from "@/lib/editor/read/asset-queries";
++import {
++  queryCollectionFields,
++  queryCollectionItemById,
++  queryCollectionItemsPage,
++  queryItemSlugs,
++  queryReferencedItemsBatch,
++} from "@/lib/editor/read/collection-queries";
++import { requireCampaignScope } from "@/lib/editor/read/guards";
++import {
++  assetIdsSchema,
++  collectionIdsSchema,
++  collectionItemsOptionsSchema,
++  fetchAssetsParamsSchema,
++  idSchema,
++  itemIdsSchema,
++  referencedLimitSchema,
++  searchTermSchema,
++  type CollectionItemsOptionsInput,
++  type FetchAssetsParamsInput,
++} from "@/lib/editor/read/schemas";
++import type {
++  ActionResult,
++  AssetsPage,
++  CollectionItemsPage,
++} from "@/lib/editor/read/types";
++import type { CollectionsBootstrapData } from "@/lib/editor/bootstrap/types";
++import type {
++  Asset,
++  AssetFolder,
++  CollectionField,
++  CollectionItemWithValues,
++} from "@/types/funnel";
++
++/**
++ * Typed Server Action READS for the editor — the on-demand counterpart to
++ * the initial bootstrap (resolve-editor-bootstrap.ts). They replace the
++ * `/ycode/api/*` GET endpoints the Ycode-ported stores still call, none of
++ * which exist in this project.
++ *
++ * EVERY action, in this order:
++ *   1. shape-checks `campaignId`,
++ *   2. authenticates + authorizes the caller for that campaign and derives
++ *      the tenant scope from it (organization for assets, funnel for
++ *      collections) — never from client-supplied tenant ids,
++ *   3. validates the rest of the payload with zod (an action is a public
++ *      endpoint; TypeScript parameter types are not enforced at runtime),
++ *   4. runs a query that re-proves any client-supplied collection / item id
++ *      belongs to that scope.
++ * Failures come back as `ActionResult` — known app errors keep their
++ * message, everything else is logged and replaced by a generic one.
++ *
++ * Reads only. Mutations (create/update/delete/reorder) and the publish
++ * pipeline are deliberately not here.
++ */
++
++/** Steps 1–2. Not exported: a "use server" module may only export async actions. */
++async function authorize(campaignId: string) {
++  return requireCampaignScope(idSchema.parse(campaignId));
++}
++
++// ─── Assets ─────────────────────────────────────────────────────────────────
++
++/** One page of the media library: folder-scoped, searchable. */
++export async function fetchAssetsPageAction(
++  campaignId: string,
++  params: FetchAssetsParamsInput,
++): Promise<ActionResult<AssetsPage>> {
++  try {
++    const scope = await authorize(campaignId);
++    const input = fetchAssetsParamsSchema.parse(params);
++    return { success: true, data: await queryAssetsPage(scope.organizationId, input) };
++  } catch (error) {
++    return toErrorResult(error, "Failed to load assets.");
++  }
++}
++
++/** Batch lookup by id (the `getAsset` cache-miss path). Unknown ids are omitted. */
++export async function getAssetsByIdsAction(
++  campaignId: string,
++  ids: string[],
++): Promise<ActionResult<Asset[]>> {
++  try {
++    const scope = await authorize(campaignId);
++    const input = assetIdsSchema.parse(ids);
++    return { success: true, data: await queryAssetsByIds(scope.organizationId, input) };
++  } catch (error) {
++    return toErrorResult(error, "Failed to load assets.");
++  }
++}
++
++export async function getAssetFoldersAction(
++  campaignId: string,
++): Promise<ActionResult<AssetFolder[]>> {
++  try {
++    const scope = await authorize(campaignId);
++    return { success: true, data: await loadAssetFolders(scope.organizationId) };
++  } catch (error) {
++    return toErrorResult(error, "Failed to load asset folders.");
++  }
++}
++
++// ─── Collections ────────────────────────────────────────────────────────────
++
++/**
++ * Re-runs the whole collections bootstrap (collections, fields, first page of
++ * items) — the refresh path behind the store's `loadCollections`.
++ */
++export async function refreshCollectionsAction(
++  campaignId: string,
++): Promise<ActionResult<CollectionsBootstrapData>> {
++  try {
++    const scope = await authorize(campaignId);
++    return { success: true, data: await loadCollectionsBootstrap(scope.funnelId) };
++  } catch (error) {
++    return toErrorResult(error, "Failed to load collections.");
++  }
++}
++
++/** Fields of one collection, or of every collection in the funnel when `collectionId` is null. */
++export async function getCollectionFieldsAction(
++  campaignId: string,
++  collectionId: string | null,
++  search?: string,
++): Promise<ActionResult<CollectionField[]>> {
++  try {
++    const scope = await authorize(campaignId);
++    const id = collectionId === null ? null : idSchema.parse(collectionId);
++    const term = searchTermSchema.parse(search);
++    return { success: true, data: await queryCollectionFields(scope, id, term) };
++  } catch (error) {
++    return toErrorResult(error, "Failed to load fields.");
++  }
++}
++
++/** Paged, searched, filtered and sorted items of one collection. */
++export async function getCollectionItemsAction(
++  campaignId: string,
++  collectionId: string,
++  options: CollectionItemsOptionsInput,
++): Promise<ActionResult<CollectionItemsPage>> {
++  try {
++    const scope = await authorize(campaignId);
++    const id = idSchema.parse(collectionId);
++    const input = collectionItemsOptionsSchema.parse(options ?? {});
++    return { success: true, data: await queryCollectionItemsPage(scope, id, input) };
++  } catch (error) {
++    return toErrorResult(error, "Failed to load items.");
++  }
++}
++
++/** First `limit` items for many collections in one round trip (reference fields). */
++export async function getReferencedItemsBatchAction(
++  campaignId: string,
++  collectionIds: string[],
++  limit: number,
++): Promise<
++  ActionResult<{ items: Record<string, { items: CollectionItemWithValues[] }> }>
++> {
++  try {
++    const scope = await authorize(campaignId);
++    const ids = collectionIdsSchema.parse(collectionIds);
++    const max = referencedLimitSchema.parse(limit);
++    // `{ items: { [collectionId]: { items } } }` — the shape the layer store
++    // has always read from this call (`response.data.items`).
++    return {
++      success: true,
++      data: { items: await queryReferencedItemsBatch(scope, ids, max) },
++    };
++  } catch (error) {
++    return toErrorResult(error, "Failed to load referenced items.");
++  }
++}
++
++export async function getCollectionItemByIdAction(
++  campaignId: string,
++  collectionId: string,
++  itemId: string,
++): Promise<ActionResult<CollectionItemWithValues>> {
++  try {
++    const scope = await authorize(campaignId);
++    const cId = idSchema.parse(collectionId);
++    const iId = idSchema.parse(itemId);
++    return { success: true, data: await queryCollectionItemById(scope, cId, iId) };
++  } catch (error) {
++    return toErrorResult(error, "Failed to load item.");
++  }
++}
++
++/** `item id → slug` across the funnel's collections. */
++export async function getItemSlugsAction(
++  campaignId: string,
++  itemIds: string[],
++): Promise<ActionResult<{ slugs: Record<string, string> }>> {
++  try {
++    const scope = await authorize(campaignId);
++    const ids = itemIdsSchema.parse(itemIds);
++    return { success: true, data: { slugs: await queryItemSlugs(scope, ids) } };
++  } catch (error) {
++    return toErrorResult(error, "Failed to load item slugs.");
++  }
++}
+diff --git a/src/lib/editor/bootstrap/load-assets.ts b/src/lib/editor/bootstrap/load-assets.ts
+index d7f6642..c68f968 100644
+--- a/src/lib/editor/bootstrap/load-assets.ts
++++ b/src/lib/editor/bootstrap/load-assets.ts
+@@ -36,21 +36,32 @@ export interface AssetFoldersAndLibrary {
+   assets: Asset[];
+ }
+ 
++/** Every live draft folder of the organization's library, tree order. */
++export async function loadAssetFolders(
++  organizationId: string,
++): Promise<AssetFolder[]> {
++  const orgId = assertTenantId("organizationId", organizationId);
++
++  const rows = await db.query.assetFolder.findMany({
++    where: {
++      organizationId: orgId,
++      isPublished: false,
++      deletedAt: { isNull: true },
++    },
++    orderBy: { order: "asc", name: "asc", id: "asc" },
++  });
++
++  return rows.map(assetFolderFromRow);
++}
++
+ /** Independent of page content — safe to start before pages have loaded. */
+ export async function loadAssetFoldersAndLibraryPage(
+   organizationId: string,
+ ): Promise<AssetFoldersAndLibrary> {
+   const orgId = assertTenantId("organizationId", organizationId);
+ 
+-  const [folderRows, assetRows] = await Promise.all([
+-    db.query.assetFolder.findMany({
+-      where: {
+-        organizationId: orgId,
+-        isPublished: false,
+-        deletedAt: { isNull: true },
+-      },
+-      orderBy: { order: "asc", name: "asc", id: "asc" },
+-    }),
++  const [folders, assetRows] = await Promise.all([
++    loadAssetFolders(orgId),
+     db.query.asset.findMany({
+       where: {
+         organizationId: orgId,
+@@ -64,7 +75,7 @@ export async function loadAssetFoldersAndLibraryPage(
+   ]);
+ 
+   return {
+-    folders: folderRows.map(assetFolderFromRow),
++    folders,
+     assets: assetRows.map(assetFromRow),
+   };
+ }
+diff --git a/src/lib/editor/bootstrap/load-collections.ts b/src/lib/editor/bootstrap/load-collections.ts
+index 0f70040..7257d38 100644
+--- a/src/lib/editor/bootstrap/load-collections.ts
++++ b/src/lib/editor/bootstrap/load-collections.ts
+@@ -10,7 +10,6 @@ import {
+   getTableColumns,
+   inArray,
+   isNull,
+-  lte,
+   sql,
+ } from "drizzle-orm";
+ import { db } from "@/drizzle/db";
+@@ -22,6 +21,12 @@ import {
+   type CollectionItemRow,
+ } from "@/drizzle/schemas/collections-schema";
+ import { getSortParams } from "@/lib/collection-utils";
++import {
++  compareManual,
++  fieldSortValueExpr,
++  loadItemValues,
++  topItemsWindowed,
++} from "@/lib/editor/collection-sql";
+ import type {
+   CollectionField,
+   CollectionItemWithValues,
+@@ -33,7 +38,6 @@ import {
+   collectionFieldFromRow,
+   collectionFromRow,
+   collectionItemFromRow,
+-  foldItemValues,
+ } from "./mappers";
+ import type { CollectionsBootstrapData } from "./types";
+ 
+@@ -66,8 +70,6 @@ import type { CollectionsBootstrapData } from "./types";
+ /** Items preloaded per collection — matches Ycode's PRELOAD_LIMIT. */
+ export const COLLECTION_PRELOAD_LIMIT = 25;
+ 
+-const ID_CHUNK_SIZE = 1000;
+-
+ const EMPTY: CollectionsBootstrapData = {
+   collections: [],
+   fields: {},
+@@ -76,12 +78,6 @@ const EMPTY: CollectionsBootstrapData = {
+   lastItemsQuery: {},
+ };
+ 
+-function chunk<T>(list: readonly T[], size: number): T[][] {
+-  const out: T[][] = [];
+-  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+-  return out;
+-}
+-
+ /**
+  * Same comparator the client store used after its batch preload: numeric when
+  * both sides parse as numbers, otherwise locale string order. Applied to
+@@ -105,55 +101,12 @@ function sortItemsByValue(
+   });
+ }
+ 
+-/** Manual order, then newest first, then id — deterministic. */
+-function compareManual(a: CollectionItemRow, b: CollectionItemRow): number {
+-  if (a.manualOrder !== b.manualOrder) return a.manualOrder - b.manualOrder;
+-  const aTime = a.createdAt?.getTime() ?? 0;
+-  const bTime = b.createdAt?.getTime() ?? 0;
+-  if (aTime !== bTime) return bTime - aTime;
+-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+-}
+-
+-/**
+- * Top-N items per collection for every collection in `collectionIds`, in ONE
+- * query, via `row_number() OVER (PARTITION BY collection_id ...)`.
+- */
+-async function loadTopItemsWindowed(
+-  collectionIds: readonly string[],
+-): Promise<CollectionItemRow[]> {
+-  if (collectionIds.length === 0) return [];
+-
+-  const ranked = db
+-    .select({
+-      ...getTableColumns(collectionItem),
+-      rn: sql<number>`row_number() over (
+-        partition by ${collectionItem.collectionId}
+-        order by ${collectionItem.manualOrder} asc,
+-                 ${collectionItem.createdAt} desc,
+-                 ${collectionItem.id} asc
+-      )`.as("rn"),
+-    })
+-    .from(collectionItem)
+-    .where(
+-      and(
+-        inArray(collectionItem.collectionId, [...collectionIds]),
+-        eq(collectionItem.isPublished, false),
+-        isNull(collectionItem.deletedAt),
+-      ),
+-    )
+-    .as("ranked");
+-
+-  return db
+-    .select()
+-    .from(ranked)
+-    .where(lte(ranked.rn, COLLECTION_PRELOAD_LIMIT));
+-}
+-
+ /**
+  * Top-N items for ONE collection sorted by a field's value (collections with
+  * more than N items, where the first page cannot be sorted client-side).
+- * Items with no value sort last (ASC) / first (DESC), matching what a
+- * client-side sort would produce. Number-typed fields sort numerically —
++ * Empty values are the smallest — first ascending, last descending — the
++ * same as `sortItemsByValue` below and the editor's client comparator, so a
++ * collection never changes how it places empties as it grows past one page. Number-typed fields sort numerically —
+  * Ycode sorts the raw text, which orders "10" before "9".
+  */
+ async function loadTopItemsSorted(
+@@ -164,11 +117,7 @@ async function loadTopItemsSorted(
+ ): Promise<CollectionItemRow[]> {
+   const civ = alias(collectionItemValue, "civ");
+ 
+-  const numeric = sortFieldType === "number" || sortFieldType === "count";
+-  // `[.]` rather than `\.` — a backslash would be eaten by the template literal.
+-  const sortExpr = numeric
+-    ? sql`CASE WHEN ${civ.value} ~ '^-?[0-9]+([.][0-9]+)?$' THEN ${civ.value}::numeric END`
+-    : sql`${civ.value}`;
++  const sortExpr = fieldSortValueExpr(civ.value, sortFieldType);
+ 
+   return db
+     .select(getTableColumns(collectionItem))
+@@ -191,8 +140,8 @@ async function loadTopItemsSorted(
+     )
+     .orderBy(
+       direction === "desc"
+-        ? sql`${sortExpr} DESC NULLS FIRST`
+-        : sql`${sortExpr} ASC NULLS LAST`,
++        ? sql`${sortExpr} DESC NULLS LAST`
++        : sql`${sortExpr} ASC NULLS FIRST`,
+       asc(collectionItem.manualOrder),
+       asc(collectionItem.id),
+     )
+@@ -282,7 +231,7 @@ export async function loadCollectionsBootstrap(
+   const windowedIds = collectionIds.filter((id) => !serverSortedIds.has(id));
+ 
+   const [windowedRows, ...sortedResults] = await Promise.all([
+-    loadTopItemsWindowed(windowedIds),
++    topItemsWindowed(windowedIds, COLLECTION_PRELOAD_LIMIT),
+     ...serverSorted.map((row) => {
+       const sorting = row.sorting as CollectionSorting;
+       const sortField = fieldsByCollection
+@@ -313,27 +262,7 @@ export async function loadCollectionsBootstrap(
+   const itemIds = [...itemRowsByCollection.values()].flatMap((rows) =>
+     rows.map((row) => row.id),
+   );
+-  const valueRows = (
+-    await Promise.all(
+-      chunk(itemIds, ID_CHUNK_SIZE).map((ids) =>
+-        db
+-          .select({
+-            itemId: collectionItemValue.itemId,
+-            fieldId: collectionItemValue.fieldId,
+-            value: collectionItemValue.value,
+-          })
+-          .from(collectionItemValue)
+-          .where(
+-            and(
+-              inArray(collectionItemValue.itemId, ids),
+-              eq(collectionItemValue.isPublished, false),
+-              isNull(collectionItemValue.deletedAt),
+-            ),
+-          ),
+-      ),
+-    )
+-  ).flat();
+-  const valuesByItem = foldItemValues(valueRows);
++  const valuesByItem = await loadItemValues(itemIds);
+ 
+   // Assemble
+   const fields: Record<string, CollectionField[]> = {};
+diff --git a/src/lib/editor/collection-sql.ts b/src/lib/editor/collection-sql.ts
+new file mode 100644
+index 0000000..727e639
+--- /dev/null
++++ b/src/lib/editor/collection-sql.ts
+@@ -0,0 +1,131 @@
++// path: src/lib/editor/collection-sql.ts
++
++import "server-only";
++import {
++  and,
++  eq,
++  getTableColumns,
++  inArray,
++  isNull,
++  lte,
++  sql,
++  type AnyColumn,
++  type SQL,
++} from "drizzle-orm";
++import { db } from "@/drizzle/db";
++import {
++  collectionItem,
++  collectionItemValue,
++  type CollectionItemRow,
++} from "@/drizzle/schemas/collections-schema";
++import { foldItemValues } from "./bootstrap/mappers";
++
++/**
++ * SQL primitives shared by the editor's bootstrap loader and its on-demand
++ * read queries, so both paths stay byte-for-byte consistent about what a
++ * "draft, live" row is and how items are ordered and sorted.
++ *
++ * Every query here pins `is_published = false` and `deleted_at IS NULL`:
++ * with the composite (id, is_published) keys, a published copy of each row
++ * shares its id, so omitting the pin would double every result.
++ */
++
++// Postgres caps bind parameters at 65,535; chunk far below that.
++export const ID_CHUNK_SIZE = 1000;
++
++export function chunk<T>(list: readonly T[], size: number): T[][] {
++  const out: T[][] = [];
++  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
++  return out;
++}
++
++/** Manual order, then newest first, then id — deterministic. */
++export function compareManual(a: CollectionItemRow, b: CollectionItemRow): number {
++  if (a.manualOrder !== b.manualOrder) return a.manualOrder - b.manualOrder;
++  const aTime = a.createdAt?.getTime() ?? 0;
++  const bTime = b.createdAt?.getTime() ?? 0;
++  if (aTime !== bTime) return bTime - aTime;
++  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
++}
++
++/** `field_id → value` maps for the given items (draft, live values only). */
++export async function loadItemValues(
++  itemIds: readonly string[],
++): Promise<Map<string, Record<string, string>>> {
++  if (itemIds.length === 0) return new Map();
++
++  const rows = (
++    await Promise.all(
++      chunk(itemIds, ID_CHUNK_SIZE).map((ids) =>
++        db
++          .select({
++            itemId: collectionItemValue.itemId,
++            fieldId: collectionItemValue.fieldId,
++            value: collectionItemValue.value,
++          })
++          .from(collectionItemValue)
++          .where(
++            and(
++              inArray(collectionItemValue.itemId, ids),
++              eq(collectionItemValue.isPublished, false),
++              isNull(collectionItemValue.deletedAt),
++            ),
++          ),
++      ),
++    )
++  ).flat();
++
++  return foldItemValues(rows);
++}
++
++/**
++ * Top-`limit` items per collection for every collection in `collectionIds`,
++ * in ONE query, via `row_number() OVER (PARTITION BY collection_id ...)`.
++ * Rows come back unordered across partitions — callers order per collection
++ * with `compareManual`.
++ */
++export async function topItemsWindowed(
++  collectionIds: readonly string[],
++  limit: number,
++): Promise<CollectionItemRow[]> {
++  if (collectionIds.length === 0) return [];
++
++  const ranked = db
++    .select({
++      ...getTableColumns(collectionItem),
++      rn: sql<number>`row_number() over (
++        partition by ${collectionItem.collectionId}
++        order by ${collectionItem.manualOrder} asc,
++                 ${collectionItem.createdAt} desc,
++                 ${collectionItem.id} asc
++      )`.as("rn"),
++    })
++    .from(collectionItem)
++    .where(
++      and(
++        inArray(collectionItem.collectionId, [...collectionIds]),
++        eq(collectionItem.isPublished, false),
++        isNull(collectionItem.deletedAt),
++      ),
++    )
++    .as("ranked");
++
++  return db.select().from(ranked).where(lte(ranked.rn, limit));
++}
++
++/**
++ * ORDER BY expression for sorting items by a field's value. Number-typed
++ * fields sort numerically (NULL when the text isn't a number, so junk sorts
++ * with the empties); everything else sorts as text. Ycode sorts the raw
++ * text, which orders "10" before "9".
++ */
++export function fieldSortValueExpr(
++  valueColumn: AnyColumn,
++  fieldType: string | undefined,
++): SQL {
++  const numeric = fieldType === "number" || fieldType === "count";
++  // `[.]` rather than `\.` — a backslash would be eaten by the template literal.
++  return numeric
++    ? sql`CASE WHEN ${valueColumn} ~ '^-?[0-9]+([.][0-9]+)?$' THEN ${valueColumn}::numeric END`
++    : sql`${valueColumn}`;
++}
+diff --git a/src/lib/editor/editor-read-api.ts b/src/lib/editor/editor-read-api.ts
+new file mode 100644
+index 0000000..a308937
+--- /dev/null
++++ b/src/lib/editor/editor-read-api.ts
+@@ -0,0 +1,149 @@
++// path: src/lib/editor/editor-read-api.ts
++
++import {
++  fetchAssetsPageAction,
++  getAssetFoldersAction,
++  getAssetsByIdsAction,
++  getCollectionFieldsAction,
++  getCollectionItemByIdAction,
++  getCollectionItemsAction,
++  getItemSlugsAction,
++  getReferencedItemsBatchAction,
++  refreshCollectionsAction,
++} from "@/actions/editor/editor-read-actions";
++import { useEditorBootstrapStore } from "@/stores/editor/useEditorBootstrapStore";
++import type { CollectionItemsOptionsInput } from "@/lib/editor/read/schemas";
++import type { ActionResult } from "@/lib/editor/read/types";
++
++/**
++ * Client-side facade over the editor's READ server actions
++ * (`editor-read-actions.ts`). It exists so the Ycode-ported stores can swap
++ * `collectionsApi.getItems(...)` → `collectionsReadApi.getItems(...)` with
++ * nothing else changing: same method names, same `{ data?, error? }` return
++ * shape, no thrown errors. When the write path moves to server actions too,
++ * this adapter is the single thing to retire.
++ *
++ * CAMPAIGN SWITCH SAFETY. The stores are module singletons that are reset
++ * and re-hydrated when the user opens a different campaign. A read that was
++ * in flight for the PREVIOUS campaign could resolve afterwards and write its
++ * result into the NEW campaign's store (the server would happily serve it —
++ * the user is authorized for both). So every call captures the campaign id
++ * when it starts, and if the editor has moved on by the time the response
++ * arrives, the result is dropped by returning a promise that never settles:
++ * the caller's `await` simply never continues, so nothing is written, no
++ * error state is set, and no loading flag is left stuck (the stores were
++ * already reset). The abandoned promise holds no references and is GC'd.
++ */
++
++/**
++ * Item-query options as the stores build them. Callers hold `sortOrder` as a
++ * plain string (it comes from persisted collection settings), so it is
++ * accepted as one and normalized here; anything other than "asc"/"desc" is
++ * dropped. The server validates the payload again regardless.
++ */
++export type ItemsReadOptions = Omit<CollectionItemsOptionsInput, "sortOrder"> & {
++  sortOrder?: string;
++};
++
++function toActionOptions(
++  options: ItemsReadOptions | undefined,
++): CollectionItemsOptionsInput {
++  if (!options) return {};
++  const { sortOrder, ...rest } = options;
++  return {
++    ...rest,
++    ...(sortOrder === "asc" || sortOrder === "desc" ? { sortOrder } : {}),
++  };
++}
++
++export interface ReadResponse<T> {
++  data?: T;
++  error?: string;
++}
++
++async function call<T>(
++  run: (campaignId: string) => Promise<ActionResult<T>>,
++): Promise<ReadResponse<T>> {
++  const campaignId = useEditorBootstrapStore.getState().campaignId;
++  if (!campaignId) return { error: "The editor is still loading." };
++
++  let result: ActionResult<T>;
++  try {
++    result = await run(campaignId);
++  } catch (error) {
++    // The RPC itself failed (offline, deploy mismatch, server crash).
++    if (useEditorBootstrapStore.getState().campaignId !== campaignId) {
++      return new Promise<never>(() => {});
++    }
++    return {
++      error: error instanceof Error ? error.message : "Request failed.",
++    };
++  }
++
++  if (useEditorBootstrapStore.getState().campaignId !== campaignId) {
++    return new Promise<never>(() => {});
++  }
++  return result.success ? { data: result.data } : { error: result.error };
++}
++
++// ─── Assets ─────────────────────────────────────────────────────────────────
++
++export const assetsReadApi = {
++  fetchPage: (params: Parameters<typeof fetchAssetsPageAction>[1]) =>
++    call((campaignId) => fetchAssetsPageAction(campaignId, params)),
++
++  getByIds: (ids: string[]) =>
++    call((campaignId) => getAssetsByIdsAction(campaignId, ids)),
++
++  getFolders: () => call((campaignId) => getAssetFoldersAction(campaignId)),
++};
++
++// ─── Collections ────────────────────────────────────────────────────────────
++
++export const collectionsReadApi = {
++  /** The whole bootstrap again: collections, fields, first page of items. */
++  refresh: () => call((campaignId) => refreshCollectionsAction(campaignId)),
++
++  /** Fields of every collection in the funnel. */
++  getAllFields: () =>
++    call((campaignId) => getCollectionFieldsAction(campaignId, null)),
++
++  getFields: (collectionId: string, search?: string) =>
++    call((campaignId) =>
++      getCollectionFieldsAction(campaignId, collectionId, search),
++    ),
++
++  getItems: (collectionId: string, options?: ItemsReadOptions) =>
++    call((campaignId) =>
++      getCollectionItemsAction(
++        campaignId,
++        collectionId,
++        toActionOptions(options),
++      ),
++    ),
++
++  searchItems: (
++    collectionId: string,
++    query: string,
++    options?: Omit<ItemsReadOptions, "search">,
++  ) =>
++    call((campaignId) =>
++      getCollectionItemsAction(campaignId, collectionId, {
++        ...toActionOptions(options),
++        search: query,
++      }),
++    ),
++
++  getReferencedItemsBatch: (collectionIds: string[], limit = 100) =>
++    call((campaignId) =>
++      getReferencedItemsBatchAction(campaignId, collectionIds, limit),
++    ),
++
++  getItemById: (collectionId: string, itemId: string) =>
++    call((campaignId) =>
++      getCollectionItemByIdAction(campaignId, collectionId, itemId),
++    ),
++
++  getItemSlugs: (itemIds: string[]) =>
++    call((campaignId) => getItemSlugsAction(campaignId, itemIds)),
++};
+diff --git a/src/lib/editor/read/action-result.ts b/src/lib/editor/read/action-result.ts
+new file mode 100644
+index 0000000..64b39fa
+--- /dev/null
++++ b/src/lib/editor/read/action-result.ts
+@@ -0,0 +1,46 @@
++// path: src/lib/editor/read/action-result.ts
++
++import "server-only";
++import { z } from "zod";
++import {
++  ForbiddenError,
++  NotFoundError,
++  UnauthenticatedError,
++  ValidationError,
++} from "@/lib/errors";
++import { logger } from "@/lib/logger";
++import type { ActionResult } from "./types";
++
++/**
++ * Converts a thrown error into the `ActionResult` failure the editor expects.
++ * Same contract as `toErrorResult` in editor-actions.ts (known app errors
++ * keep their message; anything else is logged in full and replaced with a
++ * generic message so internals never reach the browser), plus malformed
++ * input from the zod schemas.
++ */
++export function toErrorResult(
++  error: unknown,
++  fallbackMessage: string,
++): ActionResult<never> {
++  if (error instanceof z.ZodError) {
++    logger.warn("Editor read action received invalid input", {
++      issues: error.issues.map((issue) => ({
++        path: issue.path.join("."),
++        code: issue.code,
++      })),
++    });
++    return { success: false, error: "Invalid request." };
++  }
++
++  if (
++    error instanceof UnauthenticatedError ||
++    error instanceof ForbiddenError ||
++    error instanceof NotFoundError ||
++    error instanceof ValidationError
++  ) {
++    return { success: false, error: error.message };
++  }
++
++  logger.error(fallbackMessage, { error });
++  return { success: false, error: fallbackMessage };
++}
+diff --git a/src/lib/editor/read/asset-queries.ts b/src/lib/editor/read/asset-queries.ts
+new file mode 100644
+index 0000000..3ffc48b
+--- /dev/null
++++ b/src/lib/editor/read/asset-queries.ts
+@@ -0,0 +1,130 @@
++// path: src/lib/editor/read/asset-queries.ts
++
++import "server-only";
++import { and, asc, count, desc, eq, ilike, inArray, isNull, or, type SQL } from "drizzle-orm";
++import { db } from "@/drizzle/db";
++import { asset } from "@/drizzle/schemas/assets-schema";
++import { isUuid } from "@/lib/editor/bootstrap/collect-asset-ids";
++import { assertTenantId } from "@/lib/editor/bootstrap/instrument";
++import { loadAssetsByIds } from "@/lib/editor/bootstrap/load-assets";
++import { assetFromRow } from "@/lib/editor/bootstrap/mappers";
++import type { Asset } from "@/types/funnel";
++import type { AssetsPage } from "./types";
++
++/**
++ * On-demand media-library reads. TENANCY: every query carries the
++ * `organizationId` derived from the authorized campaign, so a folder id or
++ * asset id from another organization simply matches nothing. Draft + live
++ * rows only (`is_published = false`, `deleted_at IS NULL`).
++ */
++
++const DEFAULT_LIMIT = 50;
++const MAX_LIMIT = 100;
++
++function clampInt(value: number | undefined, min: number, max: number, fallback: number) {
++  if (value === undefined || !Number.isFinite(value)) return fallback;
++  return Math.min(Math.max(Math.trunc(value), min), max);
++}
++
++/**
++ * Escapes LIKE/ILIKE metacharacters so a user typing `100%` or `a_b` searches
++ * for that literal text. (Ycode passes the term through raw, so `%` and `_`
++ * act as wildcards and `\` is an escape.)
++ */
++export function escapeLike(term: string): string {
++  return term.replace(/[\\%_]/g, "\\$&");
++}
++
++export interface AssetsPageParams {
++  /** `null` = library root; `undefined` = no folder filter. */
++  folderId?: string | null;
++  /** Several folders at once (search across descendants); `"root"` = root. */
++  folderIds?: readonly string[];
++  search?: string;
++  page?: number;
++  limit?: number;
++}
++
++export async function queryAssetsPage(
++  organizationId: string,
++  params: AssetsPageParams,
++): Promise<AssetsPage> {
++  const orgId = assertTenantId("organizationId", organizationId);
++  const limit = clampInt(params.limit, 1, MAX_LIMIT, DEFAULT_LIMIT);
++  const page = clampInt(params.page, 1, 10_000, 1);
++  const empty: AssetsPage = { assets: [], total: 0, page, limit, hasMore: false };
++
++  const conditions: SQL[] = [
++    eq(asset.organizationId, orgId),
++    eq(asset.isPublished, false),
++    isNull(asset.deletedAt),
++  ];
++
++  // Folder filter. A folder id that is not a UUID can never match, so it
++  // yields an empty page rather than a database error.
++  if (params.folderIds && params.folderIds.length > 0) {
++    const includesRoot = params.folderIds.includes("root");
++    const folderIds = params.folderIds.filter(isUuid);
++
++    if (includesRoot && folderIds.length > 0) {
++      conditions.push(or(isNull(asset.assetFolderId), inArray(asset.assetFolderId, folderIds))!);
++    } else if (includesRoot) {
++      conditions.push(isNull(asset.assetFolderId));
++    } else if (folderIds.length > 0) {
++      conditions.push(inArray(asset.assetFolderId, folderIds));
++    } else {
++      return empty;
++    }
++  } else if (params.folderId !== undefined) {
++    if (params.folderId === null) {
++      conditions.push(isNull(asset.assetFolderId));
++    } else if (isUuid(params.folderId)) {
++      conditions.push(eq(asset.assetFolderId, params.folderId));
++    } else {
++      return empty;
++    }
++  }
++
++  const term = params.search?.trim();
++  if (term) conditions.push(ilike(asset.filename, `%${escapeLike(term)}%`));
++
++  const where = and(...conditions);
++  const offset = (page - 1) * limit;
++
++  const [rows, [countRow]] = await Promise.all([
++    db
++      .select()
++      .from(asset)
++      .where(where)
++      // id tiebreaker keeps page boundaries stable for identical timestamps.
++      .orderBy(desc(asset.createdAt), asc(asset.id))
++      .limit(limit)
++      .offset(offset),
++    db.select({ total: count() }).from(asset).where(where),
++  ]);
++
++  const total = Number(countRow?.total ?? 0);
++  return {
++    assets: rows.map(assetFromRow),
++    total,
++    page,
++    limit,
++    hasMore: offset + rows.length < total,
++  };
++}
++
++/**
++ * Batch lookup by id. Non-UUID ids are dropped and duplicates collapsed —
++ * the editor probes with whatever a layer holds, which is not always an id.
++ */
++export async function queryAssetsByIds(
++  organizationId: string,
++  ids: readonly string[],
++): Promise<Asset[]> {
++  const valid = [...new Set(ids.filter(isUuid).map((id) => id.toLowerCase()))];
++  return loadAssetsByIds(organizationId, valid);
++}
++
++// Re-exported so the actions file has one import surface for folders.
++export { loadAssetFolders } from "@/lib/editor/bootstrap/load-assets";
++
+diff --git a/src/lib/editor/read/collection-queries.ts b/src/lib/editor/read/collection-queries.ts
+new file mode 100644
+index 0000000..b45124e
+--- /dev/null
++++ b/src/lib/editor/read/collection-queries.ts
+@@ -0,0 +1,452 @@
++// path: src/lib/editor/read/collection-queries.ts
++
++import "server-only";
++import { alias } from "drizzle-orm/pg-core";
++import {
++  and,
++  asc,
++  count,
++  eq,
++  exists,
++  getTableColumns,
++  ilike,
++  inArray,
++  isNull,
++  sql,
++  type SQL,
++} from "drizzle-orm";
++import { db } from "@/drizzle/db";
++import {
++  collection,
++  collectionField,
++  collectionItem,
++  collectionItemValue,
++} from "@/drizzle/schemas/collections-schema";
++import { isUuid, collectReferencedAssetIds } from "@/lib/editor/bootstrap/collect-asset-ids";
++import { loadAssetsByIds } from "@/lib/editor/bootstrap/load-assets";
++import { collectionFieldFromRow, collectionItemFromRow } from "@/lib/editor/bootstrap/mappers";
++import {
++  compareManual,
++  fieldSortValueExpr,
++  loadItemValues,
++  topItemsWindowed,
++} from "@/lib/editor/collection-sql";
++import { NotFoundError } from "@/lib/errors";
++import type { CollectionField, CollectionItemWithValues } from "@/types/funnel";
++import { escapeLike } from "./asset-queries";
++import { requireCollectionInFunnel, type CampaignScope } from "./guards";
++import type { CollectionItemsPage } from "./types";
++
++/**
++ * On-demand CMS reads. TENANCY: collections are scoped by `funnelId`, derived
++ * from the authorized campaign. Every public function here first proves the
++ * collection(s) belong to that funnel — a collection or item id from the
++ * client is never trusted on its own. Draft + live rows only.
++ */
++
++const DEFAULT_LIMIT = 25;
++const MAX_LIMIT = 200;
++
++function clampInt(value: number | undefined, min: number, max: number, fallback: number) {
++  if (value === undefined || !Number.isFinite(value)) return fallback;
++  return Math.min(Math.max(Math.trunc(value), min), max);
++}
++
++// ─── Filters ────────────────────────────────────────────────────────────────
++
++export interface ItemFilter {
++  fieldId: string;
++  operator: string;
++  value: string;
++}
++
++/**
++ * One dynamic filter as a SQL condition on `collection_items`.
++ *
++ * Semantics match Ycode's `applyDynamicFilter` — compare the item's value
++ * for the field, lowercased, with a missing value treated as `''` — but the
++ * condition is applied IN THE WHERE CLAUSE, before pagination. Ycode filters
++ * the already-paginated page in JS, so a filtered collection layer shows
++ * fewer items than it should whenever the collection spans more than one
++ * page, and `total` ignores the filter entirely.
++ *
++ * Deviation: numeric operators (gt/gte/lt/lte) parse the stored text
++ * strictly (`-?digits[.digits]`) instead of JS `parseFloat`, so "12px" is
++ * not-a-number rather than 12.
++ */
++function filterCondition(filter: ItemFilter): SQL {
++  const lv = filter.value.toLowerCase();
++  // No alias: inside a raw `sql` template an aliased table interpolates as
++  // just its alias, leaving the subquery without a FROM table. The outer
++  // query is over `collection_items`, so the unaliased value table can't clash.
++  const v = collectionItemValue;
++
++  // A field id that isn't a UUID can't match any field: every item has no
++  // value for it, exactly as if the field were unset (and, unlike binding the
++  // string into a uuid comparison, it can't make Postgres throw).
++  const fv = isUuid(filter.fieldId)
++    ? sql`coalesce((select lower(${v.value}) from ${v} where ${v.itemId} = ${collectionItem.id} and ${v.fieldId} = ${filter.fieldId} and ${v.isPublished} = false and ${v.deletedAt} is null limit 1), '')`
++    : sql`''::text`;
++
++  const numeric = (op: ">" | ">=" | "<" | "<="): SQL => {
++    const n = parseFloat(lv);
++    if (!Number.isFinite(n)) return sql`false`;
++    const fieldNumber = sql`(case when ${fv} ~ '^-?[0-9]+([.][0-9]+)?$' then (${fv})::numeric end)`;
++    return sql`${fieldNumber} ${sql.raw(op)} ${String(n)}::numeric`;
++  };
++
++  switch (filter.operator) {
++    case "contains":
++    default: // Ycode falls back to `contains` for unknown operators.
++      return sql`position(${lv}::text in ${fv}) > 0`;
++    case "does_not_contain":
++      return sql`position(${lv}::text in ${fv}) = 0`;
++    case "is":
++      return sql`${fv} = ${lv}::text`;
++    case "is_not":
++      return sql`${fv} <> ${lv}::text`;
++    case "starts_with":
++      return sql`starts_with(${fv}, ${lv}::text)`;
++    case "ends_with":
++      return sql`right(${fv}, length(${lv}::text)) = ${lv}::text`;
++    case "is_empty":
++      return sql`${fv} = ''`;
++    case "is_not_empty":
++      return sql`${fv} <> ''`;
++    case "gt":
++      return numeric(">");
++    case "gte":
++      return numeric(">=");
++    case "lt":
++      return numeric("<");
++    case "lte":
++      return numeric("<=");
++  }
++}
++
++// ─── Items (paged / searched / filtered / sorted) ───────────────────────────
++
++export interface CollectionItemsOptions {
++  page?: number;
++  limit?: number;
++  offset?: number;
++  search?: string;
++  /** A field id, or `manual` / `none` / `random`. */
++  sortBy?: string;
++  sortOrder?: "asc" | "desc";
++  filters?: readonly ItemFilter[];
++  includeAssets?: boolean;
++}
++
++async function loadDraftFields(collectionId: string): Promise<CollectionField[]> {
++  const rows = await db.query.collectionField.findMany({
++    where: { collectionId, isPublished: false, deletedAt: { isNull: true } },
++    orderBy: { order: "asc", id: "asc" },
++  });
++  return rows.map(collectionFieldFromRow);
++}
++
++export async function queryCollectionItemsPage(
++  scope: CampaignScope,
++  collectionId: string,
++  options: CollectionItemsOptions,
++): Promise<CollectionItemsPage> {
++  await requireCollectionInFunnel(scope.funnelId, collectionId);
++
++  const limit = clampInt(options.limit, 1, MAX_LIMIT, DEFAULT_LIMIT);
++  const page = clampInt(options.page, 1, 10_000, 1);
++  const offset =
++    options.offset !== undefined
++      ? clampInt(options.offset, 0, 1_000_000, 0)
++      : (page - 1) * limit;
++
++  const sortBy = options.sortBy;
++  const direction = options.sortOrder === "desc" ? "desc" : "asc";
++  const randomOrder = sortBy === "random";
++  // Anything that isn't a real field id (manual, none, junk) sorts manually.
++  const sortFieldId = sortBy && isUuid(sortBy) ? sortBy : null;
++
++  const fields =
++    sortFieldId || options.includeAssets
++      ? await loadDraftFields(collectionId)
++      : [];
++
++  // ── WHERE: scope + search + filters, shared by the data and count queries
++  const conditions: SQL[] = [
++    eq(collectionItem.collectionId, collectionId),
++    eq(collectionItem.isPublished, false),
++    isNull(collectionItem.deletedAt),
++  ];
++
++  const term = options.search?.trim();
++  if (term) {
++    // Matches any of the item's values — same as Ycode — but with literal
++    // `%` / `_` / `\` in the term instead of wildcards.
++    const s = alias(collectionItemValue, "srch");
++    conditions.push(
++      exists(
++        db
++          .select({ one: sql`1` })
++          .from(s)
++          .where(
++            and(
++              eq(s.itemId, collectionItem.id),
++              eq(s.isPublished, false),
++              isNull(s.deletedAt),
++              ilike(s.value, `%${escapeLike(term)}%`),
++            ),
++          ),
++      ),
++    );
++  }
++
++  for (const filter of options.filters ?? []) {
++    conditions.push(filterCondition(filter));
++  }
++
++  const where = and(...conditions);
++
++  // ── Data query
++  let dataQuery = db
++    .select(getTableColumns(collectionItem))
++    .from(collectionItem)
++    .$dynamic();
++
++  if (sortFieldId && !randomOrder) {
++    const civ = alias(collectionItemValue, "civ");
++    const sortField = fields.find((field) => field.id === sortFieldId);
++    const sortExpr = fieldSortValueExpr(civ.value, sortField?.type);
++
++    dataQuery = dataQuery
++      .leftJoin(
++        civ,
++        and(
++          eq(civ.itemId, collectionItem.id),
++          eq(civ.isPublished, false),
++          eq(civ.fieldId, sortFieldId),
++          isNull(civ.deletedAt),
++        ),
++      )
++      .where(where)
++      .orderBy(
++        // Empty values are the SMALLEST: first ascending, last descending.
++        // This is what the editor's client-side comparator has always done,
++        // so a collection does not flip its empties when it grows past one
++        // page and moves from a JS sort to this one.
++        direction === "desc"
++          ? sql`${sortExpr} DESC NULLS LAST`
++          : sql`${sortExpr} ASC NULLS FIRST`,
++        asc(collectionItem.manualOrder),
++        asc(collectionItem.id),
++      );
++  } else if (randomOrder) {
++    dataQuery = dataQuery.where(where).orderBy(sql`random()`);
++  } else {
++    dataQuery = dataQuery
++      .where(where)
++      .orderBy(
++        asc(collectionItem.manualOrder),
++        sql`${collectionItem.createdAt} DESC`,
++        asc(collectionItem.id),
++      );
++  }
++
++  const [itemRows, [countRow]] = await Promise.all([
++    dataQuery.limit(limit).offset(offset),
++    db.select({ total: count() }).from(collectionItem).where(where),
++  ]);
++
++  const valuesByItem = await loadItemValues(itemRows.map((row) => row.id));
++  const items = itemRows.map((row) =>
++    collectionItemFromRow(row, valuesByItem.get(row.id) ?? {}),
++  );
++
++  const result: CollectionItemsPage = {
++    items,
++    total: Number(countRow?.total ?? 0),
++    page,
++    limit,
++  };
++
++  if (options.includeAssets) {
++    const assetIds = collectReferencedAssetIds({
++      json: [],
++      fields: { [collectionId]: fields },
++      items: { [collectionId]: items },
++    });
++    if (assetIds.length > 0) {
++      const referencedAssets = await loadAssetsByIds(scope.organizationId, assetIds);
++      if (referencedAssets.length > 0) result.referencedAssets = referencedAssets;
++    }
++  }
++
++  return result;
++}
++
++// ─── Fields ─────────────────────────────────────────────────────────────────
++
++/**
++ * Fields of one collection (optionally name-searched), or — with
++ * `collectionId === null` — of every live collection in the funnel.
++ */
++export async function queryCollectionFields(
++  scope: CampaignScope,
++  collectionId: string | null,
++  search?: string,
++): Promise<CollectionField[]> {
++  const conditions: SQL[] = [
++    eq(collectionField.isPublished, false),
++    isNull(collectionField.deletedAt),
++  ];
++
++  if (collectionId === null) {
++    conditions.push(
++      inArray(
++        collectionField.collectionId,
++        db
++          .select({ id: collection.id })
++          .from(collection)
++          .where(
++            and(
++              eq(collection.funnelId, scope.funnelId),
++              eq(collection.isPublished, false),
++              isNull(collection.deletedAt),
++            ),
++          ),
++      ),
++    );
++  } else {
++    await requireCollectionInFunnel(scope.funnelId, collectionId);
++    conditions.push(eq(collectionField.collectionId, collectionId));
++  }
++
++  const term = search?.trim();
++  if (term) conditions.push(ilike(collectionField.name, `%${escapeLike(term)}%`));
++
++  const rows = await db
++    .select()
++    .from(collectionField)
++    .where(and(...conditions))
++    .orderBy(asc(collectionField.order), asc(collectionField.id));
++
++  return rows.map(collectionFieldFromRow);
++}
++
++// ─── Batch / single lookups ─────────────────────────────────────────────────
++
++/**
++ * First `limit` items per collection for many collections in one round trip
++ * (reference-field display lookups). Only collections that belong to this
++ * funnel are served; unknown or foreign ids are silently absent from the
++ * result, same as "no such collection". Raw `values` only — no enrichment.
++ */
++export async function queryReferencedItemsBatch(
++  scope: CampaignScope,
++  collectionIds: readonly string[],
++  limit: number,
++): Promise<Record<string, { items: CollectionItemWithValues[] }>> {
++  const candidates = [...new Set(collectionIds.filter(isUuid).map((id) => id.toLowerCase()))];
++  if (candidates.length === 0) return {};
++
++  const owned = await db
++    .select({ id: collection.id })
++    .from(collection)
++    .where(
++      and(
++        inArray(collection.id, candidates),
++        eq(collection.funnelId, scope.funnelId),
++        eq(collection.isPublished, false),
++        isNull(collection.deletedAt),
++      ),
++    );
++  const ids = owned.map((row) => row.id);
++  if (ids.length === 0) return {};
++
++  const rows = await topItemsWindowed(ids, clampInt(limit, 1, MAX_LIMIT, 100));
++  const valuesByItem = await loadItemValues(rows.map((row) => row.id));
++
++  const result: Record<string, { items: CollectionItemWithValues[] }> = {};
++  for (const id of ids) result[id] = { items: [] };
++
++  rows.sort(compareManual);
++  for (const row of rows) {
++    result[row.collectionId].items.push(
++      collectionItemFromRow(row, valuesByItem.get(row.id) ?? {}),
++    );
++  }
++  return result;
++}
++
++export async function queryCollectionItemById(
++  scope: CampaignScope,
++  collectionId: string,
++  itemId: string,
++): Promise<CollectionItemWithValues> {
++  await requireCollectionInFunnel(scope.funnelId, collectionId);
++  if (!isUuid(itemId)) throw new NotFoundError("Item not found.", { itemId });
++
++  const row = await db.query.collectionItem.findFirst({
++    where: { id: itemId, collectionId, isPublished: false, deletedAt: { isNull: true } },
++  });
++  if (!row) throw new NotFoundError("Item not found.", { itemId });
++
++  const values = await loadItemValues([row.id]);
++  return collectionItemFromRow(row, values.get(row.id) ?? {});
++}
++
++/**
++ * `item id → slug` for items of ANY collection in this funnel (cross-collection
++ * reference links). One join; only items whose collection has a `slug` field
++ * with a non-empty value appear, and items of other funnels never do.
++ */
++export async function queryItemSlugs(
++  scope: CampaignScope,
++  itemIds: readonly string[],
++): Promise<Record<string, string>> {
++  const ids = [...new Set(itemIds.filter(isUuid).map((id) => id.toLowerCase()))];
++  if (ids.length === 0) return {};
++
++  const rows = await db
++    .select({ itemId: collectionItem.id, slug: collectionItemValue.value })
++    .from(collectionItem)
++    .innerJoin(
++      collection,
++      and(
++        eq(collection.id, collectionItem.collectionId),
++        eq(collection.funnelId, scope.funnelId),
++        eq(collection.isPublished, false),
++        isNull(collection.deletedAt),
++      ),
++    )
++    .innerJoin(
++      collectionField,
++      and(
++        eq(collectionField.collectionId, collectionItem.collectionId),
++        eq(collectionField.key, "slug"),
++        eq(collectionField.isPublished, false),
++        isNull(collectionField.deletedAt),
++      ),
++    )
++    .innerJoin(
++      collectionItemValue,
++      and(
++        eq(collectionItemValue.itemId, collectionItem.id),
++        eq(collectionItemValue.fieldId, collectionField.id),
++        eq(collectionItemValue.isPublished, false),
++        isNull(collectionItemValue.deletedAt),
++      ),
++    )
++    .where(
++      and(
++        inArray(collectionItem.id, ids),
++        eq(collectionItem.isPublished, false),
++        isNull(collectionItem.deletedAt),
++      ),
++    );
++
++  const slugs: Record<string, string> = {};
++  for (const { itemId, slug } of rows) {
++    if (slug) slugs[itemId] = slug;
++  }
++  return slugs;
++}
+diff --git a/src/lib/editor/read/guards.ts b/src/lib/editor/read/guards.ts
+new file mode 100644
+index 0000000..fd809ac
+--- /dev/null
++++ b/src/lib/editor/read/guards.ts
+@@ -0,0 +1,70 @@
++// path: src/lib/editor/read/guards.ts
++
++import "server-only";
++import { db } from "@/drizzle/db";
++import { requireCampaignEditPermission } from "@/lib/auth/require-campaign-permission";
++import { isUuid } from "@/lib/editor/bootstrap/collect-asset-ids";
++import { NotFoundError } from "@/lib/errors";
++
++/**
++ * Tenant scope for one editor read request, DERIVED from the campaign the
++ * caller is authorized for — never from client-supplied tenant ids.
++ *   - assets / asset folders are scoped by `organizationId`,
++ *   - collections (and their fields/items/values) by `funnelId`.
++ */
++export interface CampaignScope {
++  organizationId: string;
++  funnelId: string;
++}
++
++/**
++ * Authenticates + authorizes the caller for `campaignId`, then resolves the
++ * funnel. Auth runs FIRST, before any lookup that could reveal whether a
++ * campaign exists (same ordering principle as require-campaign-permission.ts).
++ * Not wrapped in `cache()`: each Server Action call is its own isolated RPC.
++ */
++export async function requireCampaignScope(
++  campaignId: string,
++): Promise<CampaignScope> {
++  const { campaign } = await requireCampaignEditPermission(campaignId);
++
++  const funnelRow = await db.query.funnel.findFirst({
++    where: { campaignId },
++    orderBy: { createdAt: "asc" },
++  });
++  if (!funnelRow) {
++    throw new NotFoundError("Campaign not found.", { campaignId });
++  }
++
++  return { organizationId: campaign.organizationId, funnelId: funnelRow.id };
++}
++
++/**
++ * Confirms `collectionId` is a live DRAFT collection of THIS funnel.
++ * A caller authorized for Campaign A can pass any collection id; without
++ * this check they could read Campaign B's items. Same principle as
++ * `requirePageInCampaign`. A non-UUID, a missing collection and another
++ * funnel's collection all produce the same `NotFoundError`, so callers
++ * can't probe for existence.
++ */
++export async function requireCollectionInFunnel(
++  funnelId: string,
++  collectionId: string,
++) {
++  if (!isUuid(collectionId)) {
++    throw new NotFoundError("Collection not found.", { collectionId });
++  }
++
++  const row = await db.query.collection.findFirst({
++    where: {
++      id: collectionId,
++      funnelId,
++      isPublished: false,
++      deletedAt: { isNull: true },
++    },
++  });
++  if (!row) {
++    throw new NotFoundError("Collection not found.", { collectionId });
++  }
++  return row;
++}
+diff --git a/src/lib/editor/read/schemas.ts b/src/lib/editor/read/schemas.ts
+new file mode 100644
+index 0000000..90e9fa0
+--- /dev/null
++++ b/src/lib/editor/read/schemas.ts
+@@ -0,0 +1,59 @@
++// path: src/lib/editor/read/schemas.ts
++
++import { z } from "zod";
++
++/**
++ * Runtime validation for the read server actions. A Server Action is a
++ * public HTTP endpoint: TypeScript types on its parameters are NOT enforced
++ * at runtime, so every client-supplied value is validated here before it can
++ * reach a query. The bounds double as cost limits — they cap how much work
++ * (rows, IN-list size, filter count) one request can demand.
++ *
++ * Deliberately lenient about id FORMAT (any short string): the query layer
++ * discards non-UUID ids instead of failing the whole request, because the
++ * editor may legitimately probe with values that merely look like ids
++ * (an external URL where an asset id was expected, a legacy id).
++ */
++
++const shortId = z.string().min(1).max(64);
++
++export const fetchAssetsParamsSchema = z.object({
++  /** `null` = library root; omit to not filter by folder. */
++  folderId: shortId.nullable().optional(),
++  /** Search across several folders (descendants); `"root"` means the root. */
++  folderIds: z.array(shortId).max(200).optional(),
++  search: z.string().max(200).optional(),
++  page: z.number().int().min(1).max(10_000).optional(),
++  limit: z.number().int().min(1).max(100).optional(),
++});
++export type FetchAssetsParamsInput = z.input<typeof fetchAssetsParamsSchema>;
++
++export const assetIdsSchema = z.array(shortId).min(1).max(200);
++
++export const itemFilterSchema = z.object({
++  fieldId: shortId,
++  operator: z.string().max(32),
++  value: z.string().max(500),
++});
++export type ItemFilterInput = z.input<typeof itemFilterSchema>;
++
++export const collectionItemsOptionsSchema = z.object({
++  page: z.number().int().min(1).max(10_000).optional(),
++  limit: z.number().int().min(1).max(200).optional(),
++  offset: z.number().int().min(0).max(1_000_000).optional(),
++  search: z.string().max(200).optional(),
++  /** A field id, or `manual` / `none` / `random`. */
++  sortBy: shortId.optional(),
++  sortOrder: z.enum(["asc", "desc"]).optional(),
++  filters: z.array(itemFilterSchema).max(20).optional(),
++  includeAssets: z.boolean().optional(),
++});
++export type CollectionItemsOptionsInput = z.input<
++  typeof collectionItemsOptionsSchema
++>;
++
++export const collectionIdsSchema = z.array(shortId).min(1).max(50);
++export const itemIdsSchema = z.array(shortId).min(1).max(500);
++export const referencedLimitSchema = z.number().int().min(1).max(200);
++export const searchTermSchema = z.string().max(200).optional();
++export const idSchema = shortId;
+diff --git a/src/lib/editor/read/types.ts b/src/lib/editor/read/types.ts
+new file mode 100644
+index 0000000..f99af32
+--- /dev/null
++++ b/src/lib/editor/read/types.ts
+@@ -0,0 +1,31 @@
++// path: src/lib/editor/read/types.ts
++
++import type { Asset, CollectionItemWithValues } from "@/types/funnel";
++
++/**
++ * Wire types for the editor's on-demand READ server actions (Phase 5).
++ * Pure type module: safe to import from server actions, the client adapter
++ * and the stores alike.
++ */
++
++/** Same convention as editor-actions.ts. */
++export type ActionResult<T> =
++  | { success: true; data: T }
++  | { success: false; error: string };
++
++export interface AssetsPage {
++  assets: Asset[];
++  total: number;
++  page: number;
++  limit: number;
++  hasMore: boolean;
++}
++
++export interface CollectionItemsPage {
++  items: CollectionItemWithValues[];
++  total: number;
++  page: number;
++  limit: number;
++  /** Present only when `includeAssets` was requested and any are referenced. */
++  referencedAssets?: Asset[];
++}
+diff --git a/src/stores/editor/useAssetsStore.ts b/src/stores/editor/useAssetsStore.ts
+index 66599e7..7e28fa0 100644
+--- a/src/stores/editor/useAssetsStore.ts
++++ b/src/stores/editor/useAssetsStore.ts
+@@ -6,6 +6,9 @@
+ 
+ import { create } from "zustand";
+ import { getEditorImageUrl } from "@/lib/asset-utils";
++import { isUuid } from "@/lib/editor/bootstrap/collect-asset-ids";
++import { assetsReadApi } from "@/lib/editor/editor-read-api";
++import { useEditorBootstrapStore } from "./useEditorBootstrapStore";
+ import type { Asset, AssetFolder } from "@/types/funnel";
+ 
+ /**
+@@ -59,8 +62,9 @@ interface AssetsActions {
+     folders: AssetFolder[];
+   }) => void;
+   /**
+-   * The bootstrap's assets section failed. Marks the store loaded-with-error
+-   * so nothing falls through to the legacy `/ycode/api` fetch paths.
++   * The bootstrap's assets section failed. Leaves the store empty and marked
++   * loaded-with-error; individual assets can still be looked up on demand
++   * (`getAsset`, `fetchAssets`), which may succeed where the bootstrap didn't.
+    */
+   setLoadError: (message: string) => void;
+   getAsset: (id: string) => Asset | null;
+@@ -86,8 +90,57 @@ const initialState: AssetsState = {
+   error: null,
+ };
+ 
+-// Track in-flight asset fetches to prevent duplicate requests
++/**
++ * On-demand asset lookup (the `getAsset` cache-miss path).
++ *
++ * `getAsset` is called synchronously during render — often for dozens of
++ * layers at once — so a miss must NOT fire its own request. Misses are
++ * queued and flushed as ONE batched Server Action call per tick.
++ *
++ * `pendingFetches` doubles as in-flight tracking and a NEGATIVE cache: an id
++ * the server did not return (deleted, another organization's, never
++ * existed) stays in the set so it is not requested again on every render.
++ * After a transport/server failure the ids are released again following a
++ * cool-down, so a transient outage doesn't blacklist assets forever but
++ * a down server isn't hammered once per render either.
++ */
+ const pendingFetches = new Set<string>();
++let queuedLookups = new Set<string>();
++let flushTimer: ReturnType<typeof setTimeout> | null = null;
++
++const LOOKUP_FLUSH_DELAY_MS = 20;
++const LOOKUP_BATCH_SIZE = 100; // the action accepts at most 200 ids
++const LOOKUP_RETRY_AFTER_MS = 30_000;
++
++function scheduleLookupFlush(): void {
++  if (flushTimer !== null) return;
++  flushTimer = setTimeout(() => {
++    flushTimer = null;
++    void flushAssetLookups();
++  }, LOOKUP_FLUSH_DELAY_MS);
++}
++
++async function flushAssetLookups(): Promise<void> {
++  const ids = [...queuedLookups];
++  queuedLookups = new Set();
++
++  for (let i = 0; i < ids.length; i += LOOKUP_BATCH_SIZE) {
++    const batch = ids.slice(i, i + LOOKUP_BATCH_SIZE);
++    const response = await assetsReadApi.getByIds(batch);
++
++    if (response.error || !response.data) {
++      setTimeout(() => {
++        batch.forEach((id) => pendingFetches.delete(id));
++      }, LOOKUP_RETRY_AFTER_MS);
++      continue;
++    }
++
++    // Found ids leave the negative cache (they live in `assetsById` now);
++    // ids the server didn't return stay in it.
++    response.data.forEach((asset) => pendingFetches.delete(asset.id));
++    useAssetsStore.getState().addAssetsToCache(response.data);
++  }
++}
+ 
+ export const useAssetsStore = create<AssetsStore>((set, get) => ({
+   ...initialState,
+@@ -138,7 +191,9 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
+   },
+ 
+   /**
+-   * Load folders from API (assets are loaded on-demand via fetchAssets)
++   * Load folders (assets are loaded on-demand via fetchAssets). The editor
++   * seeds folders from the server bootstrap, so this only runs for callers
++   * that need a fresh copy before hydration has finished.
+    */
+   loadAssets: async () => {
+     // Don't reload if already loaded or currently loading
+@@ -148,28 +203,22 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
+ 
+     set({ isLoading: true, error: null });
+ 
+-    try {
+-      // Only load folders initially - assets are loaded on-demand
+-      const foldersResponse = await fetch("/ycode/api/asset-folders");
+-
+-      if (!foldersResponse.ok) {
+-        throw new Error("Failed to fetch folders");
+-      }
+-
+-      const { data: folders } = await foldersResponse.json();
++    const response = await assetsReadApi.getFolders();
+ 
+-      set({
+-        folders,
+-        isLoading: false,
+-        isLoaded: true,
+-        error: null,
+-      });
+-    } catch (error) {
++    if (response.error || !response.data) {
+       set({
+         isLoading: false,
+-        error: error instanceof Error ? error.message : "Failed to load assets",
++        error: response.error ?? "Failed to load assets",
+       });
++      return;
+     }
++
++    set({
++      folders: response.data,
++      isLoading: false,
++      isLoaded: true,
++      error: null,
++    });
+   },
+ 
+   /**
+@@ -181,31 +230,23 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
+   ): Promise<FetchAssetsResult> => {
+     const { folderId, folderIds, search, page = 1, limit = 50 } = params;
+ 
+-    // Build query params
+-    const queryParams = new URLSearchParams();
+-
+-    if (folderIds && folderIds.length > 0) {
+-      queryParams.set("folderIds", folderIds.join(","));
+-    } else if (folderId !== undefined) {
+-      queryParams.set("folderId", folderId === null ? "null" : folderId);
+-    }
+-
+-    if (search) {
+-      queryParams.set("search", search);
+-    }
+-
+-    queryParams.set("page", page.toString());
+-    queryParams.set("limit", limit.toString());
+-
+-    const response = await fetch(`/ycode/api/assets?${queryParams.toString()}`);
++    const response = await assetsReadApi.fetchPage({
++      ...(folderIds && folderIds.length > 0
++        ? { folderIds }
++        : folderId !== undefined
++          ? { folderId }
++          : {}),
++      ...(search ? { search } : {}),
++      page,
++      limit,
++    });
+ 
+-    if (!response.ok) {
+-      throw new Error("Failed to fetch assets");
++    if (response.error || !response.data) {
++      throw new Error(response.error ?? "Failed to fetch assets");
+     }
+ 
+-    const result = await response.json();
+-
+-    const normalizedAssets: Asset[] = (result.data || []).map(
++    const result = response.data;
++    const normalizedAssets: Asset[] = result.assets.map(
+       normalizeAssetForEditor,
+     );
+ 
+@@ -223,10 +264,10 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
+ 
+     return {
+       assets: normalizedAssets,
+-      total: result.total || 0,
+-      page: result.page || page,
+-      limit: result.limit || limit,
+-      hasMore: result.hasMore ?? false,
++      total: result.total,
++      page: result.page,
++      limit: result.limit,
++      hasMore: result.hasMore,
+     };
+   },
+ 
+@@ -244,55 +285,43 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
+   },
+ 
+   /**
+-   * Get asset by ID (from cache or fetch if not found)
++   * Get asset by ID. Returns the cached asset, or `null` on a miss — and a
++   * miss queues a background lookup (batched, de-duplicated, negative-cached;
++   * see the notes above `pendingFetches`). The asset appears in `assetsById`
++   * when the lookup lands, which re-renders subscribers.
++   *
++   * The store holds only a SUBSET of the library (referenced assets + the
++   * first page, from the bootstrap), so a miss does NOT mean "doesn't exist".
+    */
+   getAsset: (id: string) => {
+-    const state = get();
+-
+-    // Try to get from cache
+-    const cached = state.assetsById[id];
++    const cached = get().assetsById[id];
+     if (cached) {
+       return cached;
+     }
+ 
+-    // If store is loaded, asset isn't known — skip background fetch.
+-    // Assets are preloaded via items API (includeAssets=true).
+-    if (state.isLoaded) {
++    // Server rendering: nothing to fetch, and no campaign to authorize against.
++    if (typeof window === "undefined") {
+       return null;
+     }
+ 
+-    // Skip background fetch on server-side (relative URLs don't work in Node.js)
+-    if (typeof window === "undefined") {
++    // Layers can hold values that merely look like asset ids (external URLs,
++    // legacy ids). Only real UUIDs can name an asset.
++    if (!isUuid(id)) {
++      return null;
++    }
++
++    // Not hydrated yet (or mid campaign switch): nothing to authorize against.
++    if (!useEditorBootstrapStore.getState().campaignId) {
+       return null;
+     }
+ 
+-    // Skip if already fetching this asset (prevents duplicate requests)
+     if (pendingFetches.has(id)) {
+       return null;
+     }
+ 
+-    // Mark as pending and fetch from API in background.
+-    // ID stays in the set even after completion to prevent re-fetching
+-    // assets that don't exist (negative cache).
+     pendingFetches.add(id);
+-
+-    fetch(`/ycode/api/assets/${id}`)
+-      .then((res) => (res.ok ? res.json() : null))
+-      .then((result) => {
+-        if (result?.data) {
+-          const asset = normalizeAssetForEditor(result.data);
+-          pendingFetches.delete(id);
+-          set((state) => ({
+-            assetsById: {
+-              ...state.assetsById,
+-              [asset.id]: asset,
+-            },
+-          }));
+-        }
+-      })
+-      .catch((err) => {
+-        console.error("Failed to fetch asset:", err);
+-      });
++    queuedLookups.add(id);
++    scheduleLookupFlush();
+ 
+     return null;
+   },
+@@ -507,6 +536,11 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
+     // The in-flight set is module-level, not store state — clear it too, or
+     // a fetch started for the previous campaign blocks the same id here.
+     pendingFetches.clear();
++    queuedLookups = new Set();
++    if (flushTimer !== null) {
++      clearTimeout(flushTimer);
++      flushTimer = null;
++    }
+     set(initialState);
+   },
+ }));
+diff --git a/src/stores/editor/useCollectionLayerStore.ts b/src/stores/editor/useCollectionLayerStore.ts
+index 89f6ec1..8ba491d 100644
+--- a/src/stores/editor/useCollectionLayerStore.ts
++++ b/src/stores/editor/useCollectionLayerStore.ts
+@@ -1,5 +1,5 @@
+ import { create } from "zustand";
+-import { collectionsApi } from "@/lib/api";
++import { collectionsReadApi } from "@/lib/editor/editor-read-api";
+ import { MULTI_ASSET_COLLECTION_ID } from "@/lib/collection-field-utils";
+ import type {
+   CollectionItemWithValues,
+@@ -136,7 +136,7 @@ export const useCollectionLayerStore = create<CollectionLayerStore>(
+       }));
+ 
+       try {
+-        const response = await collectionsApi.getItems(collectionId, {
++        const response = await collectionsReadApi.getItems(collectionId, {
+           limit: 100,
+         });
+ 
+@@ -186,7 +186,7 @@ export const useCollectionLayerStore = create<CollectionLayerStore>(
+       });
+ 
+       try {
+-        const response = await collectionsApi.getReferencedItemsBatch(
++        const response = await collectionsReadApi.getReferencedItemsBatch(
+           toFetch,
+           100,
+         );
+@@ -285,7 +285,7 @@ export const useCollectionLayerStore = create<CollectionLayerStore>(
+         let request = sharedLayerRequests.get(requestKey);
+         if (!request) {
+           request = (async () => {
+-            const response = await collectionsApi.getItems(collectionId, {
++            const response = await collectionsReadApi.getItems(collectionId, {
+               sortBy,
+               sortOrder,
+               limit,
+@@ -435,7 +435,7 @@ export const useCollectionLayerStore = create<CollectionLayerStore>(
+             let request = sharedLayerRequests.get(requestKey);
+             if (!request) {
+               request = (async () => {
+-                const response = await collectionsApi.getItems(
++                const response = await collectionsReadApi.getItems(
+                   config.collectionId,
+                   {
+                     sortBy: config.sortBy,
+@@ -516,7 +516,7 @@ export const useCollectionLayerStore = create<CollectionLayerStore>(
+         const baseOffset = meta.baseOffset ?? 0;
+         const offset = baseOffset + (page - 1) * meta.itemsPerPage;
+ 
+-        const response = await collectionsApi.getItems(config.collectionId, {
++        const response = await collectionsReadApi.getItems(config.collectionId, {
+           sortBy: config.sortBy,
+           sortOrder: config.sortOrder,
+           limit: meta.itemsPerPage,
+diff --git a/src/stores/editor/useCollectionsStore.ts b/src/stores/editor/useCollectionsStore.ts
+index a118073..fb4fab8 100644
+--- a/src/stores/editor/useCollectionsStore.ts
++++ b/src/stores/editor/useCollectionsStore.ts
+@@ -1,6 +1,7 @@
+ import { create } from "zustand";
+ import { collectionsApi } from "@/lib/api";
+-import { sortCollectionsByOrder, getSortParams } from "@/lib/collection-utils";
++import { collectionsReadApi } from "@/lib/editor/editor-read-api";
++import { sortCollectionsByOrder } from "@/lib/collection-utils";
+ import {
+   MULTI_ASSET_COLLECTION_ID,
+   findStatusFieldId,
+@@ -57,13 +58,12 @@ interface CollectionsState {
+ interface CollectionsActions {
+   // Collections
+   loadCollections: () => Promise<void>;
+-  preloadCollectionsAndItems: (collections: Collection[]) => Promise<void>;
+   /**
+    * Atomically seed the store from the server bootstrap — collections,
+    * fields, and the first page of items per collection — in ONE update with
+    * no network. Replaces the `loadCollections` → `loadFields(null)` →
+-   * `preloadCollectionsAndItems` client waterfall for the editor's initial
+-   * load (those legacy actions remain for on-demand refreshes).
++   * waterfall for the editor's initial load. `loadCollections` now refreshes
++   * through the same server loader.
+    */
+   hydrateFromBootstrap: (data: CollectionsBootstrapData) => void;
+   /** The bootstrap's collections section failed — surface it, show nothing stale. */
+@@ -202,14 +202,31 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
+     set({ isLoading: true, error: null });
+ 
+     try {
+-      const response = await collectionsApi.getAll();
++      // One server round trip runs the same loader as the initial bootstrap
++      // (collections + fields + first page of items), replacing the old
++      // getAll → getAllFields → getTopItems client waterfall.
++      const response = await collectionsReadApi.refresh();
+ 
+-      if (response.error) {
+-        throw new Error(response.error);
++      if (response.error || !response.data) {
++        throw new Error(response.error || "Failed to load collections");
+       }
+ 
+-      const collections = response.data || [];
+-      await get().preloadCollectionsAndItems(collections);
++      const data = response.data;
++      set((state) => ({
++        collections: sortCollectionsByOrder(data.collections),
++        fields: data.fields,
++        items: data.items,
++        itemsTotalCount: data.itemsTotalCount,
++        lastItemsQuery: data.lastItemsQuery,
++        // A refresh must not drop the user's selection unless it no longer exists.
++        selectedCollectionId: data.collections.some(
++          (c) => c.id === state.selectedCollectionId,
++        )
++          ? state.selectedCollectionId
++          : null,
++        isLoading: false,
++        error: null,
++      }));
+     } catch (error) {
+       const errorMessage =
+         error instanceof Error ? error.message : "Failed to load collections";
+@@ -218,130 +235,6 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
+     }
+   },
+ 
+-  preloadCollectionsAndItems: async (collections: Collection[]) => {
+-    const sortedCollections = sortCollectionsByOrder(collections);
+-    set({ collections: sortedCollections, isLoading: false });
+-
+-    // Preload all fields in a single query
+-    await get().loadFields(null);
+-
+-    // Skip item preload if no collections
+-    if (collections.length === 0) {
+-      return;
+-    }
+-
+-    const PRELOAD_LIMIT = 25;
+-
+-    // Split collections: batch preload works for manual sort or when all items fit
+-    const batchCollections: Collection[] = [];
+-    const sortedCollections_: Collection[] = [];
+-
+-    collections.forEach((collection) => {
+-      const sorting = collection.sorting;
+-      const totalCount = collection.draft_items_count ?? 0;
+-      const needsServerSort =
+-        sorting && sorting.direction !== "manual" && totalCount > PRELOAD_LIMIT;
+-      if (needsServerSort) {
+-        sortedCollections_.push(collection);
+-      } else {
+-        batchCollections.push(collection);
+-      }
+-    });
+-
+-    // Fetch both groups in parallel:
+-    // 1) Batch endpoint for manual-sort / small collections
+-    // 2) Individual sorted API calls for collections needing server-side sort
+-    const batchIds = batchCollections.map((c) => c.id);
+-    const [batchResponse, ...sortedResponses] = await Promise.all([
+-      batchIds.length > 0
+-        ? collectionsApi.getTopItemsPerCollection(batchIds, PRELOAD_LIMIT)
+-        : Promise.resolve({
+-            data: {
+-              items: {} as Record<
+-                string,
+-                { items: CollectionItemWithValues[] }
+-              >,
+-            },
+-            error: null,
+-          }),
+-      ...sortedCollections_.map((c) =>
+-        collectionsApi.getItems(c.id, {
+-          page: 1,
+-          limit: PRELOAD_LIMIT,
+-          sortBy: c.sorting!.field,
+-          sortOrder: c.sorting!.direction,
+-        }),
+-      ),
+-    ]);
+-
+-    if (batchResponse.error) {
+-      throw new Error(`Failed to preload items: ${batchResponse.error}`);
+-    }
+-
+-    const batchItems = batchResponse.data?.items || {};
+-    const itemsMap: Record<string, CollectionItemWithValues[]> = {};
+-    const itemsTotalCountMap: Record<string, number> = {};
+-    const queryMap: Record<string, ItemsQueryParams> = {};
+-
+-    // Process batch-preloaded collections (manual sort or total <= limit)
+-    batchCollections.forEach((collection) => {
+-      const batchResult = batchItems[collection.id];
+-      let preloadedItems = batchResult?.items || [];
+-      const sorting = collection.sorting;
+-      const totalCount = collection.draft_items_count ?? 0;
+-
+-      if (sorting && sorting.direction !== "manual") {
+-        preloadedItems = [...preloadedItems].sort((a, b) => {
+-          const aValue = a.values[sorting.field] || "";
+-          const bValue = b.values[sorting.field] || "";
+-          const aNum = parseFloat(String(aValue));
+-          const bNum = parseFloat(String(bValue));
+-          if (!isNaN(aNum) && !isNaN(bNum)) {
+-            return sorting.direction === "asc" ? aNum - bNum : bNum - aNum;
+-          }
+-          const cmp = String(aValue).localeCompare(String(bValue));
+-          return sorting.direction === "asc" ? cmp : -cmp;
+-        });
+-      }
+-
+-      itemsMap[collection.id] = preloadedItems;
+-      itemsTotalCountMap[collection.id] = totalCount;
+-      queryMap[collection.id] = {
+-        page: 1,
+-        limit: PRELOAD_LIMIT,
+-        ...getSortParams(sorting),
+-      };
+-    });
+-
+-    // Process server-sorted collections
+-    sortedCollections_.forEach((collection, i) => {
+-      const resp = sortedResponses[i];
+-      const totalCount = collection.draft_items_count ?? 0;
+-      itemsMap[collection.id] = resp.data?.items || [];
+-      itemsTotalCountMap[collection.id] = resp.data?.total ?? totalCount;
+-      queryMap[collection.id] = {
+-        page: 1,
+-        limit: PRELOAD_LIMIT,
+-        ...getSortParams(collection.sorting),
+-      };
+-    });
+-
+-    set((state) => ({
+-      items: {
+-        ...state.items,
+-        ...itemsMap,
+-      },
+-      itemsTotalCount: {
+-        ...state.itemsTotalCount,
+-        ...itemsTotalCountMap,
+-      },
+-      lastItemsQuery: {
+-        ...state.lastItemsQuery,
+-        ...queryMap,
+-      },
+-    }));
+-  },
+-
+   createCollection: async (data) => {
+     set({ isLoading: true, error: null });
+ 
+@@ -610,7 +503,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
+     try {
+       // If collectionId is null, load all fields for all collections in one query
+       if (collectionId === null) {
+-        const response = await collectionsApi.getAllFields();
++        const response = await collectionsReadApi.getAllFields();
+ 
+         if (response.error) {
+           throw new Error(response.error);
+@@ -636,7 +529,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
+         }));
+       } else {
+         // Load fields for a specific collection
+-        const response = await collectionsApi.getFields(collectionId, search);
++        const response = await collectionsReadApi.getFields(collectionId, search);
+ 
+         if (response.error) {
+           throw new Error(response.error);
+@@ -774,7 +667,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
+     }));
+ 
+     try {
+-      const response = await collectionsApi.getItems(collectionId, {
++      const response = await collectionsReadApi.getItems(collectionId, {
+         page,
+         limit,
+         sortBy,
+@@ -1224,7 +1117,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
+     set({ isLoading: true, error: null });
+ 
+     try {
+-      const response = await collectionsApi.searchItems(collectionId, query, {
++      const response = await collectionsReadApi.searchItems(collectionId, query, {
+         page,
+         limit,
+         sortBy,
+@@ -1530,7 +1423,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
+     limit = 50,
+   ) => {
+     try {
+-      const response = await collectionsApi.getItems(collectionId, {
++      const response = await collectionsReadApi.getItems(collectionId, {
+         search: query,
+         limit,
+         includeAssets: true,
+@@ -1579,7 +1472,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
+     if (existing.some((item) => item.id === itemId)) return;
+ 
+     try {
+-      const response = await collectionsApi.getItemById(collectionId, itemId);
++      const response = await collectionsReadApi.getItemById(collectionId, itemId);
+       if (response.error || !response.data) return;
+       const item = response.data;
+ 
+@@ -1606,7 +1499,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
+     if (idsToFetch.length === 0) return;
+ 
+     try {
+-      const response = await collectionsApi.getItemSlugs(idsToFetch);
++      const response = await collectionsReadApi.getItemSlugs(idsToFetch);
+       if (response.error || !response.data) return;
+ 
+       const fetchedSlugs = response.data.slugs;

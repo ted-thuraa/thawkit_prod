@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { collectionsApi } from "@/lib/api";
+import { collectionsReadApi } from "@/lib/editor/editor-read-api";
 import { MULTI_ASSET_COLLECTION_ID } from "@/lib/collection-field-utils";
 import type {
   CollectionItemWithValues,
@@ -136,7 +136,7 @@ export const useCollectionLayerStore = create<CollectionLayerStore>(
       }));
 
       try {
-        const response = await collectionsApi.getItems(collectionId, {
+        const response = await collectionsReadApi.getItems(collectionId, {
           limit: 100,
         });
 
@@ -186,7 +186,7 @@ export const useCollectionLayerStore = create<CollectionLayerStore>(
       });
 
       try {
-        const response = await collectionsApi.getReferencedItemsBatch(
+        const response = await collectionsReadApi.getReferencedItemsBatch(
           toFetch,
           100,
         );
@@ -285,7 +285,7 @@ export const useCollectionLayerStore = create<CollectionLayerStore>(
         let request = sharedLayerRequests.get(requestKey);
         if (!request) {
           request = (async () => {
-            const response = await collectionsApi.getItems(collectionId, {
+            const response = await collectionsReadApi.getItems(collectionId, {
               sortBy,
               sortOrder,
               limit,
@@ -435,7 +435,7 @@ export const useCollectionLayerStore = create<CollectionLayerStore>(
             let request = sharedLayerRequests.get(requestKey);
             if (!request) {
               request = (async () => {
-                const response = await collectionsApi.getItems(
+                const response = await collectionsReadApi.getItems(
                   config.collectionId,
                   {
                     sortBy: config.sortBy,
@@ -516,7 +516,7 @@ export const useCollectionLayerStore = create<CollectionLayerStore>(
         const baseOffset = meta.baseOffset ?? 0;
         const offset = baseOffset + (page - 1) * meta.itemsPerPage;
 
-        const response = await collectionsApi.getItems(config.collectionId, {
+        const response = await collectionsReadApi.getItems(config.collectionId, {
           sortBy: config.sortBy,
           sortOrder: config.sortOrder,
           limit: meta.itemsPerPage,

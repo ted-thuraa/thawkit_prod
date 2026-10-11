@@ -10,7 +10,6 @@ import {
   getTableColumns,
   inArray,
   isNull,
-  lte,
   sql,
 } from "drizzle-orm";
 import { db } from "@/drizzle/db";
@@ -22,6 +21,12 @@ import {
   type CollectionItemRow,
 } from "@/drizzle/schemas/collections-schema";
 import { getSortParams } from "@/lib/collection-utils";
+import {
+  compareManual,
+  fieldSortValueExpr,
+  loadItemValues,
+  topItemsWindowed,
+} from "@/lib/editor/collection-sql";
 import type {
   CollectionField,
   CollectionItemWithValues,
@@ -33,7 +38,6 @@ import {
   collectionFieldFromRow,
   collectionFromRow,
   collectionItemFromRow,
-  foldItemValues,
 } from "./mappers";
 import type { CollectionsBootstrapData } from "./types";
 
@@ -66,8 +70,6 @@ import type { CollectionsBootstrapData } from "./types";
 /** Items preloaded per collection — matches Ycode's PRELOAD_LIMIT. */
 export const COLLECTION_PRELOAD_LIMIT = 25;
 
-const ID_CHUNK_SIZE = 1000;
-
 const EMPTY: CollectionsBootstrapData = {
   collections: [],
   fields: {},
@@ -75,12 +77,6 @@ const EMPTY: CollectionsBootstrapData = {
   itemsTotalCount: {},
   lastItemsQuery: {},
 };
-
-function chunk<T>(list: readonly T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
-  return out;
-}
 
 /**
  * Same comparator the client store used after its batch preload: numeric when
@@ -105,55 +101,12 @@ function sortItemsByValue(
   });
 }
 
-/** Manual order, then newest first, then id — deterministic. */
-function compareManual(a: CollectionItemRow, b: CollectionItemRow): number {
-  if (a.manualOrder !== b.manualOrder) return a.manualOrder - b.manualOrder;
-  const aTime = a.createdAt?.getTime() ?? 0;
-  const bTime = b.createdAt?.getTime() ?? 0;
-  if (aTime !== bTime) return bTime - aTime;
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-}
-
-/**
- * Top-N items per collection for every collection in `collectionIds`, in ONE
- * query, via `row_number() OVER (PARTITION BY collection_id ...)`.
- */
-async function loadTopItemsWindowed(
-  collectionIds: readonly string[],
-): Promise<CollectionItemRow[]> {
-  if (collectionIds.length === 0) return [];
-
-  const ranked = db
-    .select({
-      ...getTableColumns(collectionItem),
-      rn: sql<number>`row_number() over (
-        partition by ${collectionItem.collectionId}
-        order by ${collectionItem.manualOrder} asc,
-                 ${collectionItem.createdAt} desc,
-                 ${collectionItem.id} asc
-      )`.as("rn"),
-    })
-    .from(collectionItem)
-    .where(
-      and(
-        inArray(collectionItem.collectionId, [...collectionIds]),
-        eq(collectionItem.isPublished, false),
-        isNull(collectionItem.deletedAt),
-      ),
-    )
-    .as("ranked");
-
-  return db
-    .select()
-    .from(ranked)
-    .where(lte(ranked.rn, COLLECTION_PRELOAD_LIMIT));
-}
-
 /**
  * Top-N items for ONE collection sorted by a field's value (collections with
  * more than N items, where the first page cannot be sorted client-side).
- * Items with no value sort last (ASC) / first (DESC), matching what a
- * client-side sort would produce. Number-typed fields sort numerically —
+ * Empty values are the smallest — first ascending, last descending — the
+ * same as `sortItemsByValue` below and the editor's client comparator, so a
+ * collection never changes how it places empties as it grows past one page. Number-typed fields sort numerically —
  * Ycode sorts the raw text, which orders "10" before "9".
  */
 async function loadTopItemsSorted(
@@ -164,11 +117,7 @@ async function loadTopItemsSorted(
 ): Promise<CollectionItemRow[]> {
   const civ = alias(collectionItemValue, "civ");
 
-  const numeric = sortFieldType === "number" || sortFieldType === "count";
-  // `[.]` rather than `\.` — a backslash would be eaten by the template literal.
-  const sortExpr = numeric
-    ? sql`CASE WHEN ${civ.value} ~ '^-?[0-9]+([.][0-9]+)?$' THEN ${civ.value}::numeric END`
-    : sql`${civ.value}`;
+  const sortExpr = fieldSortValueExpr(civ.value, sortFieldType);
 
   return db
     .select(getTableColumns(collectionItem))
@@ -191,8 +140,8 @@ async function loadTopItemsSorted(
     )
     .orderBy(
       direction === "desc"
-        ? sql`${sortExpr} DESC NULLS FIRST`
-        : sql`${sortExpr} ASC NULLS LAST`,
+        ? sql`${sortExpr} DESC NULLS LAST`
+        : sql`${sortExpr} ASC NULLS FIRST`,
       asc(collectionItem.manualOrder),
       asc(collectionItem.id),
     )
@@ -282,7 +231,7 @@ export async function loadCollectionsBootstrap(
   const windowedIds = collectionIds.filter((id) => !serverSortedIds.has(id));
 
   const [windowedRows, ...sortedResults] = await Promise.all([
-    loadTopItemsWindowed(windowedIds),
+    topItemsWindowed(windowedIds, COLLECTION_PRELOAD_LIMIT),
     ...serverSorted.map((row) => {
       const sorting = row.sorting as CollectionSorting;
       const sortField = fieldsByCollection
@@ -313,27 +262,7 @@ export async function loadCollectionsBootstrap(
   const itemIds = [...itemRowsByCollection.values()].flatMap((rows) =>
     rows.map((row) => row.id),
   );
-  const valueRows = (
-    await Promise.all(
-      chunk(itemIds, ID_CHUNK_SIZE).map((ids) =>
-        db
-          .select({
-            itemId: collectionItemValue.itemId,
-            fieldId: collectionItemValue.fieldId,
-            value: collectionItemValue.value,
-          })
-          .from(collectionItemValue)
-          .where(
-            and(
-              inArray(collectionItemValue.itemId, ids),
-              eq(collectionItemValue.isPublished, false),
-              isNull(collectionItemValue.deletedAt),
-            ),
-          ),
-      ),
-    )
-  ).flat();
-  const valuesByItem = foldItemValues(valueRows);
+  const valuesByItem = await loadItemValues(itemIds);
 
   // Assemble
   const fields: Record<string, CollectionField[]> = {};

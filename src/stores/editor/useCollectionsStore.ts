@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { collectionsApi } from "@/lib/api";
-import { sortCollectionsByOrder, getSortParams } from "@/lib/collection-utils";
+import { collectionsReadApi } from "@/lib/editor/editor-read-api";
+import { sortCollectionsByOrder } from "@/lib/collection-utils";
 import {
   MULTI_ASSET_COLLECTION_ID,
   findStatusFieldId,
@@ -57,13 +58,12 @@ interface CollectionsState {
 interface CollectionsActions {
   // Collections
   loadCollections: () => Promise<void>;
-  preloadCollectionsAndItems: (collections: Collection[]) => Promise<void>;
   /**
    * Atomically seed the store from the server bootstrap — collections,
    * fields, and the first page of items per collection — in ONE update with
    * no network. Replaces the `loadCollections` → `loadFields(null)` →
-   * `preloadCollectionsAndItems` client waterfall for the editor's initial
-   * load (those legacy actions remain for on-demand refreshes).
+   * waterfall for the editor's initial load. `loadCollections` now refreshes
+   * through the same server loader.
    */
   hydrateFromBootstrap: (data: CollectionsBootstrapData) => void;
   /** The bootstrap's collections section failed — surface it, show nothing stale. */
@@ -202,144 +202,37 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     set({ isLoading: true, error: null });
 
     try {
-      const response = await collectionsApi.getAll();
+      // One server round trip runs the same loader as the initial bootstrap
+      // (collections + fields + first page of items), replacing the old
+      // getAll → getAllFields → getTopItems client waterfall.
+      const response = await collectionsReadApi.refresh();
 
-      if (response.error) {
-        throw new Error(response.error);
+      if (response.error || !response.data) {
+        throw new Error(response.error || "Failed to load collections");
       }
 
-      const collections = response.data || [];
-      await get().preloadCollectionsAndItems(collections);
+      const data = response.data;
+      set((state) => ({
+        collections: sortCollectionsByOrder(data.collections),
+        fields: data.fields,
+        items: data.items,
+        itemsTotalCount: data.itemsTotalCount,
+        lastItemsQuery: data.lastItemsQuery,
+        // A refresh must not drop the user's selection unless it no longer exists.
+        selectedCollectionId: data.collections.some(
+          (c) => c.id === state.selectedCollectionId,
+        )
+          ? state.selectedCollectionId
+          : null,
+        isLoading: false,
+        error: null,
+      }));
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to load collections";
       set({ error: errorMessage, isLoading: false });
       throw error;
     }
-  },
-
-  preloadCollectionsAndItems: async (collections: Collection[]) => {
-    const sortedCollections = sortCollectionsByOrder(collections);
-    set({ collections: sortedCollections, isLoading: false });
-
-    // Preload all fields in a single query
-    await get().loadFields(null);
-
-    // Skip item preload if no collections
-    if (collections.length === 0) {
-      return;
-    }
-
-    const PRELOAD_LIMIT = 25;
-
-    // Split collections: batch preload works for manual sort or when all items fit
-    const batchCollections: Collection[] = [];
-    const sortedCollections_: Collection[] = [];
-
-    collections.forEach((collection) => {
-      const sorting = collection.sorting;
-      const totalCount = collection.draft_items_count ?? 0;
-      const needsServerSort =
-        sorting && sorting.direction !== "manual" && totalCount > PRELOAD_LIMIT;
-      if (needsServerSort) {
-        sortedCollections_.push(collection);
-      } else {
-        batchCollections.push(collection);
-      }
-    });
-
-    // Fetch both groups in parallel:
-    // 1) Batch endpoint for manual-sort / small collections
-    // 2) Individual sorted API calls for collections needing server-side sort
-    const batchIds = batchCollections.map((c) => c.id);
-    const [batchResponse, ...sortedResponses] = await Promise.all([
-      batchIds.length > 0
-        ? collectionsApi.getTopItemsPerCollection(batchIds, PRELOAD_LIMIT)
-        : Promise.resolve({
-            data: {
-              items: {} as Record<
-                string,
-                { items: CollectionItemWithValues[] }
-              >,
-            },
-            error: null,
-          }),
-      ...sortedCollections_.map((c) =>
-        collectionsApi.getItems(c.id, {
-          page: 1,
-          limit: PRELOAD_LIMIT,
-          sortBy: c.sorting!.field,
-          sortOrder: c.sorting!.direction,
-        }),
-      ),
-    ]);
-
-    if (batchResponse.error) {
-      throw new Error(`Failed to preload items: ${batchResponse.error}`);
-    }
-
-    const batchItems = batchResponse.data?.items || {};
-    const itemsMap: Record<string, CollectionItemWithValues[]> = {};
-    const itemsTotalCountMap: Record<string, number> = {};
-    const queryMap: Record<string, ItemsQueryParams> = {};
-
-    // Process batch-preloaded collections (manual sort or total <= limit)
-    batchCollections.forEach((collection) => {
-      const batchResult = batchItems[collection.id];
-      let preloadedItems = batchResult?.items || [];
-      const sorting = collection.sorting;
-      const totalCount = collection.draft_items_count ?? 0;
-
-      if (sorting && sorting.direction !== "manual") {
-        preloadedItems = [...preloadedItems].sort((a, b) => {
-          const aValue = a.values[sorting.field] || "";
-          const bValue = b.values[sorting.field] || "";
-          const aNum = parseFloat(String(aValue));
-          const bNum = parseFloat(String(bValue));
-          if (!isNaN(aNum) && !isNaN(bNum)) {
-            return sorting.direction === "asc" ? aNum - bNum : bNum - aNum;
-          }
-          const cmp = String(aValue).localeCompare(String(bValue));
-          return sorting.direction === "asc" ? cmp : -cmp;
-        });
-      }
-
-      itemsMap[collection.id] = preloadedItems;
-      itemsTotalCountMap[collection.id] = totalCount;
-      queryMap[collection.id] = {
-        page: 1,
-        limit: PRELOAD_LIMIT,
-        ...getSortParams(sorting),
-      };
-    });
-
-    // Process server-sorted collections
-    sortedCollections_.forEach((collection, i) => {
-      const resp = sortedResponses[i];
-      const totalCount = collection.draft_items_count ?? 0;
-      itemsMap[collection.id] = resp.data?.items || [];
-      itemsTotalCountMap[collection.id] = resp.data?.total ?? totalCount;
-      queryMap[collection.id] = {
-        page: 1,
-        limit: PRELOAD_LIMIT,
-        ...getSortParams(collection.sorting),
-      };
-    });
-
-    set((state) => ({
-      items: {
-        ...state.items,
-        ...itemsMap,
-      },
-      itemsTotalCount: {
-        ...state.itemsTotalCount,
-        ...itemsTotalCountMap,
-      },
-      lastItemsQuery: {
-        ...state.lastItemsQuery,
-        ...queryMap,
-      },
-    }));
   },
 
   createCollection: async (data) => {
@@ -610,7 +503,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     try {
       // If collectionId is null, load all fields for all collections in one query
       if (collectionId === null) {
-        const response = await collectionsApi.getAllFields();
+        const response = await collectionsReadApi.getAllFields();
 
         if (response.error) {
           throw new Error(response.error);
@@ -636,7 +529,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
         }));
       } else {
         // Load fields for a specific collection
-        const response = await collectionsApi.getFields(collectionId, search);
+        const response = await collectionsReadApi.getFields(collectionId, search);
 
         if (response.error) {
           throw new Error(response.error);
@@ -774,7 +667,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     }));
 
     try {
-      const response = await collectionsApi.getItems(collectionId, {
+      const response = await collectionsReadApi.getItems(collectionId, {
         page,
         limit,
         sortBy,
@@ -1224,7 +1117,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     set({ isLoading: true, error: null });
 
     try {
-      const response = await collectionsApi.searchItems(collectionId, query, {
+      const response = await collectionsReadApi.searchItems(collectionId, query, {
         page,
         limit,
         sortBy,
@@ -1530,7 +1423,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     limit = 50,
   ) => {
     try {
-      const response = await collectionsApi.getItems(collectionId, {
+      const response = await collectionsReadApi.getItems(collectionId, {
         search: query,
         limit,
         includeAssets: true,
@@ -1579,7 +1472,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     if (existing.some((item) => item.id === itemId)) return;
 
     try {
-      const response = await collectionsApi.getItemById(collectionId, itemId);
+      const response = await collectionsReadApi.getItemById(collectionId, itemId);
       if (response.error || !response.data) return;
       const item = response.data;
 
@@ -1606,7 +1499,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     if (idsToFetch.length === 0) return;
 
     try {
-      const response = await collectionsApi.getItemSlugs(idsToFetch);
+      const response = await collectionsReadApi.getItemSlugs(idsToFetch);
       if (response.error || !response.data) return;
 
       const fetchedSlugs = response.data.slugs;

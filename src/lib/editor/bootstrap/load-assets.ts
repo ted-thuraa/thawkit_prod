@@ -36,21 +36,32 @@ export interface AssetFoldersAndLibrary {
   assets: Asset[];
 }
 
+/** Every live draft folder of the organization's library, tree order. */
+export async function loadAssetFolders(
+  organizationId: string,
+): Promise<AssetFolder[]> {
+  const orgId = assertTenantId("organizationId", organizationId);
+
+  const rows = await db.query.assetFolder.findMany({
+    where: {
+      organizationId: orgId,
+      isPublished: false,
+      deletedAt: { isNull: true },
+    },
+    orderBy: { order: "asc", name: "asc", id: "asc" },
+  });
+
+  return rows.map(assetFolderFromRow);
+}
+
 /** Independent of page content — safe to start before pages have loaded. */
 export async function loadAssetFoldersAndLibraryPage(
   organizationId: string,
 ): Promise<AssetFoldersAndLibrary> {
   const orgId = assertTenantId("organizationId", organizationId);
 
-  const [folderRows, assetRows] = await Promise.all([
-    db.query.assetFolder.findMany({
-      where: {
-        organizationId: orgId,
-        isPublished: false,
-        deletedAt: { isNull: true },
-      },
-      orderBy: { order: "asc", name: "asc", id: "asc" },
-    }),
+  const [folders, assetRows] = await Promise.all([
+    loadAssetFolders(orgId),
     db.query.asset.findMany({
       where: {
         organizationId: orgId,
@@ -64,7 +75,7 @@ export async function loadAssetFoldersAndLibraryPage(
   ]);
 
   return {
-    folders: folderRows.map(assetFolderFromRow),
+    folders,
     assets: assetRows.map(assetFromRow),
   };
 }
