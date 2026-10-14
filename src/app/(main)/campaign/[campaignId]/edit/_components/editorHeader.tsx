@@ -56,6 +56,7 @@ import { GoDeviceDesktop } from "react-icons/go";
 import Icon from "@/components/ui/icon";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
+import { selectSaveState, usePagesStore } from "@/stores/editor/usePagesStore";
 import { publishFunnelAction } from "@/actions/editor/editor-actions";
 
 type EditorHeaderProps = {
@@ -105,12 +106,10 @@ export function EditorHeader({ campaignId, user }: EditorHeaderProps) {
   const { toggleSidebar } = useSidebar();
   const isMobile = useIsMobile();
   const router = useRouter();
-  // FIXED (Phase 6): was local `useState(false)`, entirely disconnected
-  // from whether a save was actually happening — EditorBody.tsx now
-  // triggers real saves (saveDraftLayersAction) after every layer/page
-  // mutation, tracked in useEditorStore.isSaving. This indicator reads
-  // that directly instead of carrying its own always-false copy.
-  const isSaving = useEditorStore((state) => state.isSaving);
+  // Aggregate autosave state across every page, owned by `usePagesStore`:
+  // "unsaved" = edits inside the 2 s debounce window, "saving" = a request is
+  // in flight, "error" = the last save failed (it keeps retrying).
+  const saveState = usePagesStore(selectSaveState);
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
 
@@ -158,14 +157,26 @@ export function EditorHeader({ campaignId, user }: EditorHeaderProps) {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
-  // Still a stub — a real Save button beyond the automatic per-edit
-  // persistence EditorBody.tsx already does isn't needed yet; kept for
-  // parity with the original shell in case a manual "force save" action
-  // is wanted later.
+  // Still a stub — a manual Save button isn't needed now that every page is
+  // autosaved by `usePagesStore`; kept in case a "force save" action is wanted
+  // later (it would call `usePagesStore.getState().flushPendingSaves()`).
   const handleSave = async () => {};
 
   async function handlePublish() {
     setIsPublishing(true);
+
+    // Publishing snapshots the SAVED pages, not the editor's in-memory copy.
+    // Edits still inside the autosave window would be silently left out, so
+    // write them first — and refuse to publish if that fails.
+    const allSaved = await usePagesStore.getState().flushPendingSaves();
+    if (!allSaved) {
+      setIsPublishing(false);
+      toast.error("Couldn't save your latest changes, so nothing was published.", {
+        description: "Check your connection and try again.",
+      });
+      return;
+    }
+
     const result = await publishFunnelAction(campaignId);
     setIsPublishing(false);
 
@@ -450,23 +461,29 @@ export function EditorHeader({ campaignId, user }: EditorHeaderProps) {
         {/* Right: User & Actions */}
         <div className="flex items-center justify-end gap-2">
           {/* Save Status Indicator */}
-          <div className="flex items-center justify-end w-16 text-xs text-zinc-500 dark:text-white/50">
-            {isSaving ? (
-              <>
-                <span>Saving</span>
-              </>
-            ) : (
-              <>
-                <span>Ready</span>
-              </>
-            )}
+          <div
+            className={`flex items-center justify-end w-20 text-xs ${
+              saveState === "error"
+                ? "text-red-500"
+                : "text-zinc-500 dark:text-white/50"
+            }`}
+            aria-live="polite"
+          >
+            <span>
+              {saveState === "saving"
+                ? "Saving"
+                : saveState === "unsaved"
+                  ? "Unsaved"
+                  : saveState === "error"
+                    ? "Save failed"
+                    : "Ready"}
+            </span>
           </div>
           {/* Preview button */}
           <Button
             size="sm"
             variant="secondary"
             //onClick={}
-            //disabled={ isSaving}
             className={
               isPreviewMode
                 ? "bg-black text-white hover:bg-black/90 dark:bg-white dark:text-black dark:hover:bg-white/90"
@@ -479,7 +496,7 @@ export function EditorHeader({ campaignId, user }: EditorHeaderProps) {
           <Button
             size="sm"
             onClick={handlePublish}
-            disabled={isPublishing || isSaving}
+            disabled={isPublishing || saveState === "saving"}
           >
             {isPublishing ? "Publishing…" : "Publish"}
           </Button>

@@ -22,6 +22,7 @@ import { usePagesStore } from "./usePagesStore";
  * singletons, which on the server are shared across requests.
  *
  * Order matters and is preserved from the previous inline effect:
+ *   0. flush unsaved page edits of the previous campaign,
  *   1. reset everything bound to the previous campaign (the editor store's
  *      reset also clears the pages store and restores the sidebar tab),
  *   2. hydrate critical data (pages → styles → components),
@@ -32,6 +33,12 @@ import { usePagesStore } from "./usePagesStore";
  * dev-only double effect) lands in the same state.
  */
 export function hydrateEditorStores(bootstrap: EditorBootstrapContext): void {
+  // 0 ── send any unsaved page edits for the PREVIOUS campaign. This must come
+  // first: the save needs the previous campaign id (cleared by the reset just
+  // below) and the previous layers (cleared by the pages-store reset). It
+  // snapshots both synchronously, so the network call outlives the reset.
+  void usePagesStore.getState().flushPendingSaves();
+
   // 1 ── reset
   useEditorBootstrapStore.getState().reset();
   useEditorStore.getState().resetForNewCampaign();
@@ -41,7 +48,9 @@ export function hydrateEditorStores(bootstrap: EditorBootstrapContext): void {
   useCollectionLayerStore.getState().clearAllLayerData();
 
   // 2 ── critical
-  usePagesStore.getState().hydrateFromBootstrap(bootstrap.pages);
+  usePagesStore
+    .getState()
+    .hydrateFromBootstrap(bootstrap.pages, bootstrap.pageLayers);
   // Styles and components hydrate before any retained canvas / layer-menu
   // code resolves references; the components store also drops the previous
   // campaign's drafts and pending saves.

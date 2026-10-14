@@ -57,7 +57,6 @@ import { useEditorStore } from "@/stores/editor/useEditorStore";
 import { useComponentsStore } from "@/stores/editor/useComponentsStore";
 import { ASSET_CATEGORIES, getAssetIcon } from "@/lib/asset-utils";
 import { toast } from "sonner";
-import { pagesApi } from "@/lib/api";
 import {
   canLayerHaveLink,
   getCollectionVariable,
@@ -148,7 +147,7 @@ export default function LinkSettings(props: LinkSettingsProps) {
 
   // Stores
   const pages = usePagesStore((state) => state.pages);
-  const draftsByPageId = usePagesStore((state) => state.draftsByPageId);
+  const pagesByPageId = usePagesStore((state) => state.pagesByPageId);
   const currentPageId = useEditorStore((state) => state.currentPageId);
   const openFileManager = useEditorStore((state) => state.openFileManager);
   const editingComponentId = useEditorStore(
@@ -249,11 +248,11 @@ export default function LinkSettings(props: LinkSettingsProps) {
 
     if (!targetPageId) return [];
 
-    const draft = draftsByPageId[targetPageId];
-    if (!draft || !draft.layers) return [];
+    const targetLayers = pagesByPageId[targetPageId]?.layers;
+    if (!targetLayers) return [];
 
-    return findLayersWithAnchorId(draft.layers);
-  }, [linkType, pageId, currentPageId, draftsByPageId]);
+    return findLayersWithAnchorId(targetLayers);
+  }, [linkType, pageId, currentPageId, pagesByPageId]);
 
   // Check if selected page is dynamic
   const isDynamicPage = selectedPage?.isDynamic || false;
@@ -333,11 +332,11 @@ export default function LinkSettings(props: LinkSettingsProps) {
   const linkNestingIssue = useMemo(() => {
     if (!layer || !currentPageId) return null;
 
-    const draft = draftsByPageId[currentPageId];
-    if (!draft || !draft.layers) return null;
+    const currentLayers = pagesByPageId[currentPageId]?.layers;
+    if (!currentLayers) return null;
 
     // Check if layer can have a layer-level link (includes rich text links check)
-    const { canHaveLinks, issue } = canLayerHaveLink(layer, draft.layers);
+    const { canHaveLinks, issue } = canLayerHaveLink(layer, currentLayers);
 
     if (!canHaveLinks && issue) {
       // Unsupported layer types (iframe-based) can never have a link — always
@@ -348,7 +347,7 @@ export default function LinkSettings(props: LinkSettingsProps) {
     }
 
     return null;
-  }, [layer, currentPageId, draftsByPageId, linkType]);
+  }, [layer, currentPageId, pagesByPageId, linkType]);
 
   // Link type options for the dropdown
   const linkTypeOptions = useMemo<

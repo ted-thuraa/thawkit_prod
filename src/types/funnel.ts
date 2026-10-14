@@ -1356,11 +1356,15 @@ export type VisibilityOperator =
 export type PageType = "landing_page" | "normal_page" | "result_page";
 
 /**
- * Authoritative editor-side page model. Field names are camelCase and mirror
- * the Drizzle `pages` row (`InferSelectModel<typeof page>`) so bootstrap rows
- * can be mapped 1:1 — the only differences are that `settings` is narrowed
- * from `unknown` to `PageSettings` and `layers` is the recursive `Layer[]` tree.
- * `usePagesStore.pages` is the single source of truth for `layers`.
+ * Page METADATA — everything about a page except its layer tree. Field names
+ * are camelCase and mirror the Drizzle `pages` row (`InferSelectModel<typeof
+ * page>`) so bootstrap rows map 1:1; the only differences are that `settings`
+ * is narrowed from `unknown` to `PageSettings` and `layers` is NOT carried
+ * here.
+ *
+ * A page's layer tree lives in exactly one place: `usePagesStore.pagesByPageId`
+ * (see `PageLayers`). Keeping it off `Page` makes it impossible for two
+ * copies of the tree to exist and drift apart.
  */
 export interface Page {
   id: string;
@@ -1371,12 +1375,33 @@ export interface Page {
   depth: number | null; // Depth in hierarchy
   pageType: PageType;
   isDynamic: boolean; // Dynamic page (CMS-driven)
-  layers: Layer[]; // Recursive layer tree (root-level array, normally a single `body` layer)
   settings: PageSettings; // Page settings (CMS, seo, custom code)
   contentHash: string | null; // SHA-256 hash of page content for change detection
   createdAt: Date;
   updatedAt: Date;
   publishedAt: Date | null; // null = never published
+}
+
+/**
+ * The editor's working copy of ONE page's layer tree — the value type of
+ * `usePagesStore.pagesByPageId`. Snake_case on purpose: it is the shape the
+ * layer-editing code and the Ycode-derived utilities already speak.
+ *
+ * Edits are applied here in memory, auto-saved to the database after a
+ * 2-second debounce, and published separately only when the user explicitly
+ * publishes — publishing never reads this map, it snapshots the saved rows.
+ */
+export interface PageLayers {
+  /** Equal to `page_id`: there is exactly one working copy per page. */
+  id: string;
+  page_id: string;
+  /** Recursive layer tree (root-level array, normally a single `body` layer). */
+  layers: Layer[];
+  /** Always `false` — this is the editable working copy, never a published snapshot. */
+  is_published: false;
+  content_hash: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PageSettings {

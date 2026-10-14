@@ -254,8 +254,8 @@ export function useUndoRedo({
     );
   });
 
-  const pagesByPageId = usePagesStore((state) => state.pages);
-  const setDraftLayers = usePagesStore((state) => state.setLayers);
+  const pagesByPageId = usePagesStore((state) => state.pagesByPageId);
+  const setPageLayers = usePagesStore((state) => state.setLayers);
   const componentDrafts = useComponentsStore((state) => state.componentDrafts);
   const updateComponentDraft = useComponentsStore(
     (state) => state.updateComponentDraft,
@@ -293,8 +293,7 @@ export function useUndoRedo({
 
     switch (entityType) {
       case "page_layers": {
-        const page = pagesByPageId.find((p) => p.id === entityId);
-        return page?.layers || [];
+        return pagesByPageId[entityId]?.layers || [];
       }
       case "component": {
         // Track the variant currently being edited so undo/redo operates on the
@@ -332,7 +331,7 @@ export function useUndoRedo({
 
       switch (entityType) {
         case "page_layers": {
-          setDraftLayers(entityId, state as Layer[]);
+          setPageLayers(entityId, state as Layer[]);
           break;
         }
         case "component": {
@@ -377,7 +376,7 @@ export function useUndoRedo({
     [
       entityType,
       entityId,
-      setDraftLayers,
+      setPageLayers,
       updateComponentDraft,
       resolveComponentVariantId,
     ],

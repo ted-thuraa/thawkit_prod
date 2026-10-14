@@ -2,7 +2,7 @@
  * Layer Styles Store
  *
  * Global state management for layer styles
- * Layer styles are part of the page draft and get published when the page is published
+ * Layer styles are applied to the pages' working layer trees (`usePagesStore.pagesByPageId`) and get published when the funnel is published
  */
 
 import { create } from "zustand";
@@ -259,9 +259,8 @@ export const useLayerStylesStore = create<LayerStylesStore>((set, get) => ({
 
           for (const entity of affectedEntities) {
             if (entity.type === "page" && entity.pageId) {
-              // Update the page draft with new layers (style detached)
-              const currentDraft = pagesStore.getPageById(entity.pageId);
-              if (currentDraft) {
+              // Write the page's new tree (style detached) into pagesByPageId
+              if (pagesStore.getPageLayers(entity.pageId)) {
                 pagesStore.setLayers(entity.pageId, entity.newLayers);
               }
             } else if (entity.type === "component") {

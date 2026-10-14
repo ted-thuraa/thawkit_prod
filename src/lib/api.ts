@@ -228,27 +228,6 @@ export const layersApi = {
   },
 };
 
-// Page Layers API (legacy - keeping for backwards compatibility)
-export const pageLayersApi = {
-  // Get draft layers for page
-  async getDraft(pageId: string): Promise<ApiResponse<PageLayers>> {
-    return layersApi.getByPageId(pageId, false);
-  },
-
-  // Update draft layers
-  async updateDraft(
-    pageId: string,
-    layers: Layer[],
-  ): Promise<ApiResponse<PageLayers>> {
-    return layersApi.update(pageId, layers);
-  },
-
-  // Get all draft (non-published) page layers in one query
-  async getAllDrafts(): Promise<ApiResponse<PageLayers[]>> {
-    return apiRequest<PageLayers[]>("/ycode/api/pages/drafts");
-  },
-};
-
 // Publish API - Global publishing endpoint
 export const publishApi = {
   /** Get counts of unpublished items per entity type */

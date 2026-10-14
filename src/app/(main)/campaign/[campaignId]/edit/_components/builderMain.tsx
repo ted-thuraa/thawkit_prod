@@ -22,6 +22,7 @@ import {
   useEditorBootstrapStore,
 } from "@/stores/editor/useEditorBootstrapStore";
 import { hydrateEditorStores } from "@/stores/editor/hydrate-editor-stores";
+import { usePageAutosaveLifecycle } from "@/hooks/use-page-autosave-lifecycle";
 import LeftPanel from "./LeftPanel";
 import RightPanelDrawer from "./RightPanelDrawer";
 import EditorToolbar from "./EditorToolbar";
@@ -137,6 +138,10 @@ export function CampaignEditorMain({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId]);
 
+  // Browser-lifecycle glue for autosave (flush on hide/unload, warn on leave,
+  // notify on failure). The save engine itself lives in usePagesStore.
+  usePageAutosaveLifecycle();
+
   // True only once the stores hold exactly THIS campaign's data. During a
   // client-side campaign switch the singletons still hold the previous
   // campaign's data until the layout effect above runs, so "stores are
@@ -217,7 +222,6 @@ export function CampaignEditorMain({
   // selection changes flow the other way (store → URL) via
   // `setSelectedLayerId`, so this must not re-run on every `layer` change.
   const reconciledPageIdRef = useRef<string | null>(null);
-  const activePageLayers = activePage?.layers;
   const urlLayerId = urlState.layerId;
   useEffect(() => {
     if (!activePage || urlState.type !== "page") return;
@@ -233,7 +237,9 @@ export function CampaignEditorMain({
     };
 
     const requested = urlLayerId || DEFAULT_LAYER_ID;
-    const layers = activePageLayers ?? [];
+    // Read the tree at the moment of reconciliation (not as a subscription):
+    // layer edits must not re-run this effect.
+    const layers = usePagesStore.getState().getLayers(activePage.id) ?? [];
     if (findLayerById(layers, requested)) {
       selectLayerWithSublayer(requested, clean);
     } else if (findLayerById(layers, DEFAULT_LAYER_ID)) {
@@ -241,8 +247,8 @@ export function CampaignEditorMain({
     } else {
       clearSelection();
     }
-    // `urlLayerId` / `activePageLayers` are read only at the moment the
-    // page id changes — see the comment above.
+    // `urlLayerId` is read only at the moment the page id changes — see the
+    // comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage?.id, urlState.type]);
 

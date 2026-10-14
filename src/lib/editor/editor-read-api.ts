@@ -7,6 +7,7 @@ import {
   getCollectionFieldsAction,
   getCollectionItemByIdAction,
   getCollectionItemsAction,
+  getPageLayersAction,
   getItemSlugsAction,
   getReferencedItemsBatchAction,
   refreshCollectionsAction,
@@ -85,6 +86,14 @@ async function call<T>(
   }
   return result.success ? { data: result.data } : { error: result.error };
 }
+
+// ─── Pages ──────────────────────────────────────────────────────────────────
+
+export const pagesReadApi = {
+  /** The last saved layer tree of one page. */
+  getLayers: (pageId: string) =>
+    call((campaignId) => getPageLayersAction(campaignId, pageId)),
+};
 
 // ─── Assets ─────────────────────────────────────────────────────────────────
 

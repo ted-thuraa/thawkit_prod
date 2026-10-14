@@ -170,10 +170,12 @@ export const useColorVariablesStore = create<ColorVariablesStore>(
                 : undefined,
             }));
 
-          // `pages` is the single source of truth for layer trees.
-          for (const page of pagesStore.pages) {
-            pagesStore.setLayers(page.id, replaceInLayers(page.layers));
-          }
+          // Every page's tree lives in `pagesByPageId`. Pages with no
+          // reference to the variable come back deep-equal and are left
+          // alone, so only pages that actually changed get re-saved.
+          pagesStore.transformAllPageLayers((layers) =>
+            replaceInLayers(layers),
+          );
           // Component layers are not detached here: no components store is wired into this route yet.
         } catch (detachError) {
           console.error(

@@ -407,7 +407,7 @@ const SizingControls = memo(function SizingControls({
   const editingComponentVariantId = useEditorStore(
     (s) => s.editingComponentVariantId,
   );
-  const draftsByPageId = usePagesStore((s) => s.draftsByPageId);
+  const pagesByPageId = usePagesStore((s) => s.pagesByPageId);
   const componentDrafts = useComponentsStore((s) => s.componentDrafts);
 
   // Check if parent layer has grid display
@@ -425,8 +425,7 @@ const SizingControls = memo(function SizingControls({
             : null;
       layers = variantId && variantDrafts ? variantDrafts[variantId] || [] : [];
     } else if (currentPageId) {
-      const draft = draftsByPageId[currentPageId];
-      layers = draft ? draft.layers : [];
+      layers = pagesByPageId[currentPageId]?.layers ?? [];
     }
 
     if (!layers.length) return false;
@@ -457,7 +456,7 @@ const SizingControls = memo(function SizingControls({
     layer,
     currentPageId,
     editingComponentId,
-    draftsByPageId,
+    pagesByPageId,
     componentDrafts,
   ]);
 

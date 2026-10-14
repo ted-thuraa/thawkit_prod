@@ -99,7 +99,7 @@ export default function RichTextLinkSettings({
 }: RichTextLinkSettingsProps) {
   // Stores
   const pages = usePagesStore((state) => state.pages);
-  const draftsByPageId = usePagesStore((state) => state.draftsByPageId);
+  const pagesByPageId = usePagesStore((state) => state.pagesByPageId);
   const currentPageId = useEditorStore((state) => state.currentPageId);
   const openFileManager = useEditorStore((state) => state.openFileManager);
   const getAsset = useAssetsStore((state) => state.getAsset);
@@ -159,11 +159,11 @@ export default function RichTextLinkSettings({
 
     if (!targetPageId) return [];
 
-    const draft = draftsByPageId[targetPageId];
-    if (!draft || !draft.layers) return [];
+    const targetLayers = pagesByPageId[targetPageId]?.layers;
+    if (!targetLayers) return [];
 
-    return findLayersWithAnchorId(draft.layers);
-  }, [linkType, pageId, currentPageId, draftsByPageId]);
+    return findLayersWithAnchorId(targetLayers);
+  }, [linkType, pageId, currentPageId, pagesByPageId]);
 
   // Check if selected page is dynamic
   const isDynamicPage = selectedPage?.isDynamic || false;

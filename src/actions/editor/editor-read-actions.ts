@@ -18,6 +18,10 @@ import {
 } from "@/lib/editor/read/collection-queries";
 import { requireCampaignScope } from "@/lib/editor/read/guards";
 import {
+  queryPageLayers,
+  type PageLayersSnapshot,
+} from "@/lib/editor/read/page-queries";
+import {
   assetIdsSchema,
   collectionIdsSchema,
   collectionItemsOptionsSchema,
@@ -67,6 +71,27 @@ import type {
 /** Steps 1–2. Not exported: a "use server" module may only export async actions. */
 async function authorize(campaignId: string) {
   return requireCampaignScope(idSchema.parse(campaignId));
+}
+
+// ─── Pages ──────────────────────────────────────────────────────────────────
+
+/**
+ * The last SAVED layer tree of one page — the refresh path behind the pages
+ * store's `reloadPage` (undo/redo "restore latest"). Returns what autosave
+ * last wrote, which can lag the editor's in-memory copy by up to the autosave
+ * debounce.
+ */
+export async function getPageLayersAction(
+  campaignId: string,
+  pageId: string,
+): Promise<ActionResult<PageLayersSnapshot>> {
+  try {
+    const scope = await authorize(campaignId);
+    const id = idSchema.parse(pageId);
+    return { success: true, data: await queryPageLayers(scope, id) };
+  } catch (error) {
+    return toErrorResult(error, "Failed to load page.");
+  }
 }
 
 // ─── Assets ─────────────────────────────────────────────────────────────────

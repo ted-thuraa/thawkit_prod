@@ -47,7 +47,7 @@ import {
   useEditorStore,
 } from "@/stores/editor/useEditorStore";
 import { useComponentsStore } from "@/stores/editor/useComponentsStore";
-import { usePagesStore } from "@/stores/editor/usePagesStore";
+import { usePagesStore, selectPageLayers } from "@/stores/editor/usePagesStore";
 import { useCollectionsStore } from "@/stores/editor/useCollectionsStore";
 import { useGlobalsStore } from "@/stores/editor/useGlobalsStore";
 import { useLayerStylesStore } from "@/stores/editor/useLayerStylesStore";
@@ -395,10 +395,8 @@ const RightPanelContent = React.memo(function RightPanelContent({
   //const layerLocksRef = useRef(layerLocks);
   //layerLocksRef.current = layerLocks;
 
-  const currentDraft = usePagesStore((state) =>
-    currentPageId ? state.draftsByPageId[currentPageId] : null,
-  );
-  const setDraftLayers = usePagesStore((state) => state.setDraftLayers);
+  const currentPageLayers = usePagesStore(selectPageLayers(currentPageId));
+  const setPageLayers = usePagesStore((state) => state.setLayers);
   const pages = usePagesStore((state) => state.pages);
 
   const getComponentById = useComponentsStore(
@@ -436,7 +434,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
         componentDrafts[editingComponentId]?.[activeComponentVariantId] || []
       );
     } else if (currentPageId) {
-      return currentDraft ? currentDraft.layers : [];
+      return currentPageLayers ?? [];
     }
     return [];
   }, [
@@ -444,7 +442,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
     activeComponentVariantId,
     componentDrafts,
     currentPageId,
-    currentDraft,
+    currentPageLayers,
   ]);
 
   const layerIndexes = useMemo(() => {
@@ -1474,9 +1472,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                 editingComponentId
               ]?.[activeComponentVariantId]
             : currentPageId
-              ? usePagesStore
-                  .getState()
-                  .pages.find((page) => page.id === currentPageId)?.layers
+              ? usePagesStore.getState().getLayers(currentPageId)
               : null;
 
         if (!currentLayers) return;
@@ -1495,7 +1491,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
                 cleanedLayers,
               );
           } else if (currentPageId) {
-            setDraftLayers(currentPageId, cleanedLayers);
+            setPageLayers(currentPageId, cleanedLayers);
           }
         }
       }, 0);
@@ -1504,7 +1500,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
       editingComponentId,
       activeComponentVariantId,
       currentPageId,
-      setDraftLayers,
+      setPageLayers,
     ],
   );
 
@@ -2048,10 +2044,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
         ] || []
       );
     } else if (currentPageId) {
-      const page = usePagesStore
-        .getState()
-        .pages.find((page) => page.id === currentPageId);
-      return page ? page.layers : [];
+      return usePagesStore.getState().getLayers(currentPageId) ?? [];
     }
     return [];
   };

@@ -1220,10 +1220,10 @@ const LayerItemImpl: React.FC<{
 
   const paginationLinkedCollectionLayer = usePagesStore((state) => {
     if (!paginationContextTarget || !pageId) return null;
-    const draft = state.pages.find((p) => p.id === pageId);
-    if (!draft) return null;
+    const pageLayers = state.pagesByPageId[pageId]?.layers;
+    if (!pageLayers) return null;
     return findLayerById(
-      draft.layers,
+      pageLayers,
       paginationContextTarget.collectionLayerId,
     );
   });
@@ -2052,24 +2052,24 @@ const LayerItemImpl: React.FC<{
   //
   // The lookup is scoped to the current page's draft (via the `pageId` prop)
   // because the input layer always lives on the same page as the collection
-  // layer that references it. Walking every draft on every store update would
+  // layer that references it. Walking every page's tree on every store update would
   // cause every collection layer on the canvas to do an O(tree) search per
   // keystroke for unrelated pages.
   const sortByInputDefaultValue = usePagesStore((state) => {
     const inputLayerId = collectionVariable?.sort_by_inputLayerId;
     if (!inputLayerId || !pageId) return undefined;
-    const draft = state.pages.find((p) => p.id === pageId);
-    if (!draft) return undefined;
-    const found = findLayerById(draft.layers, inputLayerId);
+    const pageLayers = state.pagesByPageId[pageId]?.layers;
+    if (!pageLayers) return undefined;
+    const found = findLayerById(pageLayers, inputLayerId);
     return found?.attributes?.value;
   });
 
   const sortOrderInputDefaultValue = usePagesStore((state) => {
     const inputLayerId = collectionVariable?.sort_order_inputLayerId;
     if (!inputLayerId || !pageId) return undefined;
-    const draft = state.pages.find((p) => p.id === pageId);
-    if (!draft) return undefined;
-    const found = findLayerById(draft.layers, inputLayerId);
+    const pageLayers = state.pagesByPageId[pageId]?.layers;
+    if (!pageLayers) return undefined;
+    const found = findLayerById(pageLayers, inputLayerId);
     return found?.attributes?.value;
   });
 
@@ -2227,9 +2227,7 @@ const LayerItemImpl: React.FC<{
       return baseChildren;
     const currentPageId = useEditorStore.getState().currentPageId;
     if (!currentPageId) return baseChildren;
-    const allLayers = usePagesStore
-      .getState()
-      .pages.find((p) => p.id === currentPageId)?.layers;
+    const allLayers = usePagesStore.getState().getLayers(currentPageId);
     if (!allLayers) return baseChildren;
     const slider = findAncestorByName(allLayers, layer.id, "slider");
     if (!slider) return baseChildren;

@@ -106,7 +106,6 @@ interface EditorState {
   lastSelectedLayerId: string | null;
   currentPageId: string | null;
   isLoading: boolean;
-  isSaving: boolean;
   activeBreakpoint: Breakpoint;
   activeUIState: UIState;
   activeSidebarTab: EditorSidebarTab;
@@ -209,7 +208,6 @@ interface EditorActions {
   setActiveSidebarTab: (tab: EditorSidebarTab) => void;
   setCurrentPageId: (id: string | null) => void;
   setLoading: (value: boolean) => void;
-  setSaving: (value: boolean) => void;
   setActiveBreakpoint: (breakpoint: Breakpoint) => void;
   setActiveUIState: (state: UIState) => void;
 
@@ -312,7 +310,6 @@ const initialState: EditorState = {
   lastSelectedLayerId: null,
   currentPageId: null,
   isLoading: false,
-  isSaving: false,
   activeBreakpoint: "desktop",
   activeUIState: "neutral",
   history: [],
@@ -489,7 +486,6 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   setCurrentPageId: (id) =>
     set({ currentPageId: id, activeUIState: "neutral" }),
   setLoading: (value) => set({ isLoading: value }),
-  setSaving: (value) => set({ isSaving: value }),
   setActiveBreakpoint: (breakpoint) => set({ activeBreakpoint: breakpoint }),
   setActiveUIState: (uiState) => set({ activeUIState: uiState }),
   setActiveSidebarTab: (tab) => set({ activeSidebarTab: tab }),

@@ -1,6 +1,6 @@
 // path: src/lib/editor/page-from-row.ts
 
-import type { Layer, Page, PageSettings } from "@/types/funnel";
+import type { Layer, Page, PageLayers, PageSettings } from "@/types/funnel";
 import type { PageRow } from "@/lib/editor/resolve-editor-bootstrap";
 
 /**
@@ -16,7 +16,6 @@ export function pageFromRow(row: PageRow): Page {
     rawSettings !== null && typeof rawSettings === "object"
       ? (rawSettings as PageSettings)
       : {};
-  const layers: Layer[] = Array.isArray(row.layers) ? row.layers : [];
 
   return {
     id: row.id,
@@ -27,7 +26,6 @@ export function pageFromRow(row: PageRow): Page {
     depth: row.depth,
     pageType: row.pageType,
     isDynamic: row.isDynamic,
-    layers,
     settings,
     contentHash: row.contentHash,
     createdAt: row.createdAt,
@@ -38,4 +36,26 @@ export function pageFromRow(row: PageRow): Page {
 
 export function pagesFromRows(rows: readonly PageRow[]): Page[] {
   return rows.map(pageFromRow);
+}
+
+/**
+ * The page's working layer tree, split off the row. A legacy row may have a
+ * null / non-array `layers` column; that becomes an empty tree rather than a
+ * crash. `id` is the page id — there is one working copy per page.
+ */
+export function pageLayersFromRow(row: PageRow): PageLayers {
+  const layers: Layer[] = Array.isArray(row.layers) ? row.layers : [];
+  return {
+    id: row.id,
+    page_id: row.id,
+    layers,
+    is_published: false,
+    content_hash: row.contentHash,
+    created_at: row.createdAt.toISOString(),
+    updated_at: row.updatedAt.toISOString(),
+  };
+}
+
+export function pageLayersFromRows(rows: readonly PageRow[]): PageLayers[] {
+  return rows.map(pageLayersFromRow);
 }

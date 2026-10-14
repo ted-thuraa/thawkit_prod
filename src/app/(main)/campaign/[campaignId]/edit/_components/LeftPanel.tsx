@@ -45,12 +45,9 @@ import React, {
   lazy,
   useCallback,
   useEffect,
-  useMemo,
-  useRef,
   useState,
 } from "react";
 import { Layers, X } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import Icon from "@/components/ui/icon";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -67,7 +64,11 @@ import {
   EditorSidebarTab,
   useEditorStore,
 } from "@/stores/editor/useEditorStore";
-import { usePagesStore } from "@/stores/editor/usePagesStore";
+import {
+  EMPTY_LAYERS,
+  selectPageLayers,
+  usePagesStore,
+} from "@/stores/editor/usePagesStore";
 import type { Layer } from "@/types/funnel";
 import type { PageType } from "@/types/funnel";
 import {
@@ -75,7 +76,6 @@ import {
   deletePageAction,
   duplicatePageAction,
   reorderPagesAction,
-  saveDraftLayersAction,
   updatePageAction,
 } from "@/actions/editor/editor-actions";
 import {
@@ -151,53 +151,11 @@ const LeftPanel = React.memo(function LeftPanel({
 
   const currentPage = pages.find((p) => p.id === currentPageId) ?? null;
 
-  const layersForCurrentPage: Layer[] = useMemo(() => {
-    return currentPage?.layers ?? [];
-  }, [currentPage]);
-
-  // ─── Persistence ──────────────────────────────────────────────────────
-  // No debounced autosave exists in this project yet (deliberately
-  // deferred — see editor-actions.ts's file header), so this is a light
-  // debounce rather than a full coalescing queue: enough to avoid firing a
-  // Server Action on every intermediate render, not a replacement for
-  // real autosave infrastructure. Component-draft edits are intentionally
-  // NOT persisted here — see useComponentsStore.ts's file header.
-  const previousLayersRef = useRef<{ pageId: string; layers: Layer[] } | null>(
-    null,
-  );
-
-  const persistLayers = useCallback(
-    async (pageId: string) => {
-      const layers = usePagesStore
-        .getState()
-        .pages.find((p) => p.id === pageId)?.layers;
-      if (!layers) return;
-      useEditorStore.getState().setSaving(true);
-      const result = await saveDraftLayersAction(campaignId, pageId, layers);
-      useEditorStore.getState().setSaving(false);
-      if (!result.success) toast.error(result.error);
-    },
-    [campaignId],
-  );
-
-  useEffect(() => {
-    if (!currentPageId || !currentPage) {
-      previousLayersRef.current = null;
-      return;
-    }
-    const prev = previousLayersRef.current;
-    previousLayersRef.current = {
-      pageId: currentPageId,
-      layers: currentPage.layers,
-    };
-    if (!prev || prev.pageId !== currentPageId) return; // just switched/loaded pages — nothing to save yet
-    if (prev.layers === currentPage.layers) return; // no structural change
-
-    const timeout = setTimeout(() => {
-      void persistLayers(currentPageId);
-    }, 400);
-    return () => clearTimeout(timeout);
-  }, [currentPage, currentPageId, persistLayers]);
+  // The open page's working copy. Autosave is owned by `usePagesStore` (2 s
+  // debounce per page, flushed on page/campaign switch and before publish),
+  // so this panel only READS layers — it never decides when to save.
+  const layersForCurrentPage: Layer[] =
+    usePagesStore(selectPageLayers(currentPageId)) ?? EMPTY_LAYERS;
 
   // ─── Pages tab state & handlers ───────────────────────────────────────
   const [isCreatingPage, setIsCreatingPage] = useState(false);

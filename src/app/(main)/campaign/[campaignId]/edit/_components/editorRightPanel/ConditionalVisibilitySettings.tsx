@@ -254,7 +254,7 @@ export default function ConditionalVisibilitySettings({
   );
 
   // Get current page layers for page collections
-  const draftsByPageId = usePagesStore((state) => state.pages);
+  const pagesByPageId = usePagesStore((state) => state.pagesByPageId);
   const currentPageId = useEditorStore((state) => state.currentPageId);
   const editingComponentId = useEditorStore(
     (state) => state.editingComponentId,
@@ -277,14 +277,13 @@ export default function ConditionalVisibilitySettings({
             : null;
       return variantId && variantDrafts ? variantDrafts[variantId] || [] : [];
     }
-    const draft = draftsByPageId[currentPageId];
-    return draft ? draft.layers : [];
+    return pagesByPageId[currentPageId]?.layers ?? [];
   }, [
     currentPageId,
     editingComponentId,
     editingComponentVariantId,
     componentDrafts,
-    draftsByPageId,
+    pagesByPageId,
   ]);
 
   // Get all collection layers on the page

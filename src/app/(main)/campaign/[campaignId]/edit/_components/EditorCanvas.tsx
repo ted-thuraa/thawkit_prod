@@ -35,7 +35,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import Canvas from "./Canvas";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
-import { usePagesStore } from "@/stores/editor/usePagesStore";
+import { selectPageLayers, usePagesStore, EMPTY_LAYERS } from "@/stores/editor/usePagesStore";
 import { useCanvasTextEditorStore } from "@/stores/editor/useCanvasTextEditorStore";
 import { SelectionOverlay } from "@/components/SelectionOverlay";
 import { BREAKPOINTS } from "@/lib/breakpoint-utils";
@@ -813,14 +813,12 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
     return () => resizeObserver.disconnect();
   }, [isPreviewMode]);
 
-  const layers = useMemo<Layer[]>(() => {
-    // Page layers come only from `usePagesStore.pages`
-    if (!currentPageId) {
-      return [];
-    }
-
-    return currentPage ? currentPage.layers : [];
-  }, [currentPage, editingComponentId, currentPageId]);
+  // The canvas renders the current page's working copy from
+  // `usePagesStore.pagesByPageId`. Subscribing to just that entry's `layers`
+  // means page-metadata changes don't re-render the tree, and a save (which
+  // keeps the same `layers` reference) never does.
+  const pageLayers = usePagesStore(selectPageLayers(currentPageId));
+  const layers = pageLayers ?? EMPTY_LAYERS;
 
   // Check if canvas is empty (only Body layer with no children)
   const isCanvasEmpty = useMemo(() => {
@@ -1171,7 +1169,8 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
           ? listItemIndex
           : null;
         if (resolvedSublayerIndex !== null && textStyleKey) {
-          const layers = currentPage?.layers || [];
+          const layers =
+            usePagesStore.getState().getLayers(currentPageId ?? "") ?? [];
           const layer = findLayerById(layers, layerId);
           if (
             layer &&
@@ -1263,9 +1262,9 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
     // surface the default-locale source inside the editor — the user types the
     // translation from scratch (the source is visible on the canvas).
 
-    const source: Layer[] | null =
-      usePagesStore.getState().pages.find((p) => p.id === currentPageId)
-        ?.layers ?? null;
+    const source: Layer[] | null = currentPageId
+      ? (usePagesStore.getState().getLayers(currentPageId) ?? null)
+      : null;
     const layer = source ? findLayerById(source, richTextSheetLayerId) : null;
     setRichTextSheetValue(getRichTextValue(layer?.variables));
     // Only re-derive when the sheet target layer (or translation context) changes,
@@ -1398,7 +1397,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
   const parentLayerId = useMemo(() => {
     if (!selectedLayerId || !currentPageId) return null;
 
-    const layersToSearch: Layer[] = currentPage ? currentPage.layers : [];
+    const layersToSearch: Layer[] = pageLayers ?? [];
 
     if (!layersToSearch.length) return null;
 
@@ -1428,7 +1427,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
     if (selectedLayer?.name === "slide") return null;
 
     return result;
-  }, [selectedLayerId, currentPageId, editingComponentId, currentPage]);
+  }, [selectedLayerId, currentPageId, editingComponentId, pageLayers]);
 
   // Get selected layer name for drag preview
   const selectedLayerName = useMemo(() => {

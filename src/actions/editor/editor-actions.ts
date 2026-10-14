@@ -394,7 +394,14 @@ export async function reorderPagesAction(
   }
 }
 
-export async function saveDraftLayersAction(
+/**
+ * Persists a page's layer tree — the write behind the editor's autosave
+ * (`usePagesStore`, 2 s debounce). Whole-tree, last-write-wins. Saving is
+ * independent of publishing: `publishFunnelAction` snapshots these saved rows.
+ * `savedAt` is the exact value written to `updated_at`, so the client's
+ * timestamp matches the database's.
+ */
+export async function savePageLayersAction(
   campaignId: string,
   pageId: string,
   layers: Layer[],
@@ -402,9 +409,13 @@ export async function saveDraftLayersAction(
   try {
     await requirePageInCampaign(campaignId, pageId);
 
-    await db.update(pageTable).set({ layers }).where(eq(pageTable.id, pageId));
+    const savedAt = new Date();
+    await db
+      .update(pageTable)
+      .set({ layers, updatedAt: savedAt })
+      .where(eq(pageTable.id, pageId));
 
-    return { success: true, data: { savedAt: new Date().toISOString() } };
+    return { success: true, data: { savedAt: savedAt.toISOString() } };
   } catch (error) {
     return toErrorResult(error, "Failed to save page.");
   }

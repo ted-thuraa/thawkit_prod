@@ -350,7 +350,6 @@ export default function ElementLibrary({
   const addLayerFromTemplate = usePagesStore((s) => s.addLayerFromTemplate);
   const updateLayer = usePagesStore((s) => s.updateLayer);
   const setLayers = usePagesStore((s) => s.setLayers);
-  const pages = usePagesStore((s) => s.pages);
 
   const currentPageId = useEditorStore((s) => s.currentPageId);
   // Intentionally NOT subscribing to selectedLayerId — every usage below is
@@ -519,9 +518,9 @@ export default function ElementLibrary({
       // Assign an order class to the new layer if its siblings have
       // responsive order classes. Read FRESH page state from the store.
       if (result.parentToExpand) {
-        const freshLayers: Layer[] | undefined = usePagesStore
-          .getState()
-          .pages.find((p) => p.id === currentPageId)?.layers;
+        const freshLayers: Layer[] | undefined = currentPageId
+          ? usePagesStore.getState().getLayers(currentPageId)
+          : undefined;
         if (freshLayers) {
           const updatedLayers = assignOrderClassToNewLayer(
             freshLayers,
@@ -570,13 +569,13 @@ export default function ElementLibrary({
     }
 
     // Use the internal addLayerFromTemplate logic but with our layout
-    const page = usePagesStore
-      .getState()
-      .pages.find((p) => p.id === currentPageId);
-    if (!page) return;
+    const pageLayers = currentPageId
+      ? usePagesStore.getState().getLayers(currentPageId)
+      : undefined;
+    if (!pageLayers) return;
 
     // Collect existing settings IDs to generate unique ones
-    const existingSettingsIds = collectAllSettingsIds(page.layers);
+    const existingSettingsIds = collectAllSettingsIds(pageLayers);
     const usedSettingsIds = new Set<string>(existingSettingsIds);
 
     // Track old→new settings.id mappings so we can update 'for' attributes on labels
@@ -651,24 +650,24 @@ export default function ElementLibrary({
     // Place the layout: inside the target if it accepts children, otherwise
     // right after it (falling back to the root when the target is missing).
     const layoutRoot: Layer = newLayer;
-    const target = findLayerById(page.layers, parentId);
+    const target = findLayerById(pageLayers, parentId);
     const targetLocation = target
-      ? findParentAndIndex(page.layers, target.id)
+      ? findParentAndIndex(pageLayers, target.id)
       : null;
     let newLayers: Layer[];
     let parentToExpand: string | null = null;
 
     if (!target || !targetLocation) {
-      newLayers = [...page.layers, layoutRoot];
+      newLayers = [...pageLayers, layoutRoot];
     } else if (canHaveChildren(target, layoutRoot.name)) {
-      newLayers = updateLayerInTree(page.layers, target.id, (node) => ({
+      newLayers = updateLayerInTree(pageLayers, target.id, (node) => ({
         ...node,
         children: [...(node.children ?? []), layoutRoot],
       }));
       parentToExpand = target.id;
     } else {
       newLayers = insertLayerAfter(
-        page.layers,
+        pageLayers,
         targetLocation.parent,
         targetLocation.index,
         layoutRoot,
@@ -686,7 +685,7 @@ export default function ElementLibrary({
         )
       : newLayers;
 
-    // Single source of truth: write straight to `pages`.
+    // Write the new tree back into `pagesByPageId` (autosaved after 2 s).
     setLayers(currentPageId, finalLayers);
 
     // Select the root layer of the layout

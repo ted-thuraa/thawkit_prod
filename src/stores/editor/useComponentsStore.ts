@@ -980,10 +980,10 @@ export const useComponentsStore = create<ComponentsStore>((set, get) => {
             const referencesComponent = (layers: Layer[]) =>
               collectComponentIds(layers).has(componentId);
 
-            const allDrafts = usePagesStore.getState().pages;
+            const allPageLayers = usePagesStore.getState().pagesByPageId;
             const affectedPageIds: string[] = [];
-            Object.entries(allDrafts).forEach(([pid, pageDraft]) => {
-              if (pageDraft.layers && referencesComponent(pageDraft.layers)) {
+            Object.entries(allPageLayers).forEach(([pid, pageLayers]) => {
+              if (pageLayers.layers && referencesComponent(pageLayers.layers)) {
                 affectedPageIds.push(pid);
               }
             });
@@ -1004,9 +1004,9 @@ export const useComponentsStore = create<ComponentsStore>((set, get) => {
             const allLayers: Layer[] = variantsBeingSaved.flatMap(
               (v) => v.layers,
             );
-            Object.values(allDrafts).forEach((pageDraft) => {
-              if (pageDraft.layers && referencesComponent(pageDraft.layers)) {
-                allLayers.push(...pageDraft.layers);
+            Object.values(allPageLayers).forEach((pageLayers) => {
+              if (pageLayers.layers && referencesComponent(pageLayers.layers)) {
+                allLayers.push(...pageLayers.layers);
               }
             });
             await generateAndSaveCSS(allLayers);
@@ -1732,18 +1732,12 @@ export const useComponentsStore = create<ComponentsStore>((set, get) => {
           });
         };
 
-        // Update all page drafts that might have instances of this component
-        Object.entries(pagesState.pages).forEach(([pageId, draft]) => {
-          if (draft && draft.layers) {
-            const cleanedLayers = cleanOverridesFromLayers(draft.layers);
-            // Only update if something changed (simple stringify comparison)
-            if (
-              JSON.stringify(cleanedLayers) !== JSON.stringify(draft.layers)
-            ) {
-              pagesState.setLayers(pageId, cleanedLayers);
-            }
-          }
-        });
+        // Clean every page's tree that holds instances of this component.
+        // `transformAllPageLayers` leaves pages whose tree comes back
+        // unchanged alone (not marked unsaved, not re-saved).
+        pagesState.transformAllPageLayers((layers) =>
+          cleanOverridesFromLayers(layers),
+        );
       } catch (error) {
         console.error("Failed to delete text variable:", error);
       }

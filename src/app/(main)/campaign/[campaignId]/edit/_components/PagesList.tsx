@@ -487,7 +487,11 @@ export default function PagesList({
     selectTreeItem(outcome.page.id);
     const currentLayerId = useEditorStore.getState().selectedLayerId;
     const layerId =
-      currentLayerId && findLayerById(outcome.page.layers, currentLayerId)
+      currentLayerId &&
+      findLayerById(
+        usePagesStore.getState().getLayers(outcome.page.id) ?? [],
+        currentLayerId,
+      )
         ? currentLayerId
         : DEFAULT_LAYER_ID;
     pendingNavigationPageIdRef.current = outcome.page.id;

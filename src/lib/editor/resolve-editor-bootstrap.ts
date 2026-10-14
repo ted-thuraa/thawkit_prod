@@ -18,8 +18,9 @@ import type {
   Component,
   LayerStyle,
   Page,
+  PageLayers,
 } from "@/types/funnel";
-import { pagesFromRows } from "@/lib/editor/page-from-row";
+import { pageLayersFromRows, pagesFromRows } from "@/lib/editor/page-from-row";
 import {
   componentsFromRows,
   layerStylesFromRows,
@@ -51,8 +52,14 @@ export type LayerStyleRow = InferSelectModel<typeof layerStyle>;
 export interface EditorBootstrapContext {
   campaign: CampaignRow;
   funnel: FunnelRow;
-  /** Ordered by `page.order` ascending — the funnel's step sequence. */
+  /** Page METADATA, ordered by `page.order` ascending — the funnel's step sequence. */
   pages: Page[];
+  /**
+   * Each page's layer tree, one entry per page — the initial value of the
+   * client's `pagesByPageId` map. Kept apart from `pages` so a tree is never
+   * duplicated (on the wire or in memory).
+   */
+  pageLayers: PageLayers[];
   /** Org-wide reusable components — see design-system-schema.ts's TENANCY note. */
   components: Component[];
   /** Org-wide reusable style chips — same scope as `components`. */
@@ -216,6 +223,7 @@ export const resolveEditorBootstrap = cache(
     ) as [PageRow[], ComponentRow[], LayerStyleRow[]];
 
     const pages = pagesFromRows(pageRows);
+    const pageLayers = pageLayersFromRows(pageRows);
     const components = componentsFromRows(componentRows);
     const layerStyles = layerStylesFromRows(layerStyleRows);
 
@@ -230,7 +238,9 @@ export const resolveEditorBootstrap = cache(
       campaign.organizationId,
       logContext,
       {
-        json: [pages, components, layerStyles],
+        // Layer trees live in `pageLayers`, not on `pages` — scanning only
+        // `pages` would silently stop preloading every page-referenced asset.
+        json: [pageLayers, pages, components, layerStyles],
         fields: collections.status === "ready" ? collections.data.fields : {},
         items: collections.status === "ready" ? collections.data.items : {},
       },
@@ -240,6 +250,7 @@ export const resolveEditorBootstrap = cache(
       campaign,
       funnel: funnelRow,
       pages,
+      pageLayers,
       components,
       layerStyles,
       assets,

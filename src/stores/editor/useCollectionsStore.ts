@@ -447,7 +447,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
         };
       });
 
-      // Reset CMS bindings referencing the deleted collection across all page drafts
+      // Reset CMS bindings referencing the deleted collection across every page's layer tree
       usePagesStore.getState().cleanupDeletedCollection(id);
     } catch (error) {
       const errorMessage =
@@ -633,7 +633,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
         isLoading: false,
       }));
 
-      // Reset CMS bindings referencing the deleted field across all page drafts
+      // Reset CMS bindings referencing the deleted field across every page's layer tree
       usePagesStore.getState().cleanupDeletedField(fieldId);
     } catch (error) {
       const errorMessage =

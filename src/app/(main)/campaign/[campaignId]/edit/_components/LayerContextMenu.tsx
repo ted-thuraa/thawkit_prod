@@ -25,7 +25,7 @@ import {
   useCanvasZoom,
 } from "@/lib/canvas-portal-context";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
-import { usePagesStore } from "@/stores/editor/usePagesStore";
+import { selectPageLayers, usePagesStore } from "@/stores/editor/usePagesStore";
 import { useClipboardStore } from "@/stores/editor/useClipboardStore";
 import { useComponentsStore } from "@/stores/editor/useComponentsStore";
 import {
@@ -139,7 +139,7 @@ function LayerContextMenuInner({
   const pasteInside = usePagesStore((state) => state.pasteInside);
   const updateLayer = usePagesStore((state) => state.updateLayer);
   const setLayers = usePagesStore((state) => state.setLayers);
-  const pages = usePagesStore((state) => state.pages);
+  const pageLayers = usePagesStore(selectPageLayers(pageId));
   const createComponentFromLayer = usePagesStore(
     (state) => state.createComponentFromLayer,
   );
@@ -156,7 +156,7 @@ function LayerContextMenuInner({
   // Prefer the prop (passed by the layers tree) but fall back to the editor
   // store so the canvas context menu also knows when a component is being
   // edited — otherwise "Create component" on the canvas resolves against the
-  // page draft and silently fails for layers inside a component.
+  // page's layer tree and silently fails for layers inside a component.
   const storeEditingComponentId = useEditorStore(
     (state) => state.editingComponentId,
   );
@@ -202,20 +202,19 @@ function LayerContextMenuInner({
   const hasStyleClipboard = copiedStyle !== null;
   const hasInteractionsClipboard = copiedInteractions !== null;
 
-  // Resolve layers: active variant draft when editing a component, else page draft
+  // Resolve layers: active component variant when editing a component, else the page's working copy
   const isComponentContext = !!editingComponentId;
   const layers = useMemo(
     () =>
       isComponentContext && editingComponentId && activeVariantId
         ? componentDrafts[editingComponentId]?.[activeVariantId] || []
-        : (pages.find((p) => p.id === pageId)?.layers ?? []),
+        : (pageLayers ?? []),
     [
       isComponentContext,
       editingComponentId,
       activeVariantId,
       componentDrafts,
-      pages,
-      pageId,
+      pageLayers,
     ],
   );
   const layer = findLayerById(layers, layerId);
@@ -808,9 +807,7 @@ function LayerContextMenuInner({
       updateLayer(pageId, layerId, { variables: updatedVariables });
 
       setTimeout(() => {
-        const currentLayers = usePagesStore
-          .getState()
-          .pages.find((p) => p.id === pageId)?.layers;
+        const currentLayers = usePagesStore.getState().getLayers(pageId);
         if (!currentLayers) return;
 
         const cleanedLayers = resetBindingsOnCollectionSourceChange(

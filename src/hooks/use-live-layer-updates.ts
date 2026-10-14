@@ -110,15 +110,15 @@ export function useLiveLayerUpdates(
     if (!update) return;
 
     // Get fresh state from store
-    const { draftsByPageId: freshDrafts, updateLayer: freshUpdateLayer } =
+    const { pagesByPageId: freshPages, updateLayer: freshUpdateLayer } =
       usePagesStore.getState();
-    const currentDraft = freshDrafts[currentPageId || ""];
+    const currentPageLayers = freshPages[currentPageId || ""];
 
     if (!currentPageId) {
       return;
     }
 
-    if (!currentDraft) {
+    if (!currentPageLayers) {
       return;
     }
 
