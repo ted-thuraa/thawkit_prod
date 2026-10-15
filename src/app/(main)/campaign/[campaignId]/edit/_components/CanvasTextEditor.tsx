@@ -35,6 +35,7 @@ import Heading from "@tiptap/extension-heading";
 import Blockquote from "@tiptap/extension-blockquote";
 import Code from "@tiptap/extension-code";
 import { RichTextImage } from "@/lib/tiptap-extensions/rich-text-image";
+import { GhostSelection } from "@/lib/tiptap-extensions/ghost-selection";
 import { getTextStyleClasses } from "@/lib/text-format-utils";
 import type {
   Layer,
@@ -387,6 +388,7 @@ const CanvasTextEditor = forwardRef<
         Code,
         RichTextImage,
         createDynamicStyleExtension(textStylesRef),
+        GhostSelection,
       ],
       [],
     );
@@ -412,6 +414,10 @@ const CanvasTextEditor = forwardRef<
     const hasUserEditedRef = useRef(false);
     // Tracks whether the editor has finished initialization (onCreate fired)
     const editorReadyRef = useRef(false);
+    // Serialised editor content as of the last save / external sync. When the
+    // live content differs, the user has unsaved edits that an external `value`
+    // update must not overwrite (e.g. while focus sits in a toolbar popover).
+    const lastSavedJsonRef = useRef<string | null>(null);
 
     const editor = useEditor(
       {
@@ -468,6 +474,7 @@ const CanvasTextEditor = forwardRef<
           );
           // Mark editor as ready — any subsequent docChanged transactions are user edits
           editorReadyRef.current = true;
+          lastSavedJsonRef.current = JSON.stringify(editorInstance.getJSON());
         },
         onBlur: ({ editor: editorInstance }) => {
           // Save cursor position when editor loses focus
@@ -652,6 +659,7 @@ const CanvasTextEditor = forwardRef<
             onChange(currentValue);
             valueRef.current = currentValue;
           }
+          lastSavedJsonRef.current = JSON.stringify(currentValue);
         }
       };
     }, [editor, onChange]);
@@ -669,6 +677,7 @@ const CanvasTextEditor = forwardRef<
           ) {
             onChange(currentContent);
           }
+          lastSavedJsonRef.current = JSON.stringify(currentContent);
         }
         // Update to new layer ID and reset edit tracking for the new layer
         currentLayerIdRef.current = layer.id;
@@ -804,6 +813,18 @@ const CanvasTextEditor = forwardRef<
       if (editor.isFocused) return;
 
       const currentContent = editor.getJSON();
+      const currentJson = JSON.stringify(currentContent);
+
+      // Unsaved user edits: the editor is ahead of `value`. The editor can be
+      // unfocused here without being idle (focus may be in a toolbar popover),
+      // so never replace content the user has typed but not yet saved.
+      if (
+        lastSavedJsonRef.current !== null &&
+        currentJson !== lastSavedJsonRef.current
+      ) {
+        return;
+      }
+
       const newContent =
         typeof value === "object" && value?.type === "doc"
           ? value
@@ -815,10 +836,11 @@ const CanvasTextEditor = forwardRef<
             );
 
       // Only update if content actually changed (not just design properties)
-      if (JSON.stringify(currentContent) !== JSON.stringify(newContent)) {
+      if (currentJson !== JSON.stringify(newContent)) {
         editor.commands.setContent(newContent, { emitUpdate: false });
         // Update valueRef to track the new content
         valueRef.current = newContent;
+        lastSavedJsonRef.current = JSON.stringify(editor.getJSON());
       }
     }, [value, fields, allFields, editor, layer.id]);
 

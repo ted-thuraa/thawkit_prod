@@ -48,6 +48,7 @@ import DragCaptureOverlay from "@/components/DragCaptureOverlay";
 import ElementPickerOverlay from "./ElementPickerOverlay";
 import { cn } from "@/lib/utils";
 import {
+  findAllParentCollectionLayers,
   findLayerById,
   getLayerCmsFieldBinding,
   isRichTextLayer,
@@ -61,6 +62,8 @@ import { useZoom } from "@/hooks/use-zoom";
 import { useCanvasPan } from "@/hooks/use-canvas-pan";
 import { toast } from "sonner";
 import { buildFieldGroupsForLayer } from "@/lib/collection-field-utils";
+import { useGlobalsStore } from "@/stores/editor/useGlobalsStore";
+import TextSelectionToolbar from "./TextSelectionToolbar";
 import { getRichTextValue } from "@/lib/tiptap-utils";
 import { useCanvasDropDetection } from "@/hooks/use-canvas-drop-detection";
 import { useCanvasSiblingReorder } from "@/hooks/use-canvas-sibling-reorder";
@@ -847,30 +850,53 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
   const editingLayerId = useCanvasTextEditorStore(
     (state) => state.editingLayerId,
   );
-  const textEditorActiveMarks = useCanvasTextEditorStore(
-    (state) => state.activeMarks,
-  );
-  const toggleBold = useCanvasTextEditorStore((state) => state.toggleBold);
-  const toggleItalic = useCanvasTextEditorStore((state) => state.toggleItalic);
-  const toggleUnderline = useCanvasTextEditorStore(
-    (state) => state.toggleUnderline,
-  );
-  const toggleStrike = useCanvasTextEditorStore((state) => state.toggleStrike);
-  const toggleSubscript = useCanvasTextEditorStore(
-    (state) => state.toggleSubscript,
-  );
-  const toggleSuperscript = useCanvasTextEditorStore(
-    (state) => state.toggleSuperscript,
-  );
-  const setHeading = useCanvasTextEditorStore((state) => state.setHeading);
-  const focusEditor = useCanvasTextEditorStore((state) => state.focusEditor);
   const requestFinishEditing = useCanvasTextEditorStore(
     (state) => state.requestFinish,
   );
-  const addFieldVariable = useCanvasTextEditorStore(
-    (state) => state.addFieldVariable,
+
+  // Context for the floating text-selection toolbar (rendered below). Only
+  // derived while a text layer is being edited so it costs nothing otherwise.
+  const textToolbarCollections = useCollectionsStore(
+    (state) => state.collections,
   );
-  const textEditor = useCanvasTextEditorStore((state) => state.editor);
+  const textToolbarGlobals = useGlobalsStore((state) => state.globals);
+  const textToolbarLayer = useMemo(
+    () =>
+      isTextEditing && editingLayerId
+        ? findLayerById(layers, editingLayerId)
+        : null,
+    [isTextEditing, editingLayerId, layers],
+  );
+  const textToolbarFieldGroups = useMemo(() => {
+    if (!textToolbarLayer || !editingLayerId) return undefined;
+    // Components are page-agnostic: exclude dynamic page-collection fields
+    // while editing one (same rule as the right panel).
+    const page = editingComponentId ? null : (currentPage ?? null);
+    return buildFieldGroupsForLayer(
+      editingLayerId,
+      layers,
+      page,
+      collectionFieldsFromStore,
+      textToolbarCollections,
+      textToolbarGlobals,
+    );
+  }, [
+    textToolbarLayer,
+    editingLayerId,
+    layers,
+    currentPage,
+    editingComponentId,
+    collectionFieldsFromStore,
+    textToolbarCollections,
+    textToolbarGlobals,
+  ]);
+  const textToolbarInsideCollection = useMemo(
+    () =>
+      textToolbarLayer && editingLayerId
+        ? findAllParentCollectionLayers(layers, editingLayerId).length > 0
+        : false,
+    [textToolbarLayer, editingLayerId, layers],
+  );
 
   // Exit text edit mode if a different layer is selected
   useEffect(() => {
@@ -1461,6 +1487,24 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
               activeSublayerIndex={activeSublayerIndex}
               activeListItemIndex={activeListItemIndex}
               selectedLayerLabel={selectedLayerName}
+            />
+          )}
+
+        {/* Floating text formatting toolbar - appears under highlighted text
+            while a text layer is being edited inline */}
+        {!isPreviewMode &&
+          (activeSidebarTab !== "pages" || !isLeftPanelOpen) &&
+          canvasIframeElement && (
+            <TextSelectionToolbar
+              iframeElement={canvasIframeElement}
+              containerElement={scrollContainerRef.current}
+              zoom={zoom}
+              editingLayer={textToolbarLayer}
+              allLayers={layers}
+              fieldGroups={textToolbarFieldGroups}
+              allFields={collectionFieldsFromStore}
+              collections={textToolbarCollections}
+              isInsideCollectionLayer={textToolbarInsideCollection}
             />
           )}
 

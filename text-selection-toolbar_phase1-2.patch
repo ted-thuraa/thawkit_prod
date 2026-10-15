@@ -1,0 +1,985 @@
+diff --git a/src/app/(main)/campaign/[campaignId]/edit/_components/CanvasTextEditor.tsx b/src/app/(main)/campaign/[campaignId]/edit/_components/CanvasTextEditor.tsx
+index 9ac131f..a4ef8eb 100644
+--- a/src/app/(main)/campaign/[campaignId]/edit/_components/CanvasTextEditor.tsx
++++ b/src/app/(main)/campaign/[campaignId]/edit/_components/CanvasTextEditor.tsx
+@@ -35,6 +35,7 @@ import Heading from "@tiptap/extension-heading";
+ import Blockquote from "@tiptap/extension-blockquote";
+ import Code from "@tiptap/extension-code";
+ import { RichTextImage } from "@/lib/tiptap-extensions/rich-text-image";
++import { GhostSelection } from "@/lib/tiptap-extensions/ghost-selection";
+ import { getTextStyleClasses } from "@/lib/text-format-utils";
+ import type {
+   Layer,
+@@ -387,6 +388,7 @@ const CanvasTextEditor = forwardRef<
+         Code,
+         RichTextImage,
+         createDynamicStyleExtension(textStylesRef),
++        GhostSelection,
+       ],
+       [],
+     );
+@@ -412,6 +414,10 @@ const CanvasTextEditor = forwardRef<
+     const hasUserEditedRef = useRef(false);
+     // Tracks whether the editor has finished initialization (onCreate fired)
+     const editorReadyRef = useRef(false);
++    // Serialised editor content as of the last save / external sync. When the
++    // live content differs, the user has unsaved edits that an external `value`
++    // update must not overwrite (e.g. while focus sits in a toolbar popover).
++    const lastSavedJsonRef = useRef<string | null>(null);
+ 
+     const editor = useEditor(
+       {
+@@ -468,6 +474,7 @@ const CanvasTextEditor = forwardRef<
+           );
+           // Mark editor as ready — any subsequent docChanged transactions are user edits
+           editorReadyRef.current = true;
++          lastSavedJsonRef.current = JSON.stringify(editorInstance.getJSON());
+         },
+         onBlur: ({ editor: editorInstance }) => {
+           // Save cursor position when editor loses focus
+@@ -652,6 +659,7 @@ const CanvasTextEditor = forwardRef<
+             onChange(currentValue);
+             valueRef.current = currentValue;
+           }
++          lastSavedJsonRef.current = JSON.stringify(currentValue);
+         }
+       };
+     }, [editor, onChange]);
+@@ -669,6 +677,7 @@ const CanvasTextEditor = forwardRef<
+           ) {
+             onChange(currentContent);
+           }
++          lastSavedJsonRef.current = JSON.stringify(currentContent);
+         }
+         // Update to new layer ID and reset edit tracking for the new layer
+         currentLayerIdRef.current = layer.id;
+@@ -804,6 +813,18 @@ const CanvasTextEditor = forwardRef<
+       if (editor.isFocused) return;
+ 
+       const currentContent = editor.getJSON();
++      const currentJson = JSON.stringify(currentContent);
++
++      // Unsaved user edits: the editor is ahead of `value`. The editor can be
++      // unfocused here without being idle (focus may be in a toolbar popover),
++      // so never replace content the user has typed but not yet saved.
++      if (
++        lastSavedJsonRef.current !== null &&
++        currentJson !== lastSavedJsonRef.current
++      ) {
++        return;
++      }
++
+       const newContent =
+         typeof value === "object" && value?.type === "doc"
+           ? value
+@@ -815,10 +836,11 @@ const CanvasTextEditor = forwardRef<
+             );
+ 
+       // Only update if content actually changed (not just design properties)
+-      if (JSON.stringify(currentContent) !== JSON.stringify(newContent)) {
++      if (currentJson !== JSON.stringify(newContent)) {
+         editor.commands.setContent(newContent, { emitUpdate: false });
+         // Update valueRef to track the new content
+         valueRef.current = newContent;
++        lastSavedJsonRef.current = JSON.stringify(editor.getJSON());
+       }
+     }, [value, fields, allFields, editor, layer.id]);
+ 
+diff --git a/src/app/(main)/campaign/[campaignId]/edit/_components/EditorCanvas.tsx b/src/app/(main)/campaign/[campaignId]/edit/_components/EditorCanvas.tsx
+index 6612a7c..1566d13 100644
+--- a/src/app/(main)/campaign/[campaignId]/edit/_components/EditorCanvas.tsx
++++ b/src/app/(main)/campaign/[campaignId]/edit/_components/EditorCanvas.tsx
+@@ -48,6 +48,7 @@ import DragCaptureOverlay from "@/components/DragCaptureOverlay";
+ import ElementPickerOverlay from "./ElementPickerOverlay";
+ import { cn } from "@/lib/utils";
+ import {
++  findAllParentCollectionLayers,
+   findLayerById,
+   getLayerCmsFieldBinding,
+   isRichTextLayer,
+@@ -61,6 +62,8 @@ import { useZoom } from "@/hooks/use-zoom";
+ import { useCanvasPan } from "@/hooks/use-canvas-pan";
+ import { toast } from "sonner";
+ import { buildFieldGroupsForLayer } from "@/lib/collection-field-utils";
++import { useGlobalsStore } from "@/stores/editor/useGlobalsStore";
++import TextSelectionToolbar from "./TextSelectionToolbar";
+ import { getRichTextValue } from "@/lib/tiptap-utils";
+ import { useCanvasDropDetection } from "@/hooks/use-canvas-drop-detection";
+ import { useCanvasSiblingReorder } from "@/hooks/use-canvas-sibling-reorder";
+@@ -847,30 +850,53 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
+   const editingLayerId = useCanvasTextEditorStore(
+     (state) => state.editingLayerId,
+   );
+-  const textEditorActiveMarks = useCanvasTextEditorStore(
+-    (state) => state.activeMarks,
+-  );
+-  const toggleBold = useCanvasTextEditorStore((state) => state.toggleBold);
+-  const toggleItalic = useCanvasTextEditorStore((state) => state.toggleItalic);
+-  const toggleUnderline = useCanvasTextEditorStore(
+-    (state) => state.toggleUnderline,
+-  );
+-  const toggleStrike = useCanvasTextEditorStore((state) => state.toggleStrike);
+-  const toggleSubscript = useCanvasTextEditorStore(
+-    (state) => state.toggleSubscript,
+-  );
+-  const toggleSuperscript = useCanvasTextEditorStore(
+-    (state) => state.toggleSuperscript,
+-  );
+-  const setHeading = useCanvasTextEditorStore((state) => state.setHeading);
+-  const focusEditor = useCanvasTextEditorStore((state) => state.focusEditor);
+   const requestFinishEditing = useCanvasTextEditorStore(
+     (state) => state.requestFinish,
+   );
+-  const addFieldVariable = useCanvasTextEditorStore(
+-    (state) => state.addFieldVariable,
++
++  // Context for the floating text-selection toolbar (rendered below). Only
++  // derived while a text layer is being edited so it costs nothing otherwise.
++  const textToolbarCollections = useCollectionsStore(
++    (state) => state.collections,
++  );
++  const textToolbarGlobals = useGlobalsStore((state) => state.globals);
++  const textToolbarLayer = useMemo(
++    () =>
++      isTextEditing && editingLayerId
++        ? findLayerById(layers, editingLayerId)
++        : null,
++    [isTextEditing, editingLayerId, layers],
++  );
++  const textToolbarFieldGroups = useMemo(() => {
++    if (!textToolbarLayer || !editingLayerId) return undefined;
++    // Components are page-agnostic: exclude dynamic page-collection fields
++    // while editing one (same rule as the right panel).
++    const page = editingComponentId ? null : (currentPage ?? null);
++    return buildFieldGroupsForLayer(
++      editingLayerId,
++      layers,
++      page,
++      collectionFieldsFromStore,
++      textToolbarCollections,
++      textToolbarGlobals,
++    );
++  }, [
++    textToolbarLayer,
++    editingLayerId,
++    layers,
++    currentPage,
++    editingComponentId,
++    collectionFieldsFromStore,
++    textToolbarCollections,
++    textToolbarGlobals,
++  ]);
++  const textToolbarInsideCollection = useMemo(
++    () =>
++      textToolbarLayer && editingLayerId
++        ? findAllParentCollectionLayers(layers, editingLayerId).length > 0
++        : false,
++    [textToolbarLayer, editingLayerId, layers],
+   );
+-  const textEditor = useCanvasTextEditorStore((state) => state.editor);
+ 
+   // Exit text edit mode if a different layer is selected
+   useEffect(() => {
+@@ -1464,6 +1490,24 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
+             />
+           )}
+ 
++        {/* Floating text formatting toolbar - appears under highlighted text
++            while a text layer is being edited inline */}
++        {!isPreviewMode &&
++          (activeSidebarTab !== "pages" || !isLeftPanelOpen) &&
++          canvasIframeElement && (
++            <TextSelectionToolbar
++              iframeElement={canvasIframeElement}
++              containerElement={scrollContainerRef.current}
++              zoom={zoom}
++              editingLayer={textToolbarLayer}
++              allLayers={layers}
++              fieldGroups={textToolbarFieldGroups}
++              allFields={collectionFieldsFromStore}
++              collections={textToolbarCollections}
++              isInsideCollectionLayer={textToolbarInsideCollection}
++            />
++          )}
++
+         {/* Drag capture overlay - prevents iframe from swallowing mouse events during drag */}
+         {!isPreviewMode && <DragCaptureOverlay />}
+ 
+diff --git a/src/app/(main)/campaign/[campaignId]/edit/_components/TextSelectionToolbar.tsx b/src/app/(main)/campaign/[campaignId]/edit/_components/TextSelectionToolbar.tsx
+new file mode 100644
+index 0000000..fe453b7
+--- /dev/null
++++ b/src/app/(main)/campaign/[campaignId]/edit/_components/TextSelectionToolbar.tsx
+@@ -0,0 +1,430 @@
++"use client";
++
++/**
++ * Text Selection Toolbar
++ *
++ * Floating formatting bar shown under a highlighted range of text while a
++ * text/heading layer is being edited inline on the canvas.
++ *
++ * Architecture notes
++ * - The inline editor (CanvasTextEditor) runs inside the canvas iframe; this
++ *   toolbar lives in the parent document, over the canvas, and drives the
++ *   editor through `useCanvasTextEditorStore`.
++ * - Position is computed from the editor's selection and mapped from the
++ *   iframe's unscaled space to screen space (zoom-aware), then applied
++ *   imperatively (like SelectionOverlay) so scroll/zoom/typing never cause a
++ *   React re-render. React state is only used for button states.
++ * - Visibility follows the editor's selection, not focus: it stays while focus
++ *   is in a toolbar popover or the sidebar, and hides for a caret-only
++ *   selection, during a mouse drag-select, in preview mode, while the sidebar
++ *   is being resized, or when the selection is scrolled out of view.
++ * - Every toolbar mousedown is `preventDefault`-ed (except inside inputs) so
++ *   clicking a button never moves focus out of the iframe or collapses the
++ *   selection before the command runs.
++ */
++
++import React, {
++  forwardRef,
++  memo,
++  useCallback,
++  useEffect,
++  useRef,
++  useState,
++} from "react";
++import type { Editor } from "@tiptap/react";
++import { Bold, Italic, Link2, Strikethrough, Underline } from "lucide-react";
++import { cn } from "@/lib/utils";
++import { useCanvasTextEditorStore } from "@/stores/editor/useCanvasTextEditorStore";
++import { useEditorStore } from "@/stores/editor/useEditorStore";
++import { canLayerHaveLink } from "@/lib/layer-utils";
++import {
++  getEditorSelectionRect,
++  mapIframeRectToContainer,
++  placeToolbar,
++} from "@/lib/text-selection-anchor";
++import type { Collection, CollectionField, Layer } from "@/types/funnel";
++import type { FieldGroup } from "./CollectionFieldSelector";
++import RichTextLinkPopover from "./RichTextLinkPopover";
++
++interface TextSelectionToolbarProps {
++  /** The canvas iframe element */
++  iframeElement: HTMLIFrameElement | null;
++  /** The canvas viewport element (same box SelectionOverlay measures against) */
++  containerElement: HTMLElement | null;
++  /** Current canvas zoom percentage (100 = 100%) */
++  zoom: number;
++  /** The layer currently being edited (for link eligibility + popover context) */
++  editingLayer: Layer | null;
++  /** All layers in the current context (page or component), for link checks */
++  allLayers: Layer[];
++  fieldGroups?: FieldGroup[];
++  allFields?: Record<string, CollectionField[]>;
++  collections?: Collection[];
++  isInsideCollectionLayer?: boolean;
++}
++
++const HIDDEN_STYLE: React.CSSProperties = { display: "none" };
++
++/** Re-measure again shortly after a layout-affecting change: the Tailwind CDN
++ * generates CSS for new classes asynchronously, so the first measurement can
++ * land before the text has actually reflowed. */
++const SETTLE_DELAY_MS = 80;
++
++// ─── Button ──────────────────────────────────────────────────────────────────
++
++interface ToolbarButtonProps
++  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
++  label: string;
++  pressed?: boolean;
++}
++
++/** Forwards its ref and props so Radix `asChild` triggers can wrap it. */
++const ToolbarButton = forwardRef<HTMLButtonElement, ToolbarButtonProps>(
++  function ToolbarButton(
++    { label, pressed = false, className, children, ...rest },
++    ref,
++  ) {
++    return (
++      <button
++        ref={ref}
++        type="button"
++        title={label}
++        aria-label={label}
++        aria-pressed={pressed}
++        className={cn(
++          "flex size-7 shrink-0 items-center justify-center rounded-md text-neutral-300 transition-colors",
++          "hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/40",
++          "disabled:pointer-events-none disabled:opacity-40",
++          pressed && "bg-white/20 text-white",
++          className,
++        )}
++        {...rest}
++      >
++        {children}
++      </button>
++    );
++  },
++);
++
++const Divider = () => (
++  <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-white/15" />
++);
++
++// ─── Component ───────────────────────────────────────────────────────────────
++
++function TextSelectionToolbarImpl({
++  iframeElement,
++  containerElement,
++  zoom,
++  editingLayer,
++  allLayers,
++  fieldGroups,
++  allFields,
++  collections,
++  isInsideCollectionLayer = false,
++}: TextSelectionToolbarProps) {
++  const editor = useCanvasTextEditorStore((s) => s.editor);
++  const isEditing = useCanvasTextEditorStore((s) => s.isEditing);
++  const activeMarks = useCanvasTextEditorStore((s) => s.activeMarks);
++  const toggleBold = useCanvasTextEditorStore((s) => s.toggleBold);
++  const toggleItalic = useCanvasTextEditorStore((s) => s.toggleItalic);
++  const toggleUnderline = useCanvasTextEditorStore((s) => s.toggleUnderline);
++  const toggleStrike = useCanvasTextEditorStore((s) => s.toggleStrike);
++
++  const toolbarRef = useRef<HTMLDivElement>(null);
++  const zoomRef = useRef(zoom);
++  const rafRef = useRef<number | null>(null);
++  /** True while the mouse is down inside the editor (drag-selecting). */
++  const selectingRef = useRef(false);
++  /** True while something else owns the canvas (sidebar resize, context menu). */
++  const blockedRef = useRef(false);
++  // The link popover is open *for a particular editor instance*. Every editing
++  // session creates a fresh editor, so the popover closes by itself when
++  // editing ends: no reset effect needed.
++  const [linkOpenFor, setLinkOpenFor] = useState<Editor | null>(null);
++  const linkOpen = editor !== null && linkOpenFor === editor;
++
++  // ── Positioning ────────────────────────────────────────────────────────────
++
++  const position = useCallback(() => {
++    const el = toolbarRef.current;
++    if (!el) return;
++    const hide = () => {
++      if (el.style.display !== "none") el.style.display = "none";
++    };
++
++    if (
++      !editor ||
++      !iframeElement ||
++      !containerElement ||
++      !useCanvasTextEditorStore.getState().isEditing ||
++      blockedRef.current ||
++      selectingRef.current
++    ) {
++      hide();
++      return;
++    }
++
++    const selectionRect = getEditorSelectionRect(editor);
++    if (!selectionRect) {
++      hide();
++      return;
++    }
++
++    const anchor = mapIframeRectToContainer(
++      selectionRect,
++      iframeElement.getBoundingClientRect(),
++      containerElement.getBoundingClientRect(),
++      zoomRef.current / 100,
++    );
++
++    // Must be displayed to be measured; both happen before the next paint.
++    el.style.display = "flex";
++    const placement = placeToolbar(
++      anchor,
++      { width: el.offsetWidth, height: el.offsetHeight },
++      {
++        width: containerElement.clientWidth,
++        height: containerElement.clientHeight,
++      },
++    );
++    if (!placement) {
++      hide();
++      return;
++    }
++    el.style.transform = `translate3d(${Math.round(placement.left)}px, ${Math.round(placement.top)}px, 0)`;
++  }, [editor, iframeElement, containerElement]);
++
++  /** Coalesce bursts of events (scroll, transactions, mutations) into one
++   * measurement per frame. */
++  const schedule = useCallback(() => {
++    if (rafRef.current !== null) return;
++    rafRef.current = requestAnimationFrame(() => {
++      rafRef.current = null;
++      position();
++    });
++  }, [position]);
++
++  // Re-measure when editing starts/stops or the editor instance changes.
++  useEffect(() => {
++    schedule();
++  }, [isEditing, editor, schedule]);
++
++  // Zoom changes shift every rect inside the iframe. The zoom transform may
++  // animate, so measure now and again once it has settled.
++  useEffect(() => {
++    zoomRef.current = zoom;
++    schedule();
++    const id = setTimeout(schedule, 200);
++    return () => clearTimeout(id);
++  }, [zoom, schedule]);
++
++  // Selection / content / layout / scroll listeners.
++  useEffect(() => {
++    if (!editor || !iframeElement || !containerElement) return;
++    const iframeDoc = iframeElement.contentDocument;
++    if (!iframeDoc) return;
++
++    let editorDom: HTMLElement | null = null;
++    try {
++      editorDom = editor.view.dom;
++    } catch {
++      return; // view not mounted yet; effect re-runs when the editor changes
++    }
++
++    const timeouts = new Set<ReturnType<typeof setTimeout>>();
++    const scheduleSettled = () => {
++      schedule();
++      const id = setTimeout(() => {
++        timeouts.delete(id);
++        schedule();
++      }, SETTLE_DELAY_MS);
++      timeouts.add(id);
++    };
++
++    // Hide while drag-selecting; reveal on mouseup (window as well, because the
++    // pointer can be released outside the iframe).
++    const onMouseDown = (e: MouseEvent) => {
++      if (e.button !== 0) return;
++      if (editorDom && editorDom.contains(e.target as Node)) {
++        selectingRef.current = true;
++        position();
++      }
++    };
++    const onMouseUp = () => {
++      if (!selectingRef.current) return;
++      selectingRef.current = false;
++      schedule();
++    };
++
++    editor.on("selectionUpdate", schedule);
++    editor.on("transaction", scheduleSettled);
++    editor.on("focus", schedule);
++    editor.on("blur", schedule);
++
++    iframeDoc.addEventListener("mousedown", onMouseDown, true);
++    iframeDoc.addEventListener("mouseup", onMouseUp, true);
++    window.addEventListener("mouseup", onMouseUp, true);
++    window.addEventListener("blur", onMouseUp);
++
++    containerElement.addEventListener("scroll", schedule, { passive: true });
++    iframeDoc.addEventListener("scroll", schedule, {
++      passive: true,
++      capture: true,
++    });
++    window.addEventListener("resize", schedule, { passive: true });
++    window.addEventListener("viewportChange", scheduleSettled);
++
++    // Layout shifts that don't come from a transaction: font swaps, image
++    // loads, class changes applied by dynamic styles, sidebar-driven resizes.
++    const resizeObserver = new ResizeObserver(schedule);
++    resizeObserver.observe(editorDom);
++    resizeObserver.observe(iframeElement);
++    if (iframeDoc.body) resizeObserver.observe(iframeDoc.body);
++
++    const mutationObserver = new MutationObserver(scheduleSettled);
++    mutationObserver.observe(editorDom, {
++      subtree: true,
++      childList: true,
++      attributes: true,
++      attributeFilter: ["class", "style"],
++    });
++
++    // Sidebar resize / canvas context menu temporarily own the canvas.
++    const syncBlocked = (state: ReturnType<typeof useEditorStore.getState>) => {
++      const blocked = !!(
++        state.isSidebarResizing || state.isCanvasContextMenuOpen
++      );
++      if (blocked === blockedRef.current) return;
++      blockedRef.current = blocked;
++      schedule();
++    };
++    syncBlocked(useEditorStore.getState());
++    const unsubscribe = useEditorStore.subscribe(syncBlocked);
++
++    schedule();
++
++    return () => {
++      editor.off("selectionUpdate", schedule);
++      editor.off("transaction", scheduleSettled);
++      editor.off("focus", schedule);
++      editor.off("blur", schedule);
++      iframeDoc.removeEventListener("mousedown", onMouseDown, true);
++      iframeDoc.removeEventListener("mouseup", onMouseUp, true);
++      window.removeEventListener("mouseup", onMouseUp, true);
++      window.removeEventListener("blur", onMouseUp);
++      containerElement.removeEventListener("scroll", schedule);
++      iframeDoc.removeEventListener("scroll", schedule, true);
++      window.removeEventListener("resize", schedule);
++      window.removeEventListener("viewportChange", scheduleSettled);
++      resizeObserver.disconnect();
++      mutationObserver.disconnect();
++      unsubscribe();
++      timeouts.forEach(clearTimeout);
++      selectingRef.current = false;
++    };
++  }, [editor, iframeElement, containerElement, position, schedule]);
++
++  // Cancel any pending frame on unmount.
++  useEffect(
++    () => () => {
++      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
++    },
++    [],
++  );
++
++  // ── Handlers ───────────────────────────────────────────────────────────────
++
++  const handleMouseDown = useCallback((e: React.MouseEvent) => {
++    // Keep focus and the selection in the iframe when a toolbar button is
++    // pressed. React bubbles events from portalled popover content through
++    // this handler too; those live outside the toolbar's DOM and must keep
++    // their default behaviour (typing in inputs, opening selects, ...).
++    const target = e.target as HTMLElement;
++    if (!e.currentTarget.contains(target)) return;
++    if (target.closest("input, textarea, select, [contenteditable='true']")) {
++      return;
++    }
++    e.preventDefault();
++  }, []);
++
++  // ── Link eligibility (mirrors Ycode: links can't be nested) ───────────────
++
++  const canHaveLinks = editingLayer
++    ? canLayerHaveLink(editingLayer, allLayers, "richText").canHaveLinks
++    : true;
++
++  return (
++    <div className="pointer-events-none absolute inset-0 z-50 overflow-hidden">
++      <div
++        ref={toolbarRef}
++        role="toolbar"
++        aria-label="Text formatting"
++        data-text-selection-toolbar
++        onMouseDown={handleMouseDown}
++        className={cn(
++          "pointer-events-auto absolute top-0 left-0 h-10 items-center gap-0.5 px-1.5",
++          "rounded-xl border border-white/10 bg-neutral-900/85 text-neutral-200 backdrop-blur-md",
++          "shadow-[0_8px_30px_rgba(0,0,0,0.35)] select-none will-change-transform",
++        )}
++        style={HIDDEN_STYLE}
++      >
++        <ToolbarButton
++          label="Bold (Ctrl/⌘ B)"
++          pressed={activeMarks.bold}
++          onClick={toggleBold}
++        >
++          <Bold className="size-4" strokeWidth={2.25} />
++        </ToolbarButton>
++        <ToolbarButton
++          label="Italic (Ctrl/⌘ I)"
++          pressed={activeMarks.italic}
++          onClick={toggleItalic}
++        >
++          <Italic className="size-4" />
++        </ToolbarButton>
++        <ToolbarButton
++          label="Underline (Ctrl/⌘ U)"
++          pressed={activeMarks.underline}
++          onClick={toggleUnderline}
++        >
++          <Underline className="size-4" />
++        </ToolbarButton>
++        <ToolbarButton
++          label="Strikethrough"
++          pressed={activeMarks.strike}
++          onClick={toggleStrike}
++        >
++          <Strikethrough className="size-4" />
++        </ToolbarButton>
++
++        <Divider />
++
++        {editor && canHaveLinks ? (
++          <RichTextLinkPopover
++            editor={editor}
++            fieldGroups={fieldGroups}
++            allFields={allFields}
++            collections={collections}
++            isInsideCollectionLayer={isInsideCollectionLayer}
++            layer={editingLayer}
++            open={linkOpen}
++            onOpenChange={(open) => setLinkOpenFor(open ? editor : null)}
++            trigger={
++              <ToolbarButton label="Link" pressed={activeMarks.richTextLink}>
++                <Link2 className="size-4" />
++              </ToolbarButton>
++            }
++          />
++        ) : (
++          <ToolbarButton label="Links cannot be nested" disabled>
++            <Link2 className="size-4" />
++          </ToolbarButton>
++        )}
++      </div>
++    </div>
++  );
++}
++
++export const TextSelectionToolbar = memo(TextSelectionToolbarImpl);
++export default TextSelectionToolbar;
+diff --git a/src/lib/text-selection-anchor.ts b/src/lib/text-selection-anchor.ts
+new file mode 100644
+index 0000000..601c431
+--- /dev/null
++++ b/src/lib/text-selection-anchor.ts
+@@ -0,0 +1,182 @@
++/**
++ * Text selection anchor helpers
++ *
++ * Geometry for the floating text-formatting toolbar that appears under a
++ * highlighted range of text inside the canvas iframe.
++ *
++ * The canvas is an iframe that is scaled with `transform: scale(zoom / 100)`.
++ * Rects measured *inside* the iframe (Range / ProseMirror coords) are reported
++ * in the iframe's own unscaled layout space, whereas the toolbar lives in the
++ * parent document. `mapIframeRectToContainer` converts between the two using
++ * the same formula as `SelectionOverlay`:
++ *
++ *   screen = iframeRect.origin - containerRect.origin + innerRect.origin * scale
++ *
++ * Everything in this file is DOM-free apart from `getEditorSelectionRect`,
++ * which only reads from a Tiptap editor, so the maths can be unit-tested.
++ */
++
++import type { Editor } from "@tiptap/react";
++
++export interface Rect {
++  top: number;
++  left: number;
++  width: number;
++  height: number;
++}
++
++export interface Size {
++  width: number;
++  height: number;
++}
++
++export interface ToolbarPlacement {
++  /** Top-left of the toolbar, in container coordinates (px). */
++  top: number;
++  left: number;
++  /** Which side of the selection the toolbar ended up on. */
++  placement: "below" | "above";
++}
++
++/** Gap between the selection and the toolbar (px). */
++export const TOOLBAR_GAP = 10;
++/** Minimum distance kept from the edges of the canvas viewport (px). */
++export const TOOLBAR_EDGE = 8;
++
++export const clamp = (value: number, min: number, max: number) =>
++  Math.min(Math.max(value, min), max);
++
++/**
++ * Convert a rect measured inside the (scaled) canvas iframe into container
++ * coordinates.
++ *
++ * @param inner - rect in the iframe's unscaled layout space
++ * @param iframeRect - `iframeElement.getBoundingClientRect()` (on-screen)
++ * @param containerRect - `containerElement.getBoundingClientRect()` (on-screen)
++ * @param scale - zoom / 100
++ */
++export function mapIframeRectToContainer(
++  inner: Rect,
++  iframeRect: Pick<Rect, "top" | "left">,
++  containerRect: Pick<Rect, "top" | "left">,
++  scale: number,
++): Rect {
++  return {
++    top: iframeRect.top - containerRect.top + inner.top * scale,
++    left: iframeRect.left - containerRect.left + inner.left * scale,
++    width: inner.width * scale,
++    height: inner.height * scale,
++  };
++}
++
++/**
++ * Decide where the toolbar goes relative to the selection anchor.
++ *
++ * - Centred horizontally on the selection.
++ * - Below the selection by default; flips above when there is no room below
++ *   but there is room above; otherwise stays below, clamped into view.
++ * - Always clamped inside the container's edges.
++ * - Returns `null` when the selection is entirely scrolled out of view, so the
++ *   toolbar can hide rather than float over unrelated content.
++ */
++export function placeToolbar(
++  anchor: Rect,
++  toolbar: Size,
++  bounds: Size,
++  options: { gap?: number; edge?: number } = {},
++): ToolbarPlacement | null {
++  const gap = options.gap ?? TOOLBAR_GAP;
++  const edge = options.edge ?? TOOLBAR_EDGE;
++
++  const anchorBottom = anchor.top + anchor.height;
++  const anchorRight = anchor.left + anchor.width;
++
++  // Selection fully outside the visible area: nothing sensible to anchor to.
++  if (
++    anchorBottom < 0 ||
++    anchor.top > bounds.height ||
++    anchorRight < 0 ||
++    anchor.left > bounds.width
++  ) {
++    return null;
++  }
++
++  const maxTop = Math.max(edge, bounds.height - toolbar.height - edge);
++  const maxLeft = Math.max(edge, bounds.width - toolbar.width - edge);
++
++  const below = anchorBottom + gap;
++  const above = anchor.top - gap - toolbar.height;
++
++  let top: number;
++  let placement: ToolbarPlacement["placement"];
++  if (below <= maxTop) {
++    top = below;
++    placement = "below";
++  } else if (above >= edge) {
++    top = above;
++    placement = "above";
++  } else {
++    top = clamp(below, edge, maxTop);
++    placement = "below";
++  }
++
++  const centred = anchor.left + anchor.width / 2 - toolbar.width / 2;
++  const left = clamp(centred, edge, maxLeft);
++
++  return { top, left, placement };
++}
++
++/**
++ * Measure the current (non-empty) selection of a Tiptap editor, in the
++ * iframe's own unscaled viewport coordinates.
++ *
++ * Uses a DOM Range built from ProseMirror positions rather than
++ * `window.getSelection()` so the rect stays available while focus has moved to
++ * a toolbar popover (the browser can drop or grey out the native selection
++ * then, but ProseMirror's state keeps it).
++ *
++ * Returns `null` when the editor view is unavailable or the selection is empty.
++ */
++export function getEditorSelectionRect(editor: Editor): Rect | null {
++  try {
++    if (editor.isDestroyed) return null;
++    const { view } = editor;
++    const { from, to, empty } = view.state.selection;
++    if (empty) return null;
++
++    // Preferred: union box of every line the range touches.
++    try {
++      const start = view.domAtPos(from);
++      const end = view.domAtPos(to);
++      const range = view.dom.ownerDocument.createRange();
++      range.setStart(start.node, start.offset);
++      range.setEnd(end.node, end.offset);
++      const box = range.getBoundingClientRect();
++      if (box.width > 0 || box.height > 0) {
++        return {
++          top: box.top,
++          left: box.left,
++          width: box.width,
++          height: box.height,
++        };
++      }
++    } catch {
++      // fall through to coordsAtPos
++    }
++
++    // Fallback (e.g. a selected atom node): box between the two end points.
++    const a = view.coordsAtPos(from);
++    const b = view.coordsAtPos(to);
++    const left = Math.min(a.left, b.left);
++    const top = Math.min(a.top, b.top);
++    return {
++      top,
++      left,
++      width: Math.max(a.right, b.right) - left,
++      height: Math.max(a.bottom, b.bottom) - top,
++    };
++  } catch {
++    // `editor.view` throws while the view is not mounted yet.
++    return null;
++  }
++}
+diff --git a/src/lib/tiptap-extensions/ghost-selection.ts b/src/lib/tiptap-extensions/ghost-selection.ts
+new file mode 100644
+index 0000000..438ef48
+--- /dev/null
++++ b/src/lib/tiptap-extensions/ghost-selection.ts
+@@ -0,0 +1,83 @@
++/**
++ * Ghost Selection
++ *
++ * Keeps a highlighted range visibly "selected" while the editor does not have
++ * focus.
++ *
++ * The inline text editor lives inside the canvas iframe, but its formatting
++ * toolbar and popovers (colour picker, link editor, size menu) live in the
++ * parent document. Moving focus to one of them makes the browser grey out or
++ * drop the native selection highlight in the iframe, even though ProseMirror
++ * still holds the selection. Painting the range with an inline decoration
++ * while blurred keeps it obvious what the toolbar is about to format.
++ *
++ * The decoration only exists while `!focused`; while focused the native
++ * selection is shown as usual. It is purely visual: it never enters the
++ * document or the serialised content.
++ */
++
++import { Extension } from "@tiptap/core";
++import { Plugin, PluginKey } from "@tiptap/pm/state";
++import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
++
++interface GhostSelectionState {
++  focused: boolean;
++}
++
++const ghostSelectionKey = new PluginKey<GhostSelectionState>("ghostSelection");
++
++const GHOST_STYLE =
++  "background-color: rgba(59, 130, 246, 0.35); border-radius: 2px;";
++
++function setFocused(view: EditorView, focused: boolean) {
++  // Blur can fire while the editor is being torn down.
++  if (view.isDestroyed) return;
++  if (ghostSelectionKey.getState(view.state)?.focused === focused) return;
++  view.dispatch(
++    view.state.tr
++      .setMeta(ghostSelectionKey, { focused })
++      .setMeta("addToHistory", false),
++  );
++}
++
++export const GhostSelection = Extension.create({
++  name: "ghostSelection",
++
++  addProseMirrorPlugins() {
++    return [
++      new Plugin<GhostSelectionState>({
++        key: ghostSelectionKey,
++        state: {
++          // The editor is focused right after mount, so start in that state.
++          init: () => ({ focused: true }),
++          apply: (tr, value) => {
++            const meta = tr.getMeta(ghostSelectionKey) as
++              | GhostSelectionState
++              | undefined;
++            return meta ?? value;
++          },
++        },
++        props: {
++          decorations(state) {
++            const pluginState = ghostSelectionKey.getState(state);
++            const { from, to, empty } = state.selection;
++            if (!pluginState || pluginState.focused || empty) return null;
++            return DecorationSet.create(state.doc, [
++              Decoration.inline(from, to, { style: GHOST_STYLE }),
++            ]);
++          },
++          handleDOMEvents: {
++            focus: (view) => {
++              setFocused(view, true);
++              return false;
++            },
++            blur: (view) => {
++              setFocused(view, false);
++              return false;
++            },
++          },
++        },
++      }),
++    ];
++  },
++});
+diff --git a/src/stores/editor/useCanvasTextEditorStore.ts b/src/stores/editor/useCanvasTextEditorStore.ts
+index a3aa81f..c2db097 100644
+--- a/src/stores/editor/useCanvasTextEditorStore.ts
++++ b/src/stores/editor/useCanvasTextEditorStore.ts
+@@ -35,6 +35,12 @@ interface CanvasTextEditorState {
+     /** Active heading level (1-6) or null if not in a heading */
+     headingLevel: 1 | 2 | 3 | 4 | 5 | 6 | null;
+   };
++  /**
++   * The dynamic style most recently created for a selection range. Lets
++   * repeated design changes on the *same* selection (e.g. clicking font-size +
++   * ten times) edit one style instead of stacking a new one per call.
++   */
++  lastAppliedStyle: { key: string; from: number; to: number } | null;
+ }
+ 
+ interface CanvasTextEditorActions {
+@@ -107,6 +113,7 @@ export const useCanvasTextEditorStore = create<CanvasTextEditorStore>(
+       dynamicStyleKey: null,
+       headingLevel: null,
+     },
++    lastAppliedStyle: null,
+     onFinishCallback: null,
+     onSaveCallback: null,
+ 
+@@ -144,6 +151,7 @@ export const useCanvasTextEditorStore = create<CanvasTextEditorStore>(
+           dynamicStyleKey: null,
+           headingLevel: null,
+         },
++        lastAppliedStyle: null,
+         onFinishCallback: null,
+         onSaveCallback: null,
+       });
+@@ -356,6 +364,23 @@ export const useCanvasTextEditorStore = create<CanvasTextEditorStore>(
+         existingKeys = attrs?.styleKeys || [];
+       }
+ 
++      // Same selection, and the style we created for it is still the last one
++      // on the mark: keep editing it rather than stacking another key. Without
++      // this, every +/- click or colour tweak on one selection would nest a new
++      // dynamicStyle (and a new textStyles entry).
++      const { lastAppliedStyle } = get();
++      if (
++        lastAppliedStyle &&
++        lastAppliedStyle.from === from &&
++        lastAppliedStyle.to === to &&
++        existingKeys[existingKeys.length - 1] === lastAppliedStyle.key
++      ) {
++        useEditorStore
++          .getState()
++          .setActiveTextStyleKey(lastAppliedStyle.key);
++        return lastAppliedStyle.key;
++      }
++
+       // Create a new styleKey and append it to the array
+       const newKey = generateId("dts");
+       const updatedKeys = [...existingKeys, newKey];
+@@ -373,6 +398,7 @@ export const useCanvasTextEditorStore = create<CanvasTextEditorStore>(
+       const setActiveTextStyleKey =
+         useEditorStore.getState().setActiveTextStyleKey;
+       setActiveTextStyleKey(newKey);
++      set({ lastAppliedStyle: { key: newKey, from, to } });
+ 
+       // Trigger a save to persist the new mark to the layer
+       get().triggerSave();

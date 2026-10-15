@@ -35,6 +35,12 @@ interface CanvasTextEditorState {
     /** Active heading level (1-6) or null if not in a heading */
     headingLevel: 1 | 2 | 3 | 4 | 5 | 6 | null;
   };
+  /**
+   * The dynamic style most recently created for a selection range. Lets
+   * repeated design changes on the *same* selection (e.g. clicking font-size +
+   * ten times) edit one style instead of stacking a new one per call.
+   */
+  lastAppliedStyle: { key: string; from: number; to: number } | null;
 }
 
 interface CanvasTextEditorActions {
@@ -107,6 +113,7 @@ export const useCanvasTextEditorStore = create<CanvasTextEditorStore>(
       dynamicStyleKey: null,
       headingLevel: null,
     },
+    lastAppliedStyle: null,
     onFinishCallback: null,
     onSaveCallback: null,
 
@@ -144,6 +151,7 @@ export const useCanvasTextEditorStore = create<CanvasTextEditorStore>(
           dynamicStyleKey: null,
           headingLevel: null,
         },
+        lastAppliedStyle: null,
         onFinishCallback: null,
         onSaveCallback: null,
       });
@@ -356,6 +364,23 @@ export const useCanvasTextEditorStore = create<CanvasTextEditorStore>(
         existingKeys = attrs?.styleKeys || [];
       }
 
+      // Same selection, and the style we created for it is still the last one
+      // on the mark: keep editing it rather than stacking another key. Without
+      // this, every +/- click or colour tweak on one selection would nest a new
+      // dynamicStyle (and a new textStyles entry).
+      const { lastAppliedStyle } = get();
+      if (
+        lastAppliedStyle &&
+        lastAppliedStyle.from === from &&
+        lastAppliedStyle.to === to &&
+        existingKeys[existingKeys.length - 1] === lastAppliedStyle.key
+      ) {
+        useEditorStore
+          .getState()
+          .setActiveTextStyleKey(lastAppliedStyle.key);
+        return lastAppliedStyle.key;
+      }
+
       // Create a new styleKey and append it to the array
       const newKey = generateId("dts");
       const updatedKeys = [...existingKeys, newKey];
@@ -373,6 +398,7 @@ export const useCanvasTextEditorStore = create<CanvasTextEditorStore>(
       const setActiveTextStyleKey =
         useEditorStore.getState().setActiveTextStyleKey;
       setActiveTextStyleKey(newKey);
+      set({ lastAppliedStyle: { key: newKey, from, to } });
 
       // Trigger a save to persist the new mark to the layer
       get().triggerSave();
