@@ -1501,6 +1501,7 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
               zoom={zoom}
               editingLayer={textToolbarLayer}
               allLayers={layers}
+              onLayerUpdate={handleCanvasLayerUpdate}
               fieldGroups={textToolbarFieldGroups}
               allFields={collectionFieldsFromStore}
               collections={textToolbarCollections}

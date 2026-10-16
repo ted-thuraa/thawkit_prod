@@ -180,3 +180,49 @@ export function getEditorSelectionRect(editor: Editor): Rect | null {
     return null;
   }
 }
+
+export interface SelectionTypography {
+  /** Rendered font size at the start of the selection, in px. */
+  fontSizePx: number;
+  /** Rendered text colour at the start of the selection, as a CSS colour. */
+  color: string;
+}
+
+/**
+ * Read the typography the browser is actually rendering at the start of the
+ * selection.
+ *
+ * This is deliberately the computed style rather than the layer's design
+ * values: it is correct through inheritance, breakpoints, `clamp()`/`vw` sizes
+ * and stacked inline styles, and updates as soon as a change renders. The
+ * iframe is zoomed with a CSS transform, which does not affect computed
+ * `font-size`, so the value is the real (unscaled) size.
+ *
+ * Returns `null` when the editor view is unavailable.
+ */
+export function getSelectionComputedTypography(
+  editor: Editor,
+): SelectionTypography | null {
+  try {
+    if (editor.isDestroyed) return null;
+    const { view } = editor;
+    const { from, to } = view.state.selection;
+
+    // Resolve one position *inside* the first character so we land in the
+    // styled text node, not on a boundary that resolves to the parent block.
+    const { node } = view.domAtPos(to > from ? from + 1 : from);
+    const element =
+      node.nodeType === Node.ELEMENT_NODE
+        ? (node as Element)
+        : node.parentElement;
+    const win = view.dom.ownerDocument.defaultView;
+    if (!element || !win) return null;
+
+    const style = win.getComputedStyle(element);
+    const fontSizePx = parseFloat(style.fontSize);
+    if (!Number.isFinite(fontSizePx)) return null;
+    return { fontSizePx, color: style.color };
+  } catch {
+    return null;
+  }
+}

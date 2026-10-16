@@ -21,6 +21,12 @@
  * - Every toolbar mousedown is `preventDefault`-ed (except inside inputs) so
  *   clicking a button never moves focus out of the iframe or collapses the
  *   selection before the command runs.
+ * - Font size and colour are *inline* styles on the selection, written through
+ *   `useDesignSync` (which creates/reuses a `dynamicStyle` mark). Their
+ *   displayed values come from the browser's computed style at the selection,
+ *   so they stay correct through inheritance, breakpoints and `clamp()` sizes.
+ * - Text alignment is a *block* property, so it is written to the layer itself
+ *   via a second, layer-level `useDesignSync` (never as an inline style).
  */
 
 import React, {
@@ -32,18 +38,46 @@ import React, {
   useState,
 } from "react";
 import type { Editor } from "@tiptap/react";
-import { Bold, Italic, Link2, Strikethrough, Underline } from "lucide-react";
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  Bold,
+  ChevronDown,
+  Italic,
+  Link2,
+  Minus,
+  Plus,
+  Strikethrough,
+  Underline,
+} from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { useDesignSync } from "@/hooks/use-design-sync";
 import { useCanvasTextEditorStore } from "@/stores/editor/useCanvasTextEditorStore";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
 import { canLayerHaveLink } from "@/lib/layer-utils";
 import {
   getEditorSelectionRect,
+  getSelectionComputedTypography,
   mapIframeRectToContainer,
   placeToolbar,
 } from "@/lib/text-selection-anchor";
+import {
+  FONT_SIZE_PRESETS,
+  fontSizeToDesignValue,
+  formatFontSize,
+  parseFontSizeInput,
+  rgbToHexColor,
+  stepFontSize,
+} from "@/lib/toolbar-typography";
 import type { Collection, CollectionField, Layer } from "@/types/funnel";
 import type { FieldGroup } from "./CollectionFieldSelector";
+import ColorPicker from "./ColorPicker";
 import RichTextLinkPopover from "./RichTextLinkPopover";
 
 interface TextSelectionToolbarProps {
@@ -57,6 +91,8 @@ interface TextSelectionToolbarProps {
   editingLayer: Layer | null;
   /** All layers in the current context (page or component), for link checks */
   allLayers: Layer[];
+  /** Applies a partial update to a layer (same updater the canvas uses) */
+  onLayerUpdate: (layerId: string, updates: Partial<Layer>) => void;
   fieldGroups?: FieldGroup[];
   allFields?: Record<string, CollectionField[]>;
   collections?: Collection[];
@@ -70,10 +106,43 @@ const HIDDEN_STYLE: React.CSSProperties = { display: "none" };
  * land before the text has actually reflowed. */
 const SETTLE_DELAY_MS = 80;
 
+/** How long an optimistic font size is shown before trusting the computed
+ * value again (covers the gap until the new class has rendered). */
+const PENDING_SIZE_TTL_MS = 1500;
+
+type TextAlign = "left" | "center" | "right";
+
+const ALIGNMENTS: {
+  value: TextAlign;
+  label: string;
+  Icon: typeof AlignLeft;
+}[] = [
+  { value: "left", label: "Align left", Icon: AlignLeft },
+  { value: "center", label: "Align center", Icon: AlignCenter },
+  { value: "right", label: "Align right", Icon: AlignRight },
+];
+
+/** Collapse the design value to one of the three toolbar alignments. */
+function normalizeTextAlign(value: string | undefined): TextAlign | null {
+  switch (value) {
+    case undefined:
+    case "":
+    case "left":
+    case "start":
+      return "left";
+    case "center":
+      return "center";
+    case "right":
+    case "end":
+      return "right";
+    default:
+      return null; // e.g. justify: none of the three buttons is active
+  }
+}
+
 // ─── Button ──────────────────────────────────────────────────────────────────
 
-interface ToolbarButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+interface ToolbarButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   label: string;
   pressed?: boolean;
 }
@@ -110,6 +179,133 @@ const Divider = () => (
   <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-white/15" />
 );
 
+// ─── Font size control ───────────────────────────────────────────────────────
+
+interface FontSizeControlProps {
+  /** Current size in px (null while unknown) */
+  value: number | null;
+  onStep: (direction: 1 | -1, big: boolean) => void;
+  onSet: (px: number) => void;
+  /** Return keyboard focus to the text editor */
+  onReturnFocus: () => void;
+}
+
+/** `[−] [ 144 ⌄ ] [+]`: stepper buttons, a typeable field and a presets list. */
+function FontSizeControl({
+  value,
+  onStep,
+  onSet,
+  onReturnFocus,
+}: FontSizeControlProps) {
+  // `null` = show the live value; a string = the user is typing.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [presetsOpen, setPresetsOpen] = useState(false);
+  /** Enter/Escape already handled the field; the blur they cause must not
+   * commit a second time. */
+  const skipBlurCommitRef = useRef(false);
+
+  const commit = (raw: string) => {
+    const px = parseFontSizeInput(raw);
+    if (px !== null && px !== value) onSet(px);
+  };
+
+  return (
+    <div className="flex items-center">
+      <ToolbarButton
+        label="Decrease font size (Shift: 10)"
+        onClick={(e) => onStep(-1, e.shiftKey)}
+      >
+        <Minus className="size-3.5" />
+      </ToolbarButton>
+
+      <input
+        aria-label="Font size"
+        inputMode="decimal"
+        spellCheck={false}
+        autoComplete="off"
+        className="h-7 w-10 rounded-md bg-transparent text-center text-[13px] font-semibold text-white outline-none focus:bg-white/10"
+        value={draft ?? formatFontSize(value)}
+        onFocus={(e) => {
+          setDraft(formatFontSize(value));
+          e.currentTarget.select();
+        }}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          // Keep keystrokes away from any document-level shortcuts.
+          e.stopPropagation();
+          if (e.key === "Enter") {
+            e.preventDefault();
+            skipBlurCommitRef.current = true;
+            if (draft !== null) commit(draft);
+            setDraft(null);
+            onReturnFocus();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            skipBlurCommitRef.current = true;
+            setDraft(null);
+            onReturnFocus();
+          } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+            e.preventDefault();
+            onStep(e.key === "ArrowUp" ? 1 : -1, e.shiftKey);
+            setDraft(null);
+          }
+        }}
+        onBlur={() => {
+          if (skipBlurCommitRef.current) {
+            skipBlurCommitRef.current = false;
+            return;
+          }
+          if (draft !== null) commit(draft);
+          setDraft(null);
+        }}
+      />
+
+      <Popover open={presetsOpen} onOpenChange={setPresetsOpen}>
+        <PopoverTrigger asChild>
+          <ToolbarButton label="Font sizes" className="-ml-1 mr-0.5 w-5">
+            <ChevronDown className="size-3" />
+          </ToolbarButton>
+        </PopoverTrigger>
+        <PopoverContent
+          align="center"
+          sideOffset={8}
+          className="w-20 border-white/10 bg-neutral-900 p-1 text-neutral-200"
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            onReturnFocus();
+          }}
+        >
+          <div className="max-h-64 overflow-y-auto">
+            {FONT_SIZE_PRESETS.map((size) => (
+              <button
+                key={size}
+                type="button"
+                className={cn(
+                  "w-full rounded px-2 py-1 text-left text-xs hover:bg-white/10",
+                  value !== null && Math.round(value) === size && "bg-white/15",
+                )}
+                onClick={() => {
+                  onSet(size);
+                  setPresetsOpen(false);
+                }}
+              >
+                {size}
+              </button>
+            ))}
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      <ToolbarButton
+        label="Increase font size (Shift: 10)"
+        onClick={(e) => onStep(1, e.shiftKey)}
+      >
+        <Plus className="size-3.5" />
+      </ToolbarButton>
+    </div>
+  );
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 function TextSelectionToolbarImpl({
@@ -118,6 +314,7 @@ function TextSelectionToolbarImpl({
   zoom,
   editingLayer,
   allLayers,
+  onLayerUpdate,
   fieldGroups,
   allFields,
   collections,
@@ -130,6 +327,51 @@ function TextSelectionToolbarImpl({
   const toggleItalic = useCanvasTextEditorStore((s) => s.toggleItalic);
   const toggleUnderline = useCanvasTextEditorStore((s) => s.toggleUnderline);
   const toggleStrike = useCanvasTextEditorStore((s) => s.toggleStrike);
+  const focusEditor = useCanvasTextEditorStore((s) => s.focusEditor);
+
+  const activeBreakpoint = useEditorStore((s) => s.activeBreakpoint);
+  const activeUIState = useEditorStore((s) => s.activeUIState);
+  const activeTextStyleKey = useEditorStore((s) => s.activeTextStyleKey);
+
+  // Inline (selection) styles: with a selection, `updateDesignProperty` creates
+  // or reuses a dynamicStyle mark and edits that text style.
+  const {
+    updateDesignProperty: updateInlineStyle,
+    debouncedUpdateDesignProperty,
+  } = useDesignSync({
+    layer: editingLayer,
+    onLayerUpdate,
+    activeBreakpoint,
+    activeUIState,
+    activeTextStyleKey,
+  });
+
+  // Block-level properties (alignment): always the layer itself, never an
+  // inline style, so no active text style key is passed.
+  const {
+    updateDesignProperties: updateLayerProperties,
+    getDesignProperty: getLayerProperty,
+  } = useDesignSync({
+    layer: editingLayer,
+    onLayerUpdate,
+    activeBreakpoint,
+    activeUIState,
+    activeTextStyleKey: null,
+  });
+
+  /** Rendered size/colour at the selection (see getSelectionComputedTypography). */
+  const [typography, setTypography] = useState<{
+    fontSizePx: number | null;
+    color: string | null;
+  }>({ fontSizePx: null, color: null });
+  /** A size we just applied but that hasn't rendered yet, shown meanwhile so
+   * rapid +/- clicks build on each other instead of the stale rendered value. */
+  const pendingSizeRef = useRef<{
+    px: number;
+    from: number;
+    to: number;
+    at: number;
+  } | null>(null);
 
   const toolbarRef = useRef<HTMLDivElement>(null);
   const zoomRef = useRef(zoom);
@@ -170,6 +412,30 @@ function TextSelectionToolbarImpl({
       hide();
       return;
     }
+
+    // Refresh the size/colour readout for the selection (cheap; only commits
+    // to React state when something actually changed).
+    const computed = getSelectionComputedTypography(editor);
+    let sizePx = computed ? Math.round(computed.fontSizePx * 10) / 10 : null;
+    const pending = pendingSizeRef.current;
+    if (pending) {
+      const { from, to } = editor.state.selection;
+      const expired =
+        Date.now() - pending.at > PENDING_SIZE_TTL_MS ||
+        pending.from !== from ||
+        pending.to !== to;
+      if (expired || (sizePx !== null && Math.abs(sizePx - pending.px) < 0.5)) {
+        pendingSizeRef.current = null; // rendered value caught up (or moved on)
+      } else {
+        sizePx = pending.px;
+      }
+    }
+    const color = computed ? rgbToHexColor(computed.color) : null;
+    setTypography((prev) =>
+      prev.fontSizePx === sizePx && prev.color === color
+        ? prev
+        : { fontSizePx: sizePx, color },
+    );
 
     const anchor = mapIframeRectToContainer(
       selectionRect,
@@ -348,6 +614,78 @@ function TextSelectionToolbarImpl({
     e.preventDefault();
   }, []);
 
+  // ── Font size / colour / alignment ─────────────────────────────────────────
+
+  const applyFontSize = useCallback(
+    (px: number) => {
+      if (!editor) return;
+      try {
+        const { from, to } = editor.state.selection;
+        pendingSizeRef.current = { px, from, to, at: Date.now() };
+      } catch {
+        return; // editor view gone
+      }
+      setTypography((prev) => ({ ...prev, fontSizePx: px }));
+      updateInlineStyle("typography", "fontSize", fontSizeToDesignValue(px));
+      // Re-measure once the optimistic value has expired, in case the
+      // rendered size never caught up.
+      setTimeout(schedule, PENDING_SIZE_TTL_MS + 50);
+    },
+    [editor, updateInlineStyle, schedule],
+  );
+
+  const stepFontSizeBy = useCallback(
+    (direction: 1 | -1, big: boolean) => {
+      applyFontSize(
+        stepFontSize(typography.fontSizePx ?? 16, direction, big ? 10 : 1),
+      );
+    },
+    [applyFontSize, typography.fontSizePx],
+  );
+
+  const handleColorImmediate = useCallback(
+    (value: string) => {
+      updateInlineStyle(
+        "typography",
+        "color",
+        value.replace(/\s+/g, "") || null,
+      );
+    },
+    [updateInlineStyle],
+  );
+
+  const handleColorDebounced = useCallback(
+    (value: string) => {
+      debouncedUpdateDesignProperty(
+        "typography",
+        "color",
+        value.replace(/\s+/g, "") || null,
+      );
+    },
+    [debouncedUpdateDesignProperty],
+  );
+
+  const handleColorOpenChange = useCallback(
+    (open: boolean) => {
+      // Hand keyboard focus back to the text once the picker closes.
+      if (!open) requestAnimationFrame(focusEditor);
+    },
+    [focusEditor],
+  );
+
+  const currentAlign = normalizeTextAlign(
+    getLayerProperty("typography", "textAlign"),
+  );
+
+  const handleAlign = useCallback(
+    (value: TextAlign) => {
+      updateLayerProperties([
+        { category: "typography", property: "textAlign", value },
+      ]);
+    },
+    [updateLayerProperties],
+  );
+
   // ── Link eligibility (mirrors Ycode: links can't be nested) ───────────────
 
   const canHaveLinks = editingLayer
@@ -421,6 +759,44 @@ function TextSelectionToolbarImpl({
             <Link2 className="size-4" />
           </ToolbarButton>
         )}
+
+        <Divider />
+
+        <FontSizeControl
+          value={typography.fontSizePx}
+          onStep={stepFontSizeBy}
+          onSet={applyFontSize}
+          onReturnFocus={focusEditor}
+        />
+
+        <Divider />
+
+        {/* The picker's swatch trigger is themed for the app; restyle it to sit
+            in the dark pill. */}
+        <div className="flex items-center [&_button]:bg-white/10 [&_button:hover]:bg-white/20">
+          <ColorPicker
+            swatchOnly
+            solidOnly
+            value={typography.color ?? ""}
+            defaultValue="#ffffff"
+            onChange={handleColorDebounced}
+            onImmediateChange={handleColorImmediate}
+            onOpenChange={handleColorOpenChange}
+          />
+        </div>
+
+        <Divider />
+
+        {ALIGNMENTS.map(({ value, label, Icon }) => (
+          <ToolbarButton
+            key={value}
+            label={label}
+            pressed={currentAlign === value}
+            onClick={() => handleAlign(value)}
+          >
+            <Icon className="size-4" />
+          </ToolbarButton>
+        ))}
       </div>
     </div>
   );
