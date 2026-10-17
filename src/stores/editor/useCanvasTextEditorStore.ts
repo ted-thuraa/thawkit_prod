@@ -7,6 +7,7 @@
 
 import { create } from "zustand";
 import type { Editor } from "@tiptap/react";
+import { Selection } from "@tiptap/pm/state";
 import type { InlineVariable } from "@/types/funnel";
 import { getVariableLabel } from "@/lib/cms-variables-utils";
 import type { CollectionField } from "@/types/funnel";
@@ -34,6 +35,12 @@ interface CanvasTextEditorState {
     dynamicStyleKey: string | null;
     /** Active heading level (1-6) or null if not in a heading */
     headingLevel: 1 | 2 | 3 | 4 | 5 | 6 | null;
+    /** Whether the selection is inside a blockquote */
+    blockquote: boolean;
+    /** Whether the selection is inside a bullet list */
+    bulletList: boolean;
+    /** Whether the selection is inside an ordered (numbered) list */
+    orderedList: boolean;
   };
   /**
    * The dynamic style most recently created for a selection range. Lets
@@ -76,6 +83,12 @@ interface CanvasTextEditorActions {
   toggleSubscript: () => void;
   /** Toggle superscript formatting */
   toggleSuperscript: () => void;
+  /** Toggle a blockquote around the current block(s) */
+  toggleBlockquote: () => void;
+  /** Toggle a bullet list on the current block(s) */
+  toggleBulletList: () => void;
+  /** Toggle a numbered list on the current block(s) */
+  toggleOrderedList: () => void;
   /** Toggle heading level (1-6) or set to paragraph (null) */
   setHeading: (level: 1 | 2 | 3 | 4 | 5 | 6 | null) => void;
   /** Toggle custom style formatting */
@@ -96,6 +109,25 @@ interface CanvasTextEditorActions {
 
 type CanvasTextEditorStore = CanvasTextEditorState & CanvasTextEditorActions;
 
+/**
+ * Ctrl/Cmd+A produces ProseMirror's `AllSelection`, which sits at document
+ * depth 0. Wrapping commands (quote, lists) work with it, but *un*-wrapping
+ * doesn't: there is no block range to lift, so a second click on an active
+ * Quote/List button would do nothing. Swap it for the equivalent text
+ * selection (first to last text position) before running block commands.
+ */
+function normalizeAllSelection(editor: Editor): void {
+  const { selection, doc } = editor.state;
+  // Compare the serialised type id rather than using `instanceof`, which is
+  // unreliable if the editor and this module end up with separate copies of
+  // prosemirror-state (dual ESM/CJS packages, duplicated bundles).
+  if (selection.toJSON().type !== "all") return;
+  editor.commands.setTextSelection({
+    from: Selection.atStart(doc).from,
+    to: Selection.atEnd(doc).to,
+  });
+}
+
 export const useCanvasTextEditorStore = create<CanvasTextEditorStore>(
   (set, get) => ({
     // State
@@ -112,6 +144,9 @@ export const useCanvasTextEditorStore = create<CanvasTextEditorStore>(
       richTextLink: false,
       dynamicStyleKey: null,
       headingLevel: null,
+      blockquote: false,
+      bulletList: false,
+      orderedList: false,
     },
     lastAppliedStyle: null,
     onFinishCallback: null,
@@ -150,6 +185,9 @@ export const useCanvasTextEditorStore = create<CanvasTextEditorStore>(
           richTextLink: false,
           dynamicStyleKey: null,
           headingLevel: null,
+      blockquote: false,
+      bulletList: false,
+      orderedList: false,
         },
         lastAppliedStyle: null,
         onFinishCallback: null,
@@ -214,6 +252,9 @@ export const useCanvasTextEditorStore = create<CanvasTextEditorStore>(
         richTextLink: editor.isActive("richTextLink"),
         dynamicStyleKey,
         headingLevel,
+        blockquote: editor.isActive("blockquote"),
+        bulletList: editor.isActive("bulletList"),
+        orderedList: editor.isActive("orderedList"),
       };
 
       set({ activeMarks });
@@ -287,6 +328,30 @@ export const useCanvasTextEditorStore = create<CanvasTextEditorStore>(
       const { editor } = get();
       if (!editor) return;
       editor.chain().focus().toggleSuperscript().run();
+      get().updateActiveMarks();
+    },
+
+    toggleBlockquote: () => {
+      const { editor } = get();
+      if (!editor) return;
+      normalizeAllSelection(editor);
+      editor.chain().focus().toggleBlockquote().run();
+      get().updateActiveMarks();
+    },
+
+    toggleBulletList: () => {
+      const { editor } = get();
+      if (!editor) return;
+      normalizeAllSelection(editor);
+      editor.chain().focus().toggleBulletList().run();
+      get().updateActiveMarks();
+    },
+
+    toggleOrderedList: () => {
+      const { editor } = get();
+      if (!editor) return;
+      normalizeAllSelection(editor);
+      editor.chain().focus().toggleOrderedList().run();
       get().updateActiveMarks();
     },
 

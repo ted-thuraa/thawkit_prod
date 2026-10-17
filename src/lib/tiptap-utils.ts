@@ -119,8 +119,10 @@ export function isTiptapDoc(
 }
 
 /**
- * Check if Tiptap JSON content contains block-level elements (lists)
- * These cannot be nested inside restrictive tags (p, h1-h6, span, a, button)
+ * Check if Tiptap JSON content contains block-level elements (lists, quotes,
+ * embedded components, rules, tables).
+ * These cannot be nested inside restrictive tags (p, h1-h6, span, a, button),
+ * so the layer's wrapper is switched to a <div> when any are present.
  */
 export function contentHasBlockElements(content: any): boolean {
   if (!content || typeof content !== "object") {
@@ -133,6 +135,7 @@ export function contentHasBlockElements(content: any): boolean {
       (block: any) =>
         block.type === "bulletList" ||
         block.type === "orderedList" ||
+        block.type === "blockquote" ||
         block.type === "richTextComponent" ||
         block.type === "horizontalRule" ||
         block.type === "table",

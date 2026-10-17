@@ -33,6 +33,9 @@ import Subscript from "@tiptap/extension-subscript";
 import Superscript from "@tiptap/extension-superscript";
 import Heading from "@tiptap/extension-heading";
 import Blockquote from "@tiptap/extension-blockquote";
+import BulletList from "@tiptap/extension-bullet-list";
+import OrderedList from "@tiptap/extension-ordered-list";
+import ListItem from "@tiptap/extension-list-item";
 import Code from "@tiptap/extension-code";
 import { RichTextImage } from "@/lib/tiptap-extensions/rich-text-image";
 import { GhostSelection } from "@/lib/tiptap-extensions/ghost-selection";
@@ -186,6 +189,48 @@ function createBlockquoteExtension(ref: TextStylesRef) {
         "blockquote",
         mergeAttributes(HTMLAttributes, {
           class: getTextStyleClasses(ref.current, "blockquote"),
+        }),
+        0,
+      ];
+    },
+  });
+}
+
+function createBulletListExtension(ref: TextStylesRef) {
+  return BulletList.extend({
+    renderHTML({ HTMLAttributes }) {
+      return [
+        "ul",
+        mergeAttributes(HTMLAttributes, {
+          class: getTextStyleClasses(ref.current, "bulletList"),
+        }),
+        0,
+      ];
+    },
+  });
+}
+
+function createOrderedListExtension(ref: TextStylesRef) {
+  return OrderedList.extend({
+    renderHTML({ HTMLAttributes }) {
+      return [
+        "ol",
+        mergeAttributes(HTMLAttributes, {
+          class: getTextStyleClasses(ref.current, "orderedList"),
+        }),
+        0,
+      ];
+    },
+  });
+}
+
+function createListItemExtension(ref: TextStylesRef) {
+  return ListItem.extend({
+    renderHTML({ HTMLAttributes }) {
+      return [
+        "li",
+        mergeAttributes(HTMLAttributes, {
+          class: getTextStyleClasses(ref.current, "listItem"),
         }),
         0,
       ];
@@ -385,6 +430,9 @@ const CanvasTextEditor = forwardRef<
         createSuperscriptExtension(textStylesRef),
         createHeadingExtension(textStylesRef),
         createBlockquoteExtension(textStylesRef),
+        createBulletListExtension(textStylesRef),
+        createOrderedListExtension(textStylesRef),
+        createListItemExtension(textStylesRef),
         Code,
         RichTextImage,
         createDynamicStyleExtension(textStylesRef),
@@ -591,6 +639,9 @@ const CanvasTextEditor = forwardRef<
         H5: "h5",
         H6: "h6",
         BLOCKQUOTE: "blockquote",
+        UL: "bulletList",
+        OL: "orderedList",
+        LI: "listItem",
         STRONG: "bold",
         EM: "italic",
         U: "underline",

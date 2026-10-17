@@ -25,6 +25,15 @@
  *   `useDesignSync` (which creates/reuses a `dynamicStyle` mark). Their
  *   displayed values come from the browser's computed style at the selection,
  *   so they stay correct through inheritance, breakpoints and `clamp()` sizes.
+ * - Quote and list buttons toggle block nodes inside the editor document. They
+ *   are disabled (with an explanatory tooltip) on headings and inline text,
+ *   because a list or quote switches the layer's wrapper to a <div>, which
+ *   would silently turn an <h1> into a non-heading. An already-active one can
+ *   still be toggled off.
+ * - "P" is the layer's *text type* (Paragraph / H1-H6), not an in-document
+ *   block: heading blocks inside a text/heading layer are flattened away at
+ *   render time, so only changing the layer itself persists. It reuses the
+ *   same text <-> heading conversion as the layer context menu.
  * - Text alignment is a *block* property, so it is written to the layer itself
  *   via a second, layer-level `useDesignSync` (never as an inline style).
  */
@@ -46,8 +55,11 @@ import {
   ChevronDown,
   Italic,
   Link2,
+  List,
+  ListOrdered,
   Minus,
   Plus,
+  Quote,
   Strikethrough,
   Underline,
 } from "lucide-react";
@@ -60,7 +72,12 @@ import { cn } from "@/lib/utils";
 import { useDesignSync } from "@/hooks/use-design-sync";
 import { useCanvasTextEditorStore } from "@/stores/editor/useCanvasTextEditorStore";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
-import { canLayerHaveLink } from "@/lib/layer-utils";
+import {
+  canLayerHaveLink,
+  getLayerHtmlTag,
+  getTextHeadingConversion,
+  isHeadingLayer,
+} from "@/lib/layer-utils";
 import {
   getEditorSelectionRect,
   getSelectionComputedTypography,
@@ -109,6 +126,31 @@ const SETTLE_DELAY_MS = 80;
 /** How long an optimistic font size is shown before trusting the computed
  * value again (covers the gap until the new class has rendered). */
 const PENDING_SIZE_TTL_MS = 1500;
+
+/** Tags whose layers can't hold block content without losing their meaning
+ * (headings) or validity (inline text). */
+const NO_BLOCK_CONTENT_TAGS = new Set([
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "span",
+  "a",
+  "button",
+  "label",
+]);
+
+const TEXT_TYPES = [
+  { tag: "p", label: "Paragraph" },
+  { tag: "h1", label: "Heading 1" },
+  { tag: "h2", label: "Heading 2" },
+  { tag: "h3", label: "Heading 3" },
+  { tag: "h4", label: "Heading 4" },
+  { tag: "h5", label: "Heading 5" },
+  { tag: "h6", label: "Heading 6" },
+] as const;
 
 type TextAlign = "left" | "center" | "right";
 
@@ -163,7 +205,9 @@ const ToolbarButton = forwardRef<HTMLButtonElement, ToolbarButtonProps>(
         className={cn(
           "flex size-7 shrink-0 items-center justify-center rounded-md text-neutral-300 transition-colors",
           "hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/40",
-          "disabled:pointer-events-none disabled:opacity-40",
+          // No pointer-events-none: a disabled button must still show its
+          // tooltip, which is where the reason it's disabled is explained.
+          "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-neutral-300",
           pressed && "bg-white/20 text-white",
           className,
         )}
@@ -328,6 +372,11 @@ function TextSelectionToolbarImpl({
   const toggleUnderline = useCanvasTextEditorStore((s) => s.toggleUnderline);
   const toggleStrike = useCanvasTextEditorStore((s) => s.toggleStrike);
   const focusEditor = useCanvasTextEditorStore((s) => s.focusEditor);
+  const toggleBlockquote = useCanvasTextEditorStore((s) => s.toggleBlockquote);
+  const toggleBulletList = useCanvasTextEditorStore((s) => s.toggleBulletList);
+  const toggleOrderedList = useCanvasTextEditorStore(
+    (s) => s.toggleOrderedList,
+  );
 
   const activeBreakpoint = useEditorStore((s) => s.activeBreakpoint);
   const activeUIState = useEditorStore((s) => s.activeUIState);
@@ -384,6 +433,7 @@ function TextSelectionToolbarImpl({
   // session creates a fresh editor, so the popover closes by itself when
   // editing ends: no reset effect needed.
   const [linkOpenFor, setLinkOpenFor] = useState<Editor | null>(null);
+  const [textTypeOpen, setTextTypeOpen] = useState(false);
   const linkOpen = editor !== null && linkOpenFor === editor;
 
   // ── Positioning ────────────────────────────────────────────────────────────
@@ -686,6 +736,57 @@ function TextSelectionToolbarImpl({
     [updateLayerProperties],
   );
 
+  // ── Block content (quote / lists) and text type ───────────────────────────
+
+  const layerTag = editingLayer ? getLayerHtmlTag(editingLayer) : "div";
+  const blockContentAllowed = !NO_BLOCK_CONTENT_TAGS.has(layerTag);
+  const blockDisabledReason = /^h[1-6]$/.test(layerTag)
+    ? "Not available in headings: it would turn the heading into a plain block. Use a Text element."
+    : "Not available in inline text";
+  const blockLabel = (label: string, active: boolean) =>
+    blockContentAllowed
+      ? label
+      : active
+        ? `${label} (click to remove)`
+        : `${label}: ${blockDisabledReason}`;
+
+  /** Current layer text type, or null when the layer isn't block-level text
+   * (e.g. an inline caption), in which case "P" is disabled. */
+  const currentTextType = (() => {
+    if (!editingLayer) return null;
+    if (isHeadingLayer(editingLayer)) {
+      return /^h[1-6]$/.test(layerTag) ? layerTag : "h2";
+    }
+    return getTextHeadingConversion(editingLayer) ? "p" : null;
+  })();
+
+  const handleTextType = useCallback(
+    (tag: (typeof TEXT_TYPES)[number]["tag"]) => {
+      if (!editingLayer) return;
+      const conversion = getTextHeadingConversion(editingLayer);
+      const isHeading = isHeadingLayer(editingLayer);
+
+      if (tag === "p") {
+        if (isHeading && conversion) onLayerUpdate(editingLayer.id, conversion);
+        return;
+      }
+      if (!isHeading) {
+        // text -> heading: take the converter's name/label handling, then
+        // apply the requested level instead of its default.
+        if (!conversion) return;
+        onLayerUpdate(editingLayer.id, {
+          ...conversion,
+          settings: { ...conversion.settings, tag },
+        });
+        return;
+      }
+      onLayerUpdate(editingLayer.id, {
+        settings: { ...editingLayer.settings, tag },
+      });
+    },
+    [editingLayer, onLayerUpdate],
+  );
+
   // ── Link eligibility (mirrors Ycode: links can't be nested) ───────────────
 
   const canHaveLinks = editingLayer
@@ -784,6 +885,77 @@ function TextSelectionToolbarImpl({
             onOpenChange={handleColorOpenChange}
           />
         </div>
+
+        <Divider />
+
+        <Popover open={textTypeOpen} onOpenChange={setTextTypeOpen}>
+          <PopoverTrigger asChild>
+            <ToolbarButton
+              label={
+                currentTextType
+                  ? "Text type"
+                  : "Text type: not available for inline text"
+              }
+              disabled={!currentTextType}
+              className="w-auto min-w-7 px-1.5 text-[13px] font-bold"
+            >
+              {currentTextType?.toUpperCase() ?? "P"}
+            </ToolbarButton>
+          </PopoverTrigger>
+          <PopoverContent
+            align="start"
+            sideOffset={8}
+            className="w-36 border-white/10 bg-neutral-900 p-1 text-neutral-200"
+            onCloseAutoFocus={(e) => {
+              e.preventDefault();
+              focusEditor();
+            }}
+          >
+            {TEXT_TYPES.map(({ tag, label }) => (
+              <button
+                key={tag}
+                type="button"
+                className={cn(
+                  "w-full rounded px-2 py-1 text-left text-xs hover:bg-white/10",
+                  currentTextType === tag && "bg-white/15",
+                )}
+                onClick={() => {
+                  handleTextType(tag);
+                  setTextTypeOpen(false);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </PopoverContent>
+        </Popover>
+        <ToolbarButton
+          label={blockLabel("Quote", activeMarks.blockquote)}
+          pressed={activeMarks.blockquote}
+          disabled={!blockContentAllowed && !activeMarks.blockquote}
+          onClick={toggleBlockquote}
+        >
+          <Quote className="size-4" />
+        </ToolbarButton>
+
+        <Divider />
+
+        <ToolbarButton
+          label={blockLabel("Bulleted list", activeMarks.bulletList)}
+          pressed={activeMarks.bulletList}
+          disabled={!blockContentAllowed && !activeMarks.bulletList}
+          onClick={toggleBulletList}
+        >
+          <List className="size-4" />
+        </ToolbarButton>
+        <ToolbarButton
+          label={blockLabel("Numbered list", activeMarks.orderedList)}
+          pressed={activeMarks.orderedList}
+          disabled={!blockContentAllowed && !activeMarks.orderedList}
+          onClick={toggleOrderedList}
+        >
+          <ListOrdered className="size-4" />
+        </ToolbarButton>
 
         <Divider />
 
