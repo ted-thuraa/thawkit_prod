@@ -51,11 +51,12 @@ import {
   getLayoutsByCategory,
   getAllLayoutKeys,
 } from "@/lib/templates/blocks";
+import { elementCategories } from "@/lib/editor/element-catalog";
 import { DEFAULT_ASSETS } from "@/lib/asset-constants";
 import {
   assignOrderClassToNewLayer,
   collectAllSettingsIds,
-  generateUniqueSettingsId,
+  normalizeTemplateSettingsIds,
 } from "@/lib/layer-utils";
 import {
   canHaveChildren,
@@ -76,7 +77,6 @@ import { usePagesStore } from "@/stores/editor/usePagesStore";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
 //import { useEditorActions } from '@/hooks/use-editor-url';
 //import { useLocalizationMode } from '@/hooks/use-localization-mode';
-import { EditorElementType } from "@/lib/editor/element-templates";
 
 /**
  * Element Button with drag support
@@ -184,35 +184,6 @@ interface ElementLibraryProps {
   isOpen: boolean;
   onClose: () => void;
 }
-
-// Category definitions
-const elementCategories: Record<string, string[]> = {
-  Structure: [
-    "section",
-    "container",
-    "div",
-    "hr",
-    "columns",
-    "rows",
-    "grid",
-    "collection",
-  ],
-  Content: ["heading", "text", "richText"],
-  Actions: ["button"],
-  Media: ["image", "icon", "video", "audio"],
-  Form: [
-    "form",
-    "filter",
-    "input",
-    "textarea",
-    "select",
-    "checkbox",
-    "radio",
-    "label",
-  ],
-  Table: ["table", "thead", "tbody", "tr", "th", "td"],
-  Utilities: ["map", "slider", "lightbox", "localeSelector", "htmlEmbed"],
-};
 
 /**
  * Check if a layer tree contains any inlined components
@@ -505,11 +476,16 @@ export default function ElementLibrary({
     }
 
     // Add the layer using the template
-    const result = addLayerFromTemplate(
-      currentPageId,
-      parentId,
-      elementType as EditorElementType,
-    );
+    const result = addLayerFromTemplate(currentPageId, parentId, elementType);
+
+    // Nothing was inserted: say so and keep the panel open so the user can
+    // pick something else (the store has already logged the reason).
+    if (!result) {
+      toast.error("Couldn't add that element", {
+        description: "It isn't available in the editor yet.",
+      });
+      return;
+    }
 
     // Select the newly added layer
     if (result) {
@@ -574,63 +550,13 @@ export default function ElementLibrary({
       : undefined;
     if (!pageLayers) return;
 
-    // Collect existing settings IDs to generate unique ones
-    const existingSettingsIds = collectAllSettingsIds(pageLayers);
-    const usedSettingsIds = new Set<string>(existingSettingsIds);
-
-    // Track old→new settings.id mappings so we can update 'for' attributes on labels
-    const idMappings = new Map<string, string>();
-
-    // Helper to normalize layer and generate unique settings IDs
-    const normalizeLayerWithUniqueIds = (layer: any): any => {
-      const normalized = { ...layer };
-
-      // Generate unique settings.id if the layer has one
-      if (normalized.settings?.id) {
-        const originalId = normalized.settings.id;
-        const uniqueId = generateUniqueSettingsId(originalId, usedSettingsIds);
-        usedSettingsIds.add(uniqueId);
-        normalized.settings = {
-          ...normalized.settings,
-          id: uniqueId,
-        };
-        if (originalId !== uniqueId) {
-          idMappings.set(originalId, uniqueId);
-        }
-      }
-
-      // Recursively normalize children
-      if (normalized.children) {
-        normalized.children = normalized.children.map((child: any) =>
-          normalizeLayerWithUniqueIds(child),
-        );
-      }
-
-      return normalized;
-    };
-
-    // Update 'for' attributes on labels to match the new unique settings IDs
-    const updateForAttributes = (layer: any): any => {
-      const updated = { ...layer };
-      if (updated.attributes?.for && idMappings.has(updated.attributes.for)) {
-        updated.attributes = {
-          ...updated.attributes,
-          for: idMappings.get(updated.attributes.for),
-        };
-      }
-      if (updated.children) {
-        updated.children = updated.children.map((child: any) =>
-          updateForAttributes(child),
-        );
-      }
-      return updated;
-    };
-
-    // getLayoutTemplate already handles ID regeneration and interaction remapping
-    let newLayer = normalizeLayerWithUniqueIds(layoutTemplate);
-    if (idMappings.size > 0) {
-      newLayer = updateForAttributes(newLayer);
-    }
+    // getLayoutTemplate already handles ID regeneration and interaction
+    // remapping; make settings.id values unique against this page and re-point
+    // label `for` attributes (shared with element insertion).
+    const newLayer = normalizeTemplateSettingsIds(
+      layoutTemplate,
+      collectAllSettingsIds(pageLayers),
+    );
 
     // Restore inlined components (create actual components from inlined data)
     if (hasInlinedComponents(newLayer)) {

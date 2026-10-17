@@ -1,3 +1,12 @@
+/**
+ * @deprecated No longer used for insertion. `addLayerFromTemplate` resolves
+ * templates from the block registry (`lib/templates/blocks`) through
+ * `lib/editor/insert-template.ts`, so the Element Library catalog and insertion
+ * share one source of truth. This 14-type factory silently returned `null` for
+ * every other catalog entry (container, columns, rows, grid, ...). Kept only
+ * because `EditorElementType` / `getElementTemplateDefinitions` are still
+ * imported by `LeftPanel.tsx`; remove both together.
+ */
 import type { Layer } from "@/types/funnel";
 
 export type EditorElementType =

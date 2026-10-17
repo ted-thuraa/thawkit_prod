@@ -662,6 +662,58 @@ export function generateUniqueSettingsId(
 }
 
 /**
+ * Make every `settings.id` in a freshly built template tree unique against the
+ * IDs already present on the page, and re-point label `attributes.for`
+ * references at any ID that had to be renamed.
+ *
+ * Pure: returns a new tree and never mutates `layer`. Shared by every
+ * template-insertion path (element click, layout click, drag-and-drop) so a
+ * form/input/label template can be inserted any number of times without
+ * producing duplicate DOM ids or labels bound to the wrong control.
+ */
+export function normalizeTemplateSettingsIds(
+  layer: Layer,
+  existingIds: ReadonlySet<string>,
+): Layer {
+  const used = new Set<string>(existingIds);
+  const idMappings = new Map<string, string>();
+
+  const renameIds = (node: Layer): Layer => {
+    const next: Layer = { ...node };
+
+    if (next.settings?.id) {
+      const originalId = next.settings.id;
+      const uniqueId = generateUniqueSettingsId(originalId, used);
+      used.add(uniqueId);
+      next.settings = { ...next.settings, id: uniqueId };
+      if (originalId !== uniqueId) {
+        idMappings.set(originalId, uniqueId);
+      }
+    }
+
+    if (next.children) {
+      next.children = next.children.map(renameIds);
+    }
+    return next;
+  };
+
+  const remapForAttributes = (node: Layer): Layer => {
+    const next: Layer = { ...node };
+    const forId = next.attributes?.for;
+    if (typeof forId === "string" && idMappings.has(forId)) {
+      next.attributes = { ...next.attributes, for: idMappings.get(forId) };
+    }
+    if (next.children) {
+      next.children = next.children.map(remapForAttributes);
+    }
+    return next;
+  };
+
+  const renamed = renameIds(layer);
+  return idMappings.size > 0 ? remapForAttributes(renamed) : renamed;
+}
+
+/**
  * Helper to find a layer and its parent
  * @param layers - Root layers array
  * @param targetId - ID of the layer to find

@@ -48,6 +48,7 @@ import DragCaptureOverlay from "@/components/DragCaptureOverlay";
 import ElementPickerOverlay from "./ElementPickerOverlay";
 import { cn } from "@/lib/utils";
 import {
+  assignOrderClassToNewLayer,
   findAllParentCollectionLayers,
   findLayerById,
   getLayerCmsFieldBinding,
@@ -1380,8 +1381,65 @@ const EditorCenterCanvas = React.memo(function EditorCenterCanvas({
         position: "above" | "below" | "inside";
         parentId: string | null;
       },
-    ) => {},
-    [currentPageId, addLayerFromTemplate, setSelectedLayerId, selectedLocale],
+    ) => {
+      if (!currentPageId) return;
+      // The canvas is read-only in non-default locales.
+      if (selectedLocale && !selectedLocale.is_default) return;
+
+      // Same insertion primitive as the library click path. Layout and
+      // component drops are not implemented yet.
+      if (source !== "elements") return;
+
+      // above/below → place next to the hovered sibling inside its parent;
+      // inside → append to the hovered layer (parentId resolves to it).
+      const insertPosition =
+        dropTarget.position === "above" || dropTarget.position === "below"
+          ? { siblingId: dropTarget.layerId, position: dropTarget.position }
+          : undefined;
+
+      const result = addLayerFromTemplate(
+        currentPageId,
+        dropTarget.parentId,
+        elementType,
+        insertPosition,
+      );
+      if (!result) {
+        toast.error("Couldn't add that element", {
+          description: "It can't be placed there.",
+        });
+        return;
+      }
+
+      setSelectedLayerId(result.newLayerId);
+
+      if (result.parentToExpand) {
+        // Keep responsive order classes consistent with the new siblings.
+        const freshLayers = usePagesStore.getState().getLayers(currentPageId);
+        if (freshLayers) {
+          const updatedLayers = assignOrderClassToNewLayer(
+            freshLayers,
+            result.parentToExpand,
+            result.newLayerId,
+            useEditorStore.getState().activeBreakpoint,
+          );
+          if (updatedLayers !== freshLayers) {
+            setLayers(currentPageId, updatedLayers);
+          }
+        }
+        window.dispatchEvent(
+          new CustomEvent("expandLayer", {
+            detail: { layerId: result.parentToExpand },
+          }),
+        );
+      }
+    },
+    [
+      currentPageId,
+      addLayerFromTemplate,
+      setSelectedLayerId,
+      setLayers,
+      selectedLocale,
+    ],
   );
 
   // Use the canvas drop detection hook for throttled hit-testing

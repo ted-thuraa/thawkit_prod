@@ -24,12 +24,11 @@ import {
   regenerateIdsWithInteractionRemapping,
   removeLayerById,
   updateLayerInTree,
-  generateLayerId,
 } from "@/lib/editor/layer-tree-utils";
 import {
-  createElementFromTemplate,
-  type EditorElementType,
-} from "@/lib/editor/element-templates";
+  buildLayerFromTemplate,
+  isFormFieldTemplate,
+} from "@/lib/editor/insert-template";
 import {
   cleanLayersForComponentCreation,
   createComponentViaApi,
@@ -265,10 +264,19 @@ interface PagesActions {
     parentLayerId: string | null,
     layer: Layer,
   ) => void;
+  /**
+   * Insert a registry template (`lib/templates/blocks`) relative to
+   * `selectedLayerId` (the intended parent; a section always goes to the
+   * body). `insertPosition` places the new layer above/below an existing
+   * child of that parent (used by canvas drag-and-drop).
+   *
+   * Returns `null` — after logging the reason — when nothing was inserted.
+   */
   addLayerFromTemplate: (
     pageId: string,
     selectedLayerId: string | null,
-    elementType: EditorElementType,
+    templateId: string,
+    insertPosition?: { siblingId: string; position: "above" | "below" },
   ) => { newLayerId: string; parentToExpand: string | null } | null;
   updateLayer: (
     pageId: string,
@@ -1005,25 +1013,28 @@ export const usePagesStore = create<PagesStore>((set, get) => {
       commitLayers(pageId, newLayers);
     },
 
-    addLayerFromTemplate: (pageId, selectedLayerId, elementType) => {
+    addLayerFromTemplate: (
+      pageId,
+      selectedLayerId,
+      templateId,
+      insertPosition,
+    ) => {
       const layers = requireLayers(pageId);
-      const template = createElementFromTemplate(elementType);
-      if (!layers || !template) return null;
+      if (!layers) {
+        console.error(
+          `[addLayerFromTemplate] No working copy for page "${pageId}"`,
+        );
+        return null;
+      }
 
-      // `name` is the element type ("section", "div", ...) and drives every
-      // structural check below — it must stay lowercase. Only the display
-      // `customName` is capitalised, and plain divs are left unnamed.
-      const templateName = template?.name ?? "div";
-      const displayName =
-        templateName === "div"
-          ? undefined
-          : templateName.charAt(0).toUpperCase() + templateName.slice(1);
-      const newLayer: Layer = {
-        ...template,
-        id: generateLayerId("lyr"),
-        name: templateName,
-        customName: displayName,
-      };
+      // One registry for catalog AND insertion (see insert-template.ts).
+      const newLayer = buildLayerFromTemplate(templateId, layers);
+      if (!newLayer) {
+        console.error(
+          `[addLayerFromTemplate] Template "${templateId}" not found`,
+        );
+        return null;
+      }
 
       const targetId =
         newLayer.name === "section" ? "body" : (selectedLayerId ?? "body");
@@ -1031,14 +1042,17 @@ export const usePagesStore = create<PagesStore>((set, get) => {
       const targetLocation = target
         ? findParentAndIndex(layers, target.id)
         : null;
-      const isFormField = ["input", "textarea", "select", "checkbox"].includes(
-        newLayer.name,
-      );
+
+      // Form fields go beside the selected field when that field already
+      // lives inside a form. Selecting the form itself nests the new field
+      // inside it. Keyed on the template (not `newLayer.name`): field
+      // templates are wrapper divs, so their root name says nothing.
       const addAsSibling =
         !!target &&
         !!targetLocation &&
         (!canHaveChildren(target, newLayer.name) ||
-          (isFormField && target.name === "form"));
+          (isFormFieldTemplate(templateId) &&
+            targetLocation.parent?.name === "form"));
 
       let newLayers: Layer[];
       let parentToExpand: string | null;
@@ -1055,11 +1069,30 @@ export const usePagesStore = create<PagesStore>((set, get) => {
           target && canHaveChildren(target, newLayer.name)
             ? target
             : findLayerById(layers, "body");
-        if (!parent || !canHaveChildren(parent, newLayer.name)) return null;
-        newLayers = updateLayerInTree(layers, parent.id, (node) => ({
-          ...node,
-          children: [...(node.children ?? []), newLayer],
-        }));
+        if (!parent || !canHaveChildren(parent, newLayer.name)) {
+          console.error(
+            `[addLayerFromTemplate] No valid parent for "${templateId}" ` +
+              `(selected: ${selectedLayerId ?? "none"})`,
+          );
+          return null;
+        }
+        // Sections are always appended to the body; drop positions only
+        // apply to ordinary children.
+        const position = newLayer.name === "section" ? undefined : insertPosition;
+        newLayers = updateLayerInTree(layers, parent.id, (node) => {
+          const children = node.children ?? [];
+          const siblingIndex = position
+            ? children.findIndex((child) => child.id === position.siblingId)
+            : -1;
+          if (!position || siblingIndex === -1) {
+            return { ...node, children: [...children, newLayer] };
+          }
+          const at =
+            position.position === "above" ? siblingIndex : siblingIndex + 1;
+          const next = [...children];
+          next.splice(at, 0, newLayer);
+          return { ...node, children: next };
+        });
         parentToExpand = parent.id;
       }
 
