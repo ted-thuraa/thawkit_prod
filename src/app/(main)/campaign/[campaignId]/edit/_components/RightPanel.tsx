@@ -27,6 +27,7 @@ interface RightPanelProps {
 }
 
 const RightPanel = React.memo(function RightPanel({
+  onLayerUpdate,
   onClose,
   className,
 }: RightPanelProps) {
@@ -78,7 +79,10 @@ const RightPanel = React.memo(function RightPanel({
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        <RightPanelContent />
+        {/* `embedded`: this card already provides the width/border/background,
+            so the content renders only its body. `onLayerUpdate` is required
+            by RightPanelContent and every design control beneath it. */}
+        <RightPanelContent onLayerUpdate={onLayerUpdate} embedded />
       </div>
     </aside>
   );
