@@ -78,6 +78,7 @@ import {
   getTextHeadingConversion,
   isHeadingLayer,
 } from "@/lib/layer-utils";
+import { useFrameScheduler } from "@/hooks/use-frame-scheduler";
 import {
   getEditorSelectionRect,
   getSelectionComputedTypography,
@@ -424,7 +425,6 @@ function TextSelectionToolbarImpl({
 
   const toolbarRef = useRef<HTMLDivElement>(null);
   const zoomRef = useRef(zoom);
-  const rafRef = useRef<number | null>(null);
   /** True while the mouse is down inside the editor (drag-selecting). */
   const selectingRef = useRef(false);
   /** True while something else owns the canvas (sidebar resize, context menu). */
@@ -512,14 +512,10 @@ function TextSelectionToolbarImpl({
   }, [editor, iframeElement, containerElement]);
 
   /** Coalesce bursts of events (scroll, transactions, mutations) into one
-   * measurement per frame. */
-  const schedule = useCallback(() => {
-    if (rafRef.current !== null) return;
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null;
-      position();
-    });
-  }, [position]);
+   * measurement per frame. The scheduler owns the "frame pending" flag and
+   * clears it on cancel, so it survives React re-running effects on the same
+   * instance (StrictMode, Fast Refresh). */
+  const { schedule } = useFrameScheduler(position);
 
   // Re-measure when editing starts/stops or the editor instance changes.
   useEffect(() => {
@@ -640,14 +636,6 @@ function TextSelectionToolbarImpl({
       selectingRef.current = false;
     };
   }, [editor, iframeElement, containerElement, position, schedule]);
-
-  // Cancel any pending frame on unmount.
-  useEffect(
-    () => () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    },
-    [],
-  );
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
