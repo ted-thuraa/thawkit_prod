@@ -4,7 +4,10 @@
 
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { useEditorStore } from "@/stores/editor/useEditorStore";
+import {
+  EditorSidebarTab,
+  useEditorStore,
+} from "@/stores/editor/useEditorStore";
 import {
   DEFAULT_LAYER_ID,
   buildPageUrl,
@@ -51,12 +54,23 @@ export {
   updateUrlQueryParam,
 } from "@/lib/editor/editor-url";
 
-export type EditorRouteType = "page" | "component" | null;
+export type EditorRouteType =
+  | "page"
+  | "component"
+  | "collection"
+  | "settings"
+  | null;
 
 export interface CampaignEditorUrlState {
   type: EditorRouteType;
   /** `pageId` for 'page' routes, `componentId` for 'component' routes. */
   resourceId: string | null;
+  itemId?: string | null; // r_id or 'new' for collection items
+  tab: PageSettingsTab | null;
+  page: number | null; // For collection pagination
+  pageSize?: number | null; // For collection items per page
+  search?: string | null; // For collection search
+  sidebarTab: EditorSidebarTab; // Inferred from route type
   /** Page-settings mode — `?edit=` is present on a page route. */
   isEditing: boolean;
   /** `?edit=` value; `null` for the default ("general") tab or outside settings mode. */
@@ -93,6 +107,15 @@ export function useCampaignEditorUrl(campaignId: string) {
     const pageMatch = pathname?.match(
       /^\/campaign\/[^/]+\/edit\/pages\/([^/]+)$/,
     );
+    const collectionMatch = pathname?.match(
+      /^\/campaign\/[^/]+\/edit\/collection\/([^/]+)$/,
+    );
+    const formMatch = pathname?.match(
+      /^\/campaign\/[^/]+\/edit\/forms(?:\/([^/]+))?$/,
+    );
+    const settingsMatch = pathname?.match(
+      /^\/campaign\/[^/]+\/edit\/form\/([^/]+)$/,
+    );
     const componentMatch = pathname?.match(
       /^\/campaign\/[^/]+\/edit\/components\/([^/]+)$/,
     );
@@ -114,6 +137,25 @@ export function useCampaignEditorUrl(campaignId: string) {
       };
     }
 
+    if (collectionMatch) {
+      const pageParam = searchParams?.get("page");
+      const limitParam = searchParams?.get("limit");
+      const searchParam = searchParams?.get("search");
+      const newParam = searchParams?.has("new");
+      const editParam = searchParams?.get("edit");
+
+      return {
+        type: "collection",
+        resourceId: collectionMatch[1],
+        itemId: newParam ? "new" : editParam || null,
+        tab: null,
+        page: pageParam ? parseInt(pageParam, 10) : null,
+        pageSize: limitParam ? parseInt(limitParam, 10) : null,
+        search: searchParam || null,
+        sidebarTab: "cms", // Inferred: collections show CMS sidebar
+      };
+    }
+
     if (componentMatch) {
       return {
         type: "component",
@@ -124,6 +166,26 @@ export function useCampaignEditorUrl(campaignId: string) {
         rightTab: parseRightTab(searchParams?.get("tab")),
         layerId: searchParams?.get("layer") ?? null,
         variantId: searchParams?.get("variant") ?? null,
+      };
+    }
+
+    if (settingsMatch) {
+      return {
+        type: "settings",
+        resourceId: settingsMatch[1] || null, // e.g., 'general', 'redirects', or null for base
+        tab: null,
+        page: null,
+        sidebarTab: "pages", // Settings uses pages sidebar
+      };
+    }
+
+    if (formsMatch) {
+      return {
+        type: "forms",
+        resourceId: formsMatch[1] || null, // e.g., form_id or null for base
+        tab: null,
+        page: null,
+        sidebarTab: "pages", // Forms uses pages sidebar for now
       };
     }
 

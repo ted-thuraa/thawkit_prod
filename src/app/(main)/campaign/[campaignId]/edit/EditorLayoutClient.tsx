@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { GitForkIcon, Palette, Plus } from "lucide-react";
 import { CampaignEditorMain } from "./_components/builderMain";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
+import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
 //import { CampaignEditorMain } from "./_components/BuilderMain";
 
 type Props = {
@@ -28,6 +29,7 @@ const EditorLayoutClient: React.FC<Props> = ({ campaignId, bootstrap }) => {
   const [user, setUser] = useState<user | null>(null);
   const { data: session } = authClient.useSession();
   const currentPageId = useEditorStore((state) => state.currentPageId);
+
   useEffect(() => {
     if (session) {
       setUser({

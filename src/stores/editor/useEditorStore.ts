@@ -78,7 +78,7 @@ export interface ComponentNavigationEntry {
   variantId?: string | null;
 }
 
-export type EditorSidebarTab = "layers" | "pages" | "cms";
+export type EditorSidebarTab = "layers" | "pages" | "cms" | "forms";
 
 export type CanvasDropPosition = "above" | "below" | "inside";
 

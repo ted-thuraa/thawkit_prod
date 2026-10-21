@@ -1,5 +1,11 @@
 "use client";
-import react, { useCallback, useEffect, useMemo, useState } from "react";
+import react, {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   ArrowLeft,
   ChevronsUpDown,
@@ -53,13 +59,19 @@ import React from "react";
 import { CiMobile2 } from "react-icons/ci";
 import { HiMiniDeviceTablet } from "react-icons/hi2";
 import { GoDeviceDesktop } from "react-icons/go";
-import Icon from "@/components/ui/icon";
+import Icon, { IconProps } from "@/components/ui/icon";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
-import { selectSaveState, usePagesStore } from "@/stores/editor/usePagesStore";
+import {
+  isTempPageId,
+  selectSaveState,
+  usePagesStore,
+} from "@/stores/editor/usePagesStore";
 import { publishFunnelAction } from "@/actions/editor/editor-actions";
 import { cn } from "@/lib/utils";
-import { getNodeIcon, getPageIcon } from "@/lib/page-utils";
+import { getPageIcon } from "@/lib/page-utils";
+import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
+import { DEFAULT_LAYER_ID } from "@/lib/editor/editor-url";
 import { Page } from "@/types/funnel";
 
 type EditorHeaderProps = {
@@ -116,15 +128,60 @@ export function EditorHeader({
   const { toggleSidebar } = useSidebar();
   const isMobile = useIsMobile();
   const router = useRouter();
+  const { navigateToNextPage, urlState } = useCampaignEditorUrl(campaignId);
+  const routeType = urlState.type;
   // Aggregate autosave state across every page, owned by `usePagesStore`:
   // "unsaved" = edits inside the 2 s debounce window, "saving" = a request is
   // in flight, "error" = the last save failed (it keeps retrying).
   const saveState = usePagesStore(selectSaveState);
   const [isChangePageOpen, setIsChangePageOpen] = useState(false);
-  const [isPreviewMode, setIsPreviewMode] = useState(false);
+  const [isChangeActiveNavOpen, setIsChangeActiveNavOpen] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
-
+  const isPreviewMode = useEditorStore((s) => s.isPreviewMode);
+  const setPreviewMode = useEditorStore((s) => s.setPreviewMode);
   const pages = usePagesStore((state) => state.pages);
+  const setActiveSidebarTab = useEditorStore((s) => s.setActiveSidebarTab);
+
+  // Optimistic nav button state - set immediately on click, cleared when URL catches up
+  type NavButton = "design" | "cms" | "forms";
+  const [optimisticNav, setOptimisticNav] = useState<NavButton | null>(null);
+
+  // Clear optimistic state once the URL reflects the clicked route
+  useEffect(() => {
+    if (!optimisticNav) return;
+    const isDesignRoute =
+      routeType === "page" || routeType === "component" || routeType === null;
+    const isCmsRoute = routeType === "collection";
+    const isFormsRoute = routeType === "forms";
+
+    if (
+      (optimisticNav === "design" && isDesignRoute) ||
+      (optimisticNav === "cms" && isCmsRoute) ||
+      (optimisticNav === "forms" && isFormsRoute)
+    ) {
+      setOptimisticNav(null);
+    }
+  }, [routeType, optimisticNav]);
+
+  // Turn off preview mode only after navigation to the return route completes,
+  // keeping the preview overlay visible during the transition to avoid flashing
+  // useEffect(() => {
+  //   if (!isPreviewMode || previewReturnUrl) return;
+  //   const isDesignRoute =  routeType === 'page' || routeType === 'component' || routeType === null;
+  //   if (!isDesignRoute) {
+  //     setPreviewMode(false);
+  //   }
+  // }, [routeType, isPreviewMode, previewReturnUrl, setPreviewMode]);
+
+  // Derive active button: optimistic state takes priority, then URL
+  const activeNavButton = useMemo((): NavButton | null => {
+    if (optimisticNav) return optimisticNav;
+    if (routeType === "collection") return "cms";
+    if (routeType === "forms") return "forms";
+    if (routeType === "page" || routeType === "component" || routeType === null)
+      return "design";
+    return null;
+  }, [optimisticNav, routeType]);
 
   // WIRED (Phase 7): was a dead `activeBreakpoint`-shaped array feeding a
   // dropdown that was never actually rendered (`currentDeviceOption` was
@@ -172,6 +229,9 @@ export function EditorHeader({
 
   const handlePageOpenChange = useCallback((open: boolean) => {
     setIsChangePageOpen(open);
+  }, []);
+  const handleChangeActiveNav = useCallback((open: boolean) => {
+    setIsChangeActiveNavOpen(open);
   }, []);
 
   // Still a stub — a manual Save button isn't needed now that every page is
@@ -233,6 +293,44 @@ export function EditorHeader({
     if (!currentPageId) return null;
     return pagesById.get(currentPageId) ?? null;
   }, [currentPageId, pagesById]);
+
+  // Switchable pages in funnel order. A page still being created (temp id)
+  // has no route yet, so it is not offered — same rule as `PagesList`.
+  const switchablePages = useMemo(
+    () =>
+      pages
+        .filter((page) => !isTempPageId(page.id))
+        .sort((a, b) => a.order - b.order),
+    [pages],
+  );
+
+  // Page switching mirrors `PagesList.handlePageSelect`: the URL is the source
+  // of truth (`CampaignEditorMain` derives `currentPageId` from it), so we only
+  // reset the canvas selection and navigate — no store is written directly.
+  const handlePageSelect = useCallback(
+    (pageId: string) => {
+      setIsChangePageOpen(false);
+      if (pageId === currentPageId || !pagesById.has(pageId)) return;
+
+      useEditorStore.getState().selectLayerWithSublayer(DEFAULT_LAYER_ID, {
+        textStyleKey: null,
+        sublayerIndex: null,
+        listItemIndex: null,
+      });
+      startTransition(() => navigateToNextPage(pageId, DEFAULT_LAYER_ID));
+    },
+    [currentPageId, navigateToNextPage, pagesById],
+  );
+
+  /**
+   * Get icon name based on node type and data
+   */
+  function getActiveNavIcon(nav: NavButton): IconProps["name"] {
+    if (nav === "design") return "cursor-default";
+    if (nav === "cms") return "database";
+    if (nav === "forms") return "form";
+    return "page";
+  }
 
   return (
     <header className="bg-background sticky top-0 z-50 min-h-12 flex w-full items-center border-b">
@@ -359,61 +457,93 @@ export function EditorHeader({
           </DropdownMenu>
 
           <div className="flex gap-1">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+            <Popover
+              open={isChangeActiveNavOpen}
+              onOpenChange={handleChangeActiveNav}
+            >
+              <PopoverTrigger asChild>
                 <Button
+                  variant={activeNavButton === "design" ? "secondary" : "ghost"}
                   size="sm"
-                  className="border bg-sidebar-accent text-sidebar-accent-foreground"
+                  role="combobox"
+                  aria-expanded={isChangePageOpen}
+                  aria-label={
+                    selectedPage
+                      ? `Switch editor route. Current editor route: ${activeNavButton}`
+                      : "Switch editor route"
+                  }
+                  className={cn(
+                    "min-w-36 max-w-56 justify-between",
+                    activeNavButton && "text-foreground",
+                  )}
                 >
-                  <div className="  flex aspect-square size-4 items-center justify-center rounded-full text-sm font-semibold uppercase">
-                    <Home className="size-3" />
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    {activeNavButton ? (
+                      <>
+                        <Icon
+                          name={getActiveNavIcon(activeNavButton)}
+                          className="size-3 opacity-50 shrink-0"
+                        />
+                        <span className="truncate">{activeNavButton}</span>
+                      </>
+                    ) : (
+                      <span className="truncate">Select...</span>
+                    )}
                   </div>
-                  <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-medium">Design</span>
+                  <div className="shrink-0">
+                    <Icon
+                      name="chevronDown"
+                      className="size-2.5! shrink-0 opacity-50"
+                    />
                   </div>
-                  <ChevronsUpDown className="ml-auto size-4 shrink-0" />
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-56 rounded-lg"
-                align="start"
-                side={isMobile ? "bottom" : "right"}
-                sideOffset={4}
-              >
-                <DropdownMenuLabel className="text-muted-foreground text-xs">
-                  Pages
-                </DropdownMenuLabel>
+              </PopoverTrigger>
 
-                <DropdownMenuItem
-                  key="home"
-                  //onClick={() => handleSwitch()}
-                  //disabled={isPending}
-                  className="gap-2 p-2"
+              <PopoverContent align="start" className="w-64 gap-0 p-0">
+                <Command
+                  // Match on the page name only; the item `value` is the id.
+                  filter={(_value, search, keywords) =>
+                    keywords
+                      ?.join(" ")
+                      .toLowerCase()
+                      .includes(search.toLowerCase())
+                      ? 1
+                      : 0
+                  }
                 >
-                  <div className="p-1.5 bg-muted text-muted-foreground flex aspect-square size-7 items-center justify-center rounded-full border text-xs font-semibold uppercase">
-                    <Home />
-                  </div>
-                  <span className="truncate flex-1">Home</span>
-                  {/* {switchingId === page.id ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : org.id === activeOrganizationId ? (
-                  <span className="text-xs text-muted-foreground">Current</span>
-                ) : null} */}
-                </DropdownMenuItem>
-
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="gap-2 p-2" asChild>
-                  <Link href="">
-                    <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">
-                      <Plus className="size-4" />
-                    </div>
-                    <div className="text-muted-foreground font-medium">
-                      Add Page
-                    </div>
-                  </Link>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  <CommandInput placeholder="Search pages..." />
+                  <CommandList>
+                    <CommandEmpty>
+                      {switchablePages.length === 0
+                        ? "No pages yet"
+                        : "No pages found"}
+                    </CommandEmpty>
+                    <CommandGroup>
+                      {switchablePages.map((page) => {
+                        const isSelected = page.id === currentPageId;
+                        return (
+                          <CommandItem
+                            key={page.id}
+                            value={page.id}
+                            keywords={[page.name]}
+                            data-checked={isSelected}
+                            aria-current={isSelected ? "true" : undefined}
+                            onSelect={() => handlePageSelect(page.id)}
+                            className={cn(isSelected && "bg-secondary/50")}
+                          >
+                            <Icon
+                              name={getPageIcon(page)}
+                              className="size-3 opacity-50"
+                            />
+                            <span className="truncate">{page.name}</span>
+                          </CommandItem>
+                        );
+                      })}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
 
             <Separator orientation="vertical" />
 
@@ -427,11 +557,14 @@ export function EditorHeader({
                   size="sm"
                   role="combobox"
                   aria-expanded={isChangePageOpen}
-                  disabled={false}
+                  aria-label={
+                    selectedPage
+                      ? `Switch page. Current page: ${selectedPage.name}`
+                      : "Switch page"
+                  }
                   className={cn(
-                    "w-full justify-between",
+                    "min-w-36 max-w-56 justify-between",
                     selectedPage && "text-foreground",
-                    className,
                   )}
                 >
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -442,11 +575,6 @@ export function EditorHeader({
                           className="size-3 opacity-50 shrink-0"
                         />
                         <span className="truncate">{selectedPage.name}</span>
-
-                        <Icon
-                          name="eye-off"
-                          className="size-3.5 shrink-0 opacity-70"
-                        />
                       </>
                     ) : (
                       <span className="truncate">{placeholder}</span>
@@ -461,56 +589,49 @@ export function EditorHeader({
                 </Button>
               </PopoverTrigger>
 
-              <PopoverContent
-                className={cn("w-auto min-w-56 max-w-96 p-1", popoverClassName)}
-                align={align}
-              >
-                <div className="max-h-100 overflow-y-auto">
-                  <div>
-                    <div
-                      //onClick={handleRowClick}
-                      className={cn(
-                        "hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground text-muted-foreground [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-pointer items-center gap-1.25 rounded-sm py-1.5 pr-8 pl-2 text-xs outline-hidden select-none data-disabled:opacity-50 data-disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
-                        isSelected && "bg-secondary/50",
-                      )}
-                    >
-                      <div className="size-3 shrink-0 flex items-center justify-center">
-                        <div
-                          className={cn(
-                            "ml-px w-1.5 h-px bg-white opacity-0",
-                            isSelected && "opacity-0",
-                          )}
-                        />
-                      </div>
-
-                      <Icon
-                        name={getNodeIcon(node)}
-                        className={cn(
-                          "size-3 mr-0.5",
-                          isSelected ? "opacity-90" : "opacity-50",
-                        )}
-                      />
-
-                      <span className="grow flex items-center gap-2 min-w-0 pr-4 pointer-events-none">
-                        <span className="text-xs font-medium overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
-                          name
-                        </span>
-                      </span>
-
-                      {isSelected && (
-                        <span className="absolute right-2 flex size-3 items-center justify-center">
-                          <Icon name="check" className="size-3 opacity-50" />
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {pageTree.length === 0 && !resultPagesNode && (
-                    <div className="text-sm text-muted-foreground text-center py-4">
-                      No pages found
-                    </div>
-                  )}
-                </div>
+              <PopoverContent align="start" className="w-64 gap-0 p-0">
+                <Command
+                  // Match on the page name only; the item `value` is the id.
+                  filter={(_value, search, keywords) =>
+                    keywords
+                      ?.join(" ")
+                      .toLowerCase()
+                      .includes(search.toLowerCase())
+                      ? 1
+                      : 0
+                  }
+                >
+                  <CommandInput placeholder="Search pages..." />
+                  <CommandList>
+                    <CommandEmpty>
+                      {switchablePages.length === 0
+                        ? "No pages yet"
+                        : "No pages found"}
+                    </CommandEmpty>
+                    <CommandGroup>
+                      {switchablePages.map((page) => {
+                        const isSelected = page.id === currentPageId;
+                        return (
+                          <CommandItem
+                            key={page.id}
+                            value={page.id}
+                            keywords={[page.name]}
+                            data-checked={isSelected}
+                            aria-current={isSelected ? "true" : undefined}
+                            onSelect={() => handlePageSelect(page.id)}
+                            className={cn(isSelected && "bg-secondary/50")}
+                          >
+                            <Icon
+                              name={getPageIcon(page)}
+                              className="size-3 opacity-50"
+                            />
+                            <span className="truncate">{page.name}</span>
+                          </CommandItem>
+                        );
+                      })}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
               </PopoverContent>
             </Popover>
           </div>
