@@ -412,14 +412,12 @@ function EndDropZone({
 // Main PagesTree Component
 export default function PagesTree({
   pages,
-
   selectedItemId,
   onPageSelect,
   onFolderSelect,
   onPageOpen,
   onReorder,
   onPageSettings,
-
   onDelete,
   onDuplicate,
   onRename,

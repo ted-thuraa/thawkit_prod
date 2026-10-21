@@ -10,6 +10,7 @@ import { EditorHeader } from "./_components/editorHeader";
 import { Button } from "@/components/ui/button";
 import { GitForkIcon, Palette, Plus } from "lucide-react";
 import { CampaignEditorMain } from "./_components/builderMain";
+import { useEditorStore } from "@/stores/editor/useEditorStore";
 //import { CampaignEditorMain } from "./_components/BuilderMain";
 
 type Props = {
@@ -26,7 +27,7 @@ type user = {
 const EditorLayoutClient: React.FC<Props> = ({ campaignId, bootstrap }) => {
   const [user, setUser] = useState<user | null>(null);
   const { data: session } = authClient.useSession();
-
+  const currentPageId = useEditorStore((state) => state.currentPageId);
   useEffect(() => {
     if (session) {
       setUser({
@@ -45,7 +46,11 @@ const EditorLayoutClient: React.FC<Props> = ({ campaignId, bootstrap }) => {
   return (
     <div className="">
       <SidebarProvider className="h-screen flex flex-col">
-        <EditorHeader campaignId={campaignId} user={user} />
+        <EditorHeader
+          campaignId={campaignId}
+          currentPageId={currentPageId as string}
+          user={user}
+        />
         <div className="flex flex-1 overflow-hidden">
           <SidebarInset className="overflow-hidden flex-1 flex  bg-muted bg-[radial-gradient(#e5e7eb_0.5px,transparent_1px)] [background-size:16px_16px]">
             {/* `key={campaignId}` forces a full React remount of

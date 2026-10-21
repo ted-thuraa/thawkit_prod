@@ -1,5 +1,5 @@
 "use client";
-import react, { useCallback, useEffect, useState } from "react";
+import react, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   ChevronsUpDown,
@@ -58,6 +58,9 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
 import { selectSaveState, usePagesStore } from "@/stores/editor/usePagesStore";
 import { publishFunnelAction } from "@/actions/editor/editor-actions";
+import { cn } from "@/lib/utils";
+import { getNodeIcon, getPageIcon } from "@/lib/page-utils";
+import { Page } from "@/types/funnel";
 
 type EditorHeaderProps = {
   user: {
@@ -65,7 +68,9 @@ type EditorHeaderProps = {
     name: string;
     image?: string | null | undefined;
   } | null;
+  currentPageId: string;
   campaignId: string;
+  placeholder?: string;
 };
 
 interface ScreenOption {
@@ -102,7 +107,12 @@ const screenOptions: ScreenOption[] = [
   },
 ];
 
-export function EditorHeader({ campaignId, user }: EditorHeaderProps) {
+export function EditorHeader({
+  campaignId,
+  currentPageId,
+  user,
+  placeholder = "Select...",
+}: EditorHeaderProps) {
   const { toggleSidebar } = useSidebar();
   const isMobile = useIsMobile();
   const router = useRouter();
@@ -110,8 +120,11 @@ export function EditorHeader({ campaignId, user }: EditorHeaderProps) {
   // "unsaved" = edits inside the 2 s debounce window, "saving" = a request is
   // in flight, "error" = the last save failed (it keeps retrying).
   const saveState = usePagesStore(selectSaveState);
+  const [isChangePageOpen, setIsChangePageOpen] = useState(false);
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+
+  const pages = usePagesStore((state) => state.pages);
 
   // WIRED (Phase 7): was a dead `activeBreakpoint`-shaped array feeding a
   // dropdown that was never actually rendered (`currentDeviceOption` was
@@ -157,6 +170,10 @@ export function EditorHeader({ campaignId, user }: EditorHeaderProps) {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
+  const handlePageOpenChange = useCallback((open: boolean) => {
+    setIsChangePageOpen(open);
+  }, []);
+
   // Still a stub — a manual Save button isn't needed now that every page is
   // autosaved by `usePagesStore`; kept in case a "force save" action is wanted
   // later (it would call `usePagesStore.getState().flushPendingSaves()`).
@@ -171,9 +188,12 @@ export function EditorHeader({ campaignId, user }: EditorHeaderProps) {
     const allSaved = await usePagesStore.getState().flushPendingSaves();
     if (!allSaved) {
       setIsPublishing(false);
-      toast.error("Couldn't save your latest changes, so nothing was published.", {
-        description: "Check your connection and try again.",
-      });
+      toast.error(
+        "Couldn't save your latest changes, so nothing was published.",
+        {
+          description: "Check your connection and try again.",
+        },
+      );
       return;
     }
 
@@ -202,6 +222,17 @@ export function EditorHeader({ campaignId, user }: EditorHeaderProps) {
   const CurrentDeviceIcon = currentDeviceOption
     ? currentDeviceOption.icon
     : GoDeviceDesktop;
+
+  const pagesById = useMemo(() => {
+    const map = new Map<string, Page>();
+    for (const page of pages) map.set(page.id, page);
+    return map;
+  }, [pages]);
+
+  const selectedPage = useMemo(() => {
+    if (!currentPageId) return null;
+    return pagesById.get(currentPageId) ?? null;
+  }, [currentPageId, pagesById]);
 
   return (
     <header className="bg-background sticky top-0 z-50 min-h-12 flex w-full items-center border-b">
@@ -338,7 +369,7 @@ export function EditorHeader({ campaignId, user }: EditorHeaderProps) {
                     <Home className="size-3" />
                   </div>
                   <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-medium">Home</span>
+                    <span className="truncate font-medium">Design</span>
                   </div>
                   <ChevronsUpDown className="ml-auto size-4 shrink-0" />
                 </Button>
@@ -383,6 +414,105 @@ export function EditorHeader({ campaignId, user }: EditorHeaderProps) {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            <Separator orientation="vertical" />
+
+            <Popover
+              open={isChangePageOpen}
+              onOpenChange={handlePageOpenChange}
+            >
+              <PopoverTrigger asChild>
+                <Button
+                  variant="input"
+                  size="sm"
+                  role="combobox"
+                  aria-expanded={isChangePageOpen}
+                  disabled={false}
+                  className={cn(
+                    "w-full justify-between",
+                    selectedPage && "text-foreground",
+                    className,
+                  )}
+                >
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    {selectedPage ? (
+                      <>
+                        <Icon
+                          name={getPageIcon(selectedPage)}
+                          className="size-3 opacity-50 shrink-0"
+                        />
+                        <span className="truncate">{selectedPage.name}</span>
+
+                        <Icon
+                          name="eye-off"
+                          className="size-3.5 shrink-0 opacity-70"
+                        />
+                      </>
+                    ) : (
+                      <span className="truncate">{placeholder}</span>
+                    )}
+                  </div>
+                  <div className="shrink-0">
+                    <Icon
+                      name="chevronDown"
+                      className="size-2.5! shrink-0 opacity-50"
+                    />
+                  </div>
+                </Button>
+              </PopoverTrigger>
+
+              <PopoverContent
+                className={cn("w-auto min-w-56 max-w-96 p-1", popoverClassName)}
+                align={align}
+              >
+                <div className="max-h-100 overflow-y-auto">
+                  <div>
+                    <div
+                      //onClick={handleRowClick}
+                      className={cn(
+                        "hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground text-muted-foreground [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-pointer items-center gap-1.25 rounded-sm py-1.5 pr-8 pl-2 text-xs outline-hidden select-none data-disabled:opacity-50 data-disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
+                        isSelected && "bg-secondary/50",
+                      )}
+                    >
+                      <div className="size-3 shrink-0 flex items-center justify-center">
+                        <div
+                          className={cn(
+                            "ml-px w-1.5 h-px bg-white opacity-0",
+                            isSelected && "opacity-0",
+                          )}
+                        />
+                      </div>
+
+                      <Icon
+                        name={getNodeIcon(node)}
+                        className={cn(
+                          "size-3 mr-0.5",
+                          isSelected ? "opacity-90" : "opacity-50",
+                        )}
+                      />
+
+                      <span className="grow flex items-center gap-2 min-w-0 pr-4 pointer-events-none">
+                        <span className="text-xs font-medium overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
+                          name
+                        </span>
+                      </span>
+
+                      {isSelected && (
+                        <span className="absolute right-2 flex size-3 items-center justify-center">
+                          <Icon name="check" className="size-3 opacity-50" />
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {pageTree.length === 0 && !resultPagesNode && (
+                    <div className="text-sm text-muted-foreground text-center py-4">
+                      No pages found
+                    </div>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
 
