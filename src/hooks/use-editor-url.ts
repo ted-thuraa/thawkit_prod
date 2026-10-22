@@ -4,10 +4,7 @@
 
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import {
-  EditorSidebarTab,
-  useEditorStore,
-} from "@/stores/editor/useEditorStore";
+import { useEditorStore } from "@/stores/editor/useEditorStore";
 import {
   DEFAULT_LAYER_ID,
   buildPageUrl,
@@ -19,6 +16,13 @@ import {
   type RightPanelTab,
   type Viewport,
 } from "@/lib/editor/editor-url";
+import {
+  buildAreaUrl,
+  buildEditorBaseUrl,
+  parseEditorRoute,
+  type EditorRouteType,
+  type EditorStandaloneArea,
+} from "@/lib/editor/editor-areas";
 
 /**
  * ─────────────────────────────────────────────────────────────────────────
@@ -33,6 +37,11 @@ import {
  *   /campaign/{campaignId}/edit/pages/{pageId}?view=desktop&tab=design&layer=body
  *   /campaign/{campaignId}/edit/pages/{pageId}?…&edit=general|seo|custom-code
  *   /campaign/{campaignId}/edit/components/{componentId}?tab=…&layer=…&variant=…
+ *   /campaign/{campaignId}/edit/cms | forms | settings   (editor AREAS — see
+ *                                          lib/editor/editor-areas.ts)
+ *
+ * Route classification lives in `parseEditorRoute` (pure, unit-tested); this
+ * hook only adds the query-string fields.
  *
  * The LEFT sidebar tab (Layers / Pages) is deliberately NOT derived from the
  * URL and has no query param: it is owned by
@@ -54,23 +63,12 @@ export {
   updateUrlQueryParam,
 } from "@/lib/editor/editor-url";
 
-export type EditorRouteType =
-  | "page"
-  | "component"
-  | "collection"
-  | "settings"
-  | null;
+export type { EditorRouteType };
 
 export interface CampaignEditorUrlState {
   type: EditorRouteType;
   /** `pageId` for 'page' routes, `componentId` for 'component' routes. */
   resourceId: string | null;
-  itemId?: string | null; // r_id or 'new' for collection items
-  tab: PageSettingsTab | null;
-  page: number | null; // For collection pagination
-  pageSize?: number | null; // For collection items per page
-  search?: string | null; // For collection search
-  sidebarTab: EditorSidebarTab; // Inferred from route type
   /** Page-settings mode — `?edit=` is present on a page route. */
   isEditing: boolean;
   /** `?edit=` value; `null` for the default ("general") tab or outside settings mode. */
@@ -81,6 +79,18 @@ export interface CampaignEditorUrlState {
   layerId: string | null;
   variantId: string | null;
 }
+
+/** State with no page/component resource: base `/edit` and the standalone areas. */
+const EMPTY_URL_STATE: CampaignEditorUrlState = {
+  type: null,
+  resourceId: null,
+  isEditing: false,
+  editTab: null,
+  view: null,
+  rightTab: null,
+  layerId: null,
+  variantId: null,
+};
 
 export interface NavigateToPageOptions {
   view?: Viewport;
@@ -101,105 +111,47 @@ export function useCampaignEditorUrl(campaignId: string) {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const base = `/campaign/${campaignId}/edit`;
+  const base = buildEditorBaseUrl(campaignId);
 
   const urlState = useMemo((): CampaignEditorUrlState => {
-    const pageMatch = pathname?.match(
-      /^\/campaign\/[^/]+\/edit\/pages\/([^/]+)$/,
-    );
-    const collectionMatch = pathname?.match(
-      /^\/campaign\/[^/]+\/edit\/collection\/([^/]+)$/,
-    );
-    const formMatch = pathname?.match(
-      /^\/campaign\/[^/]+\/edit\/forms(?:\/([^/]+))?$/,
-    );
-    const settingsMatch = pathname?.match(
-      /^\/campaign\/[^/]+\/edit\/form\/([^/]+)$/,
-    );
-    const componentMatch = pathname?.match(
-      /^\/campaign\/[^/]+\/edit\/components\/([^/]+)$/,
-    );
+    const route = parseEditorRoute(pathname);
 
-    if (pageMatch) {
-      const editParam = searchParams?.get("edit");
-      const parsedEditTab = parsePageSettingsTab(editParam);
-
-      return {
-        type: "page",
-        resourceId: pageMatch[1],
-        isEditing: searchParams?.has("edit") ?? false,
-        editTab:
-          parsedEditTab && parsedEditTab !== "general" ? parsedEditTab : null,
-        view: parseViewport(searchParams?.get("view")),
-        rightTab: parseRightTab(searchParams?.get("tab")),
-        layerId: searchParams?.get("layer") ?? null,
-        variantId: null,
-      };
+    switch (route.type) {
+      case "page": {
+        const parsedEditTab = parsePageSettingsTab(searchParams?.get("edit"));
+        return {
+          ...EMPTY_URL_STATE,
+          type: "page",
+          resourceId: route.resourceId,
+          isEditing: searchParams?.has("edit") ?? false,
+          editTab:
+            parsedEditTab && parsedEditTab !== "general" ? parsedEditTab : null,
+          view: parseViewport(searchParams?.get("view")),
+          rightTab: parseRightTab(searchParams?.get("tab")),
+          layerId: searchParams?.get("layer") ?? null,
+        };
+      }
+      case "component":
+        return {
+          ...EMPTY_URL_STATE,
+          type: "component",
+          resourceId: route.resourceId,
+          rightTab: parseRightTab(searchParams?.get("tab")),
+          layerId: searchParams?.get("layer") ?? null,
+          variantId: searchParams?.get("variant") ?? null,
+        };
+      case "cms":
+      case "forms":
+      case "settings":
+        return {
+          ...EMPTY_URL_STATE,
+          type: route.type,
+          resourceId: route.resourceId,
+        };
+      case null:
+        // Base /campaign/[campaignId]/edit route — no resource selected yet.
+        return EMPTY_URL_STATE;
     }
-
-    if (collectionMatch) {
-      const pageParam = searchParams?.get("page");
-      const limitParam = searchParams?.get("limit");
-      const searchParam = searchParams?.get("search");
-      const newParam = searchParams?.has("new");
-      const editParam = searchParams?.get("edit");
-
-      return {
-        type: "collection",
-        resourceId: collectionMatch[1],
-        itemId: newParam ? "new" : editParam || null,
-        tab: null,
-        page: pageParam ? parseInt(pageParam, 10) : null,
-        pageSize: limitParam ? parseInt(limitParam, 10) : null,
-        search: searchParam || null,
-        sidebarTab: "cms", // Inferred: collections show CMS sidebar
-      };
-    }
-
-    if (componentMatch) {
-      return {
-        type: "component",
-        resourceId: componentMatch[1],
-        isEditing: false,
-        editTab: null,
-        view: null,
-        rightTab: parseRightTab(searchParams?.get("tab")),
-        layerId: searchParams?.get("layer") ?? null,
-        variantId: searchParams?.get("variant") ?? null,
-      };
-    }
-
-    if (settingsMatch) {
-      return {
-        type: "settings",
-        resourceId: settingsMatch[1] || null, // e.g., 'general', 'redirects', or null for base
-        tab: null,
-        page: null,
-        sidebarTab: "pages", // Settings uses pages sidebar
-      };
-    }
-
-    if (formsMatch) {
-      return {
-        type: "forms",
-        resourceId: formsMatch[1] || null, // e.g., form_id or null for base
-        tab: null,
-        page: null,
-        sidebarTab: "pages", // Forms uses pages sidebar for now
-      };
-    }
-
-    // Base /campaign/[campaignId]/edit route — no resource selected yet.
-    return {
-      type: null,
-      resourceId: null,
-      isEditing: false,
-      editTab: null,
-      view: null,
-      rightTab: null,
-      layerId: null,
-      variantId: null,
-    };
   }, [pathname, searchParams]);
 
   // Async callers (e.g. the pages list awaiting an unsaved-changes prompt)
@@ -328,6 +280,18 @@ export function useCampaignEditorUrl(campaignId: string) {
   }, [router, base]);
 
   /**
+   * Enter a standalone editor area (CMS / Forms / Settings). Design is not
+   * handled here: it is page-driven — use `navigateToPage` / `navigateToEditor`
+   * (or a remembered Design URL) instead.
+   */
+  const navigateToArea = useCallback(
+    (area: EditorStandaloneArea) => {
+      router.push(buildAreaUrl(campaignId, area));
+    },
+    [router, campaignId],
+  );
+
+  /**
    * Fine-grained state mirrors — `history.replaceState`, no new history
    * entry. `useEditorStore.setSelectedLayerId` calls
    * `scheduleLayerIdUrlUpdate` directly instead (it can't use a hook).
@@ -347,6 +311,7 @@ export function useCampaignEditorUrl(campaignId: string) {
     navigateToNextPage,
     navigateToComponent,
     navigateToEditor,
+    navigateToArea,
     replaceLayerIdInUrl,
     replaceViewInUrl,
   };

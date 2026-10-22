@@ -4,7 +4,9 @@ import react, {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  useTransition,
 } from "react";
 import {
   ArrowLeft,
@@ -71,6 +73,13 @@ import { publishFunnelAction } from "@/actions/editor/editor-actions";
 import { cn } from "@/lib/utils";
 import { getPageIcon } from "@/lib/page-utils";
 import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
+import {
+  EDITOR_AREAS,
+  EDITOR_AREA_LABELS,
+  areaForRouteType,
+  isDesignUrlForCampaign,
+  type EditorArea,
+} from "@/lib/editor/editor-areas";
 import { DEFAULT_LAYER_ID } from "@/lib/editor/editor-url";
 import { Page } from "@/types/funnel";
 
@@ -128,8 +137,8 @@ export function EditorHeader({
   const { toggleSidebar } = useSidebar();
   const isMobile = useIsMobile();
   const router = useRouter();
-  const { navigateToNextPage, urlState } = useCampaignEditorUrl(campaignId);
-  const routeType = urlState.type;
+  const { navigateToNextPage, navigateToArea, navigateToEditor, urlState } =
+    useCampaignEditorUrl(campaignId);
   // Aggregate autosave state across every page, owned by `usePagesStore`:
   // "unsaved" = edits inside the 2 s debounce window, "saving" = a request is
   // in flight, "error" = the last save failed (it keeps retrying).
@@ -142,46 +151,15 @@ export function EditorHeader({
   const pages = usePagesStore((state) => state.pages);
   const setActiveSidebarTab = useEditorStore((s) => s.setActiveSidebarTab);
 
-  // Optimistic nav button state - set immediately on click, cleared when URL catches up
-  type NavButton = "design" | "cms" | "forms";
-  const [optimisticNav, setOptimisticNav] = useState<NavButton | null>(null);
+  // Active editor area — derived from the URL on every render, never stored,
+  // so it cannot disagree with the route (refresh / back / deep links).
+  const activeArea = areaForRouteType(urlState.type);
+  const [isAreaNavPending, startAreaTransition] = useTransition();
 
-  // Clear optimistic state once the URL reflects the clicked route
-  useEffect(() => {
-    if (!optimisticNav) return;
-    const isDesignRoute =
-      routeType === "page" || routeType === "component" || routeType === null;
-    const isCmsRoute = routeType === "collection";
-    const isFormsRoute = routeType === "forms";
-
-    if (
-      (optimisticNav === "design" && isDesignRoute) ||
-      (optimisticNav === "cms" && isCmsRoute) ||
-      (optimisticNav === "forms" && isFormsRoute)
-    ) {
-      setOptimisticNav(null);
-    }
-  }, [routeType, optimisticNav]);
-
-  // Turn off preview mode only after navigation to the return route completes,
-  // keeping the preview overlay visible during the transition to avoid flashing
-  // useEffect(() => {
-  //   if (!isPreviewMode || previewReturnUrl) return;
-  //   const isDesignRoute =  routeType === 'page' || routeType === 'component' || routeType === null;
-  //   if (!isDesignRoute) {
-  //     setPreviewMode(false);
-  //   }
-  // }, [routeType, isPreviewMode, previewReturnUrl, setPreviewMode]);
-
-  // Derive active button: optimistic state takes priority, then URL
-  const activeNavButton = useMemo((): NavButton | null => {
-    if (optimisticNav) return optimisticNav;
-    if (routeType === "collection") return "cms";
-    if (routeType === "forms") return "forms";
-    if (routeType === "page" || routeType === "component" || routeType === null)
-      return "design";
-    return null;
-  }, [optimisticNav, routeType]);
+  // Design URL (path + query) we last left, so "Design" returns to the same
+  // page / viewport / layer instead of the first page. Header-owned: the header
+  // persists across every editor route (see EditorLayoutClient).
+  const lastDesignUrlRef = useRef<string | null>(null);
 
   // WIRED (Phase 7): was a dead `activeBreakpoint`-shaped array feeding a
   // dropdown that was never actually rendered (`currentDeviceOption` was
@@ -233,6 +211,35 @@ export function EditorHeader({
   const handleChangeActiveNav = useCallback((open: boolean) => {
     setIsChangeActiveNavOpen(open);
   }, []);
+
+  // One coherent navigation per selection; the popover closes immediately and
+  // the trigger follows the URL once the route commits.
+  const handleAreaSelect = useCallback(
+    (area: EditorArea) => {
+      setIsChangeActiveNavOpen(false);
+      if (area === activeArea) return;
+
+      if (activeArea === "design") {
+        lastDesignUrlRef.current =
+          window.location.pathname + window.location.search;
+      }
+
+      startAreaTransition(() => {
+        if (area !== "design") {
+          navigateToArea(area);
+          return;
+        }
+        const remembered = lastDesignUrlRef.current;
+        if (isDesignUrlForCampaign(remembered, campaignId) && remembered) {
+          router.push(remembered);
+        } else {
+          // Base route: CampaignEditorMain resolves it to the first page.
+          navigateToEditor();
+        }
+      });
+    },
+    [activeArea, campaignId, navigateToArea, navigateToEditor, router],
+  );
 
   // Still a stub — a manual Save button isn't needed now that every page is
   // autosaved by `usePagesStore`; kept in case a "force save" action is wanted
@@ -322,14 +329,17 @@ export function EditorHeader({
     [currentPageId, navigateToNextPage, pagesById],
   );
 
-  /**
-   * Get icon name based on node type and data
-   */
-  function getActiveNavIcon(nav: NavButton): IconProps["name"] {
-    if (nav === "design") return "cursor-default";
-    if (nav === "cms") return "database";
-    if (nav === "forms") return "form";
-    return "page";
+  function getAreaIcon(area: EditorArea): IconProps["name"] {
+    switch (area) {
+      case "design":
+        return "cursor-default";
+      case "cms":
+        return "database";
+      case "forms":
+        return "form";
+      case "settings":
+        return "settings";
+    }
   }
 
   return (
@@ -463,32 +473,22 @@ export function EditorHeader({
             >
               <PopoverTrigger asChild>
                 <Button
-                  variant={activeNavButton === "design" ? "secondary" : "ghost"}
+                  variant="input"
                   size="sm"
                   role="combobox"
-                  aria-expanded={isChangePageOpen}
-                  aria-label={
-                    selectedPage
-                      ? `Switch editor route. Current editor route: ${activeNavButton}`
-                      : "Switch editor route"
-                  }
-                  className={cn(
-                    "min-w-36 max-w-56 justify-between",
-                    activeNavButton && "text-foreground",
-                  )}
+                  aria-expanded={isChangeActiveNavOpen}
+                  aria-busy={isAreaNavPending}
+                  aria-label={`Switch editor area. Current area: ${EDITOR_AREA_LABELS[activeArea]}`}
+                  className="min-w-32 justify-between text-foreground"
                 >
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    {activeNavButton ? (
-                      <>
-                        <Icon
-                          name={getActiveNavIcon(activeNavButton)}
-                          className="size-3 opacity-50 shrink-0"
-                        />
-                        <span className="truncate">{activeNavButton}</span>
-                      </>
-                    ) : (
-                      <span className="truncate">Select...</span>
-                    )}
+                    <Icon
+                      name={getAreaIcon(activeArea)}
+                      className="size-3 opacity-50 shrink-0"
+                    />
+                    <span className="truncate">
+                      {EDITOR_AREA_LABELS[activeArea]}
+                    </span>
                   </div>
                   <div className="shrink-0">
                     <Icon
@@ -499,43 +499,38 @@ export function EditorHeader({
                 </Button>
               </PopoverTrigger>
 
-              <PopoverContent align="start" className="w-64 gap-0 p-0">
-                <Command
-                  // Match on the page name only; the item `value` is the id.
-                  filter={(_value, search, keywords) =>
-                    keywords
-                      ?.join(" ")
-                      .toLowerCase()
-                      .includes(search.toLowerCase())
-                      ? 1
-                      : 0
-                  }
-                >
-                  <CommandInput placeholder="Search pages..." />
+              <PopoverContent
+                align="start"
+                className="w-48 gap-0 p-0"
+                // Land focus on the list so arrow keys / Enter work at once.
+                onOpenAutoFocus={(event) => {
+                  event.preventDefault();
+                  (event.currentTarget as HTMLElement)
+                    .querySelector<HTMLElement>("[cmdk-root]")
+                    ?.focus();
+                }}
+              >
+                <Command loop aria-label="Editor areas">
                   <CommandList>
-                    <CommandEmpty>
-                      {switchablePages.length === 0
-                        ? "No pages yet"
-                        : "No pages found"}
-                    </CommandEmpty>
                     <CommandGroup>
-                      {switchablePages.map((page) => {
-                        const isSelected = page.id === currentPageId;
+                      {EDITOR_AREAS.map((area) => {
+                        const isActive = area === activeArea;
                         return (
                           <CommandItem
-                            key={page.id}
-                            value={page.id}
-                            keywords={[page.name]}
-                            data-checked={isSelected}
-                            aria-current={isSelected ? "true" : undefined}
-                            onSelect={() => handlePageSelect(page.id)}
-                            className={cn(isSelected && "bg-secondary/50")}
+                            key={area}
+                            value={area}
+                            data-checked={isActive}
+                            aria-current={isActive ? "page" : undefined}
+                            onSelect={() => handleAreaSelect(area)}
+                            className={cn(isActive && "bg-secondary/50")}
                           >
                             <Icon
-                              name={getPageIcon(page)}
+                              name={getAreaIcon(area)}
                               className="size-3 opacity-50"
                             />
-                            <span className="truncate">{page.name}</span>
+                            <span className="truncate">
+                              {EDITOR_AREA_LABELS[area]}
+                            </span>
                           </CommandItem>
                         );
                       })}

@@ -10,6 +10,10 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
+import {
+  EDITOR_AREA_LABELS,
+  areaForRouteType,
+} from "@/lib/editor/editor-areas";
 import { DEFAULT_LAYER_ID, type Viewport } from "@/lib/editor/editor-url";
 import { findLayerById } from "@/lib/editor/layer-tree-utils";
 import type { Layer } from "@/types/funnel";
@@ -365,6 +369,21 @@ export function CampaignEditorMain({
           setViewportMode={setViewportMode}
         />
       </EditorShell>
+    );
+  }
+
+  // CMS / Forms / Settings are reachable from the header's area switcher, but
+  // their editor UIs are not built yet — say so instead of a blank canvas.
+  if (
+    urlState.type === "cms" ||
+    urlState.type === "forms" ||
+    urlState.type === "settings"
+  ) {
+    return (
+      <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
+        {EDITOR_AREA_LABELS[areaForRouteType(urlState.type)]} isn&apos;t
+        available in the editor yet.
+      </div>
     );
   }
 
