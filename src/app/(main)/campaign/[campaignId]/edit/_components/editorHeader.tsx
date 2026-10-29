@@ -150,6 +150,7 @@ export function EditorHeader({
   const setPreviewMode = useEditorStore((s) => s.setPreviewMode);
   const pages = usePagesStore((state) => state.pages);
   const setActiveSidebarTab = useEditorStore((s) => s.setActiveSidebarTab);
+  const openFileManager = useEditorStore((s) => s.openFileManager);
 
   // Active editor area — derived from the URL on every render, never stored,
   // so it cannot disagree with the route (refresh / back / deep links).
@@ -402,9 +403,7 @@ export function EditorHeader({
                 Settings
               </DropdownMenuItem>
 
-              <DropdownMenuItem
-              //onClick={() => openFileManager()}
-              >
+              <DropdownMenuItem onClick={() => openFileManager()}>
                 File manager
               </DropdownMenuItem>
 

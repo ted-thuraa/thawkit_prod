@@ -160,6 +160,8 @@ import LayerContextMenu from "@/app/(main)/campaign/[campaignId]/edit/_component
 import CanvasTextEditor from "@/app/(main)/campaign/[campaignId]/edit/_components/CanvasTextEditor";
 import { useComponentsStore } from "@/stores/editor/useComponentsStore";
 import { getComponentVariantLayers } from "@/lib/component-variant-utils";
+import { buildVideoEmbedUrl, isVideoProvider } from "@/lib/video-embed";
+import { sanitizeSvgForInline } from "@/lib/assets/svg-sanitizer";
 
 /**
  * Build a map of layerId -> anchor value (attributes.id) for O(1) anchor resolution
@@ -3523,10 +3525,16 @@ const LayerItemImpl: React.FC<{
       let iconHtml = "";
 
       if (iconSrc) {
+        // SECURITY: `iconHtml` is injected with dangerouslySetInnerHTML below.
+        // Only StaticText (bundled / template icons, never user input) is
+        // trusted. Everything user- or CMS-influenced — uploaded asset
+        // `content`, dynamic text, a CMS field value — is re-sanitized with the
+        // allow-list sanitizer first (same one that runs at upload; idempotent
+        // and memoized). Rejected/empty input falls back to the default icon.
         if (isStaticTextVariable(iconSrc)) {
           iconHtml = getStaticTextContent(iconSrc);
         } else if (isDynamicTextVariable(iconSrc)) {
-          iconHtml = getDynamicTextContent(iconSrc);
+          iconHtml = sanitizeSvgForInline(getDynamicTextContent(iconSrc));
         } else if (isAssetVariable(iconSrc)) {
           const originalAssetId = iconSrc.data?.asset_id;
           if (originalAssetId) {
@@ -3541,7 +3549,7 @@ const LayerItemImpl: React.FC<{
             const assetId = translatedAssetId || originalAssetId;
 
             const asset = assetsById[assetId] || getAsset(assetId);
-            iconHtml = asset?.content || "";
+            iconHtml = sanitizeSvgForInline(asset?.content);
           }
         } else if (isFieldVariable(iconSrc)) {
           const resolvedValue = resolveFieldValue(
@@ -3552,7 +3560,7 @@ const LayerItemImpl: React.FC<{
           );
           if (resolvedValue && typeof resolvedValue === "string") {
             const asset = assetsById[resolvedValue] || getAsset(resolvedValue);
-            iconHtml = asset?.content || resolvedValue;
+            iconHtml = sanitizeSvgForInline(asset?.content || resolvedValue);
           }
         }
       }
@@ -3693,38 +3701,42 @@ const LayerItemImpl: React.FC<{
       if (htmlTag === "video" && effectiveLayer.variables?.video?.src) {
         const videoSrc = effectiveLayer.variables.video.src;
 
-        // YouTube video - render as iframe
-        if (
+        // External embed (YouTube / Loom) - render as iframe. The iframe src is
+        // ALWAYS rebuilt by buildVideoEmbedUrl from {provider, validated id} on an
+        // allow-listed origin; if the (possibly CMS-resolved) id is invalid we fall
+        // through and render nothing embeddable instead of a bad iframe.
+        const embedUrl =
           videoSrc.type === "video" &&
           "provider" in videoSrc.data &&
-          videoSrc.data.provider === "youtube"
-        ) {
-          const rawVideoId = videoSrc.data.video_id || "";
-          // Resolve inline variables in video ID (supports CMS binding)
-          const videoId = resolveInlineVariablesFromData(
-            rawVideoId,
-            collectionLayerData,
-            pageCollectionItemData,
-            timezone,
-            effectiveLayerDataMap,
-          );
-          // Use normalized attributes for consistency (already handles string/boolean conversion)
-          const privacyMode = normalizedAttributes?.youtubePrivacyMode === true;
-          const domain = privacyMode ? "youtube-nocookie.com" : "youtube.com";
+          isVideoProvider(videoSrc.data.provider)
+            ? buildVideoEmbedUrl(
+                {
+                  provider: videoSrc.data.provider,
+                  // Resolve inline variables in video ID (supports CMS binding)
+                  video_id: resolveInlineVariablesFromData(
+                    videoSrc.data.video_id || "",
+                    collectionLayerData,
+                    pageCollectionItemData,
+                    timezone,
+                    effectiveLayerDataMap,
+                  ),
+                },
+                {
+                  privacyMode: normalizedAttributes?.youtubePrivacyMode === true,
+                  // Never autoplay on the canvas to avoid distracting playback while editing
+                  autoplay: !isEditMode && normalizedAttributes?.autoplay === true,
+                  muted: normalizedAttributes?.muted === true,
+                  loop: normalizedAttributes?.loop === true,
+                  controls: normalizedAttributes?.controls === true,
+                },
+              )
+            : null;
+        const embedProvider =
+          videoSrc.type === "video" && "provider" in videoSrc.data
+            ? videoSrc.data.provider
+            : "youtube";
 
-          // Build YouTube embed URL with parameters
-          // Never autoplay on the canvas to avoid distracting playback while editing
-          const params: string[] = [];
-          if (!isEditMode && normalizedAttributes?.autoplay === true)
-            params.push("autoplay=1");
-          if (normalizedAttributes?.muted === true) params.push("mute=1");
-          if (normalizedAttributes?.loop === true)
-            params.push(`loop=1&playlist=${videoId}`);
-          if (normalizedAttributes?.controls !== true)
-            params.push("controls=0");
-
-          const embedUrl = `https://www.${domain}/embed/${videoId}${params.length > 0 ? "?" + params.join("&") : ""}`;
-
+        if (embedUrl) {
           // Create iframe props - only include essential props to avoid hydration mismatches
           // Don't spread elementProps as it may contain client-only handlers
           const iframeProps: Record<string, any> = {
@@ -3748,6 +3760,10 @@ const LayerItemImpl: React.FC<{
           if (layer.settings?.customAttributes) {
             applyCustomAttributes(iframeProps, layer.settings.customAttributes);
           }
+          // Custom attributes must not be able to repoint the iframe.
+          iframeProps.src = embedUrl;
+          delete iframeProps.srcDoc;
+          delete iframeProps.srcdoc;
 
           // On the canvas, the cross-origin iframe swallows clicks (so the layer
           // can't be selected) and lets the user start playback. Wrap it in a
@@ -3780,9 +3796,9 @@ const LayerItemImpl: React.FC<{
             return (
               <div {...wrapperProps}>
                 <iframe
-                  key={`youtube-${layer.id}-${videoId}`}
+                  key={`embed-${layer.id}-${embedUrl}`}
                   src={embedUrl}
-                  title="YouTube video"
+                  title={embedProvider === "loom" ? "Loom video" : "YouTube video"}
                   className="absolute inset-0 block h-full w-full pointer-events-none"
                   style={{ border: "none" }}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -3794,7 +3810,7 @@ const LayerItemImpl: React.FC<{
           }
 
           return (
-            <iframe key={`youtube-${layer.id}-${videoId}`} {...iframeProps} />
+            <iframe key={`embed-${layer.id}-${embedUrl}`} {...iframeProps} />
           );
         }
       }

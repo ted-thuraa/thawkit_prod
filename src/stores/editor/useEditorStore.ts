@@ -3,7 +3,13 @@
 "use client";
 
 import { create } from "zustand";
-import type { Layer, Breakpoint, UIState } from "@/types/funnel";
+import type {
+  Asset,
+  AssetCategoryFilter,
+  Layer,
+  Breakpoint,
+  UIState,
+} from "@/types/funnel";
 import {
   isEditorResourceRoute,
   scheduleLayerIdUrlUpdate,
@@ -28,7 +34,6 @@ import { usePagesStore } from "./usePagesStore";
  *     non-AI entrance-animation signal — see `triggerCanvasEnter`.)
  *   - `collectionItemSheet`/open/closeCollectionItemSheet,
  *     `currentPageCollectionItemId` — CMS/Collections excluded.
- *   - `fileManager`/open/closeFileManager — no asset system exists yet.
  *   - `keyboardShortcutsOpen` — keyboard shortcuts excluded.
  *   - `isSliderAnimating`/`sliderSnapCounts` — slider widget deferred (see
  *     types/PageCMS/layerSchema.ts's file header).
@@ -100,7 +105,24 @@ export interface DragPosition {
   y: number;
 }
 
+/**
+ * One open request of the media-library picker. Every asset control calls
+ * `openFileManager(onSelect, currentAssetId, categoryFilter)`; the dialog
+ * (`FileManagerDialog`) renders from this and invokes `onSelect` with the
+ * chosen `Asset`. Returning `false` from `onSelect` keeps the dialog open.
+ */
+export interface FileManagerRequest {
+  /** null = browse/manage mode (no selection callback, e.g. header "Assets" button). */
+  onSelect: ((asset: Asset) => void | false) | null;
+  /** Currently assigned asset, highlighted in the grid. */
+  assetId: string | null;
+  /** Which kinds the caller can use; undefined = all supported. */
+  category: AssetCategoryFilter | undefined;
+}
+
 interface EditorState {
+  /** Media-library picker request; null = closed. */
+  fileManager: FileManagerRequest | null;
   selectedLayerId: string | null;
   selectedLayerIds: string[];
   lastSelectedLayerId: string | null;
@@ -189,6 +211,12 @@ interface EditorState {
 }
 
 interface EditorActions {
+  openFileManager: (
+    onSelect?: ((asset: Asset) => void | false) | null,
+    assetId?: string | null,
+    category?: AssetCategoryFilter,
+  ) => void;
+  closeFileManager: () => void;
   setSelectedLayerId: (id: string | null) => void;
   setSelectedLayerIds: (ids: string[]) => void;
   addToSelection: (id: string) => void;
@@ -305,6 +333,7 @@ interface EditorActions {
 type EditorStore = EditorState & EditorActions;
 
 const initialState: EditorState = {
+  fileManager: null,
   selectedLayerId: null,
   selectedLayerIds: [],
   lastSelectedLayerId: null,
@@ -657,6 +686,10 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       elementPicker: { active: true, onSelect, validate, originPosition },
     }),
   stopElementPicker: () => set({ elementPicker: null }),
+
+  openFileManager: (onSelect = null, assetId = null, category) =>
+    set({ fileManager: { onSelect, assetId, category } }),
+  closeFileManager: () => set({ fileManager: null }),
 
   triggerCanvasEnter: (layerIds) =>
     set((state) => ({

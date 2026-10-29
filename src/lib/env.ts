@@ -27,10 +27,13 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY is required"),
   RESEND_FROM_EMAIL: z.email("RESEND_FROM_EMAIL must be a valid email"),
 
-  // Polar
+  // UploadThing (v7). The token is the ONLY credential the SDK reads; it is
+  // server-only (never NEXT_PUBLIC_). UPLOADTHING_SECRET / UPLOADTHING_APP_ID
+  // are v6-era variables the v7 SDK ignores, so they are optional here and
+  // existing deployments that still set them keep working.
   UPLOADTHING_TOKEN: z.string().min(1, "UPLOADTHING_TOKEN is required"),
-  UPLOADTHING_SECRET: z.string().min(1, "UPLOADTHING_SECRET is required"),
-  UPLOADTHING_APP_ID: z.string().min(1, "UPLOADTHING_APP_ID is required"),
+  UPLOADTHING_SECRET: z.string().min(1).optional(),
+  UPLOADTHING_APP_ID: z.string().min(1).optional(),
 
   NODE_ENV: z
     .enum(["development", "production", "test"])

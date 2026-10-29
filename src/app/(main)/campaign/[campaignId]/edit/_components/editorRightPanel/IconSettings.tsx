@@ -30,6 +30,7 @@ import { useEditorStore } from "@/stores/editor/useEditorStore";
 import { useAssetsStore } from "@/stores/editor/useAssetsStore";
 import { useComponentsStore } from "@/stores/editor/useComponentsStore";
 import { toast } from "sonner";
+import { sanitizeSvgForInline } from "@/lib/assets/svg-sanitizer";
 import Icon from "@/components/ui/icon";
 import ComponentVariableLabel, {
   VARIABLE_TYPE_ICONS,
@@ -259,7 +260,9 @@ export default function IconSettings(props: IconSettingsProps) {
       } else if (isAssetVariable(iconSrc)) {
         const assetId = getAssetId(iconSrc);
         const asset = assetId ? getAsset(assetId) : null;
-        iconContent = asset?.content || "";
+        // Uploaded SVG markup is untrusted: re-sanitize before it reaches
+        // dangerouslySetInnerHTML (bundled static icons above are trusted).
+        iconContent = sanitizeSvgForInline(asset?.content);
       }
     }
 

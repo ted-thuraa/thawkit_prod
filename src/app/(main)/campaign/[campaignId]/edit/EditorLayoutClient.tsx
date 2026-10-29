@@ -10,6 +10,7 @@ import { EditorHeader } from "./_components/editorHeader";
 import { Button } from "@/components/ui/button";
 import { GitForkIcon, Palette, Plus } from "lucide-react";
 import { CampaignEditorMain } from "./_components/builderMain";
+import FileManagerDialog from "./_components/FileManagerDialog";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
 import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
 //import { CampaignEditorMain } from "./_components/BuilderMain";
@@ -73,6 +74,10 @@ const EditorLayoutClient: React.FC<Props> = ({ campaignId, bootstrap }) => {
             />
           </SidebarInset>
         </div>
+        {/* Asset library / picker. Mounted here (not in the page-canvas
+            branch) so it is reachable from every editor area and from the
+            header's "File manager" item. Portals to <body>. */}
+        <FileManagerDialog />
       </SidebarProvider>
     </div>
   );

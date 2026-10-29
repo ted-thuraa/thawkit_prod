@@ -1255,7 +1255,10 @@ export interface AssetVariable extends VariableType {
 export interface VideoVariable extends VariableType {
   type: "video";
   data: {
-    provider: "youtube"; // | 'vimeo'
+    // External embed providers (see src/lib/video-embed.ts). `video_id` may hold
+    // inline CMS variables; it is validated against the provider's id pattern
+    // at render time before it can reach an iframe src.
+    provider: "youtube" | "loom";
     video_id: string;
   };
 }

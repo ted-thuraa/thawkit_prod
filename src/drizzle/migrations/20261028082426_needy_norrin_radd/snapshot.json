@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "7b4c0273-0c72-4692-a73d-cdd340db1413",
+  "id": "5125d727-9329-4731-9934-c793a40b78d7",
   "prevIds": [
-    "8409775c-01f3-4793-bd2f-19b5c1689af2"
+    "00000000-0000-0000-0000-000000000000"
   ],
   "ddl": [
     {
@@ -3451,6 +3451,27 @@
       "method": "btree",
       "concurrently": false,
       "name": "assets_id_draft_unique_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "assets"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "storage_path",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"storage_path\" IS NOT NULL AND \"is_published\" = false",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "assets_storage_path_draft_unique_idx",
       "entityType": "indexes",
       "schema": "public",
       "table": "assets"

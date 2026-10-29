@@ -129,7 +129,8 @@ export const asset = pgTable(
     // Identifies where the asset was uploaded from.
     source: text("source").notNull().default("library"),
     filename: text("filename").notNull(),
-    // Nullable for inline SVG assets.
+    // UploadThing file key (the only identifier ever sent to `deleteFiles`).
+    // Nullable for inline-only SVG assets.
     storagePath: text("storage_path"),
     // Nullable for inline SVG assets.
     publicUrl: text("public_url"),
@@ -180,6 +181,15 @@ export const asset = pgTable(
     uniqueIndex("assets_id_draft_unique_idx")
       .on(t.id)
       .where(sql`${t.isPublished} = false AND ${t.deletedAt} IS NULL`),
+
+    // One draft row per stored object. `storage_path` holds the UploadThing
+    // file key; UploadThing may redeliver the upload-complete callback, and
+    // this index lets the insert be `ON CONFLICT DO NOTHING` (idempotent).
+    // Deliberately NOT filtered on deleted_at: a key is never reused, and a
+    // soft-deleted row must keep blocking a duplicate for the same key.
+    uniqueIndex("assets_storage_path_draft_unique_idx")
+      .on(t.storagePath)
+      .where(sql`${t.storagePath} IS NOT NULL AND ${t.isPublished} = false`),
   ],
 );
 

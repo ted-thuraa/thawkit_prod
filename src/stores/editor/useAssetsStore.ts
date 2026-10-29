@@ -8,6 +8,10 @@ import { create } from "zustand";
 import { getEditorImageUrl } from "@/lib/asset-utils";
 import { isUuid } from "@/lib/editor/bootstrap/collect-asset-ids";
 import { assetsReadApi } from "@/lib/editor/editor-read-api";
+import {
+  assetsWriteApi,
+  type DeleteAssetResponse,
+} from "@/lib/editor/editor-asset-write-api";
 import { useEditorBootstrapStore } from "./useEditorBootstrapStore";
 import type { Asset, AssetFolder } from "@/types/funnel";
 
@@ -72,6 +76,13 @@ interface AssetsActions {
   addAssetsToCache: (assets: Asset[]) => void;
   updateAsset: (assetId: string, updates: Partial<Asset>) => void;
   removeAsset: (id: string) => void;
+  /**
+   * Deletes a library asset on the server (stored file + record) and, ONLY on
+   * confirmed success, drops it from the cache. A refusal ("in use") or any
+   * failure leaves the cache untouched so the UI never shows a deletion that
+   * didn't happen.
+   */
+  deleteAsset: (id: string) => Promise<DeleteAssetResponse>;
   addFolder: (folder: AssetFolder) => void;
   updateFolder: (folderId: string, updates: Partial<AssetFolder>) => void;
   deleteFolder: (folderId: string) => Promise<string[]>;
@@ -369,6 +380,12 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
         assetsById: restAssetsById,
       };
     });
+  },
+
+  deleteAsset: async (id: string) => {
+    const result = await assetsWriteApi.delete(id);
+    if (result.ok) get().removeAsset(id);
+    return result;
   },
 
   /**

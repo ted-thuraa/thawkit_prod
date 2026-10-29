@@ -57,6 +57,7 @@ import {
   isAssetOfType,
   DEFAULT_ASSETS,
 } from "@/lib/asset-utils";
+import { parseVideoInput } from "@/lib/video-embed";
 import {
   VIDEO_FIELD_TYPES,
   VIDEO_ID_FIELD_TYPES,
@@ -72,6 +73,8 @@ import ComponentVariableLabel, {
 
 // Re-export VideoSettingsValue from types for convenience
 export type { VideoSettingsValue } from "@/types/funnel";
+
+type VideoSourceType = "upload" | "youtube" | "loom" | "custom_url" | "cms";
 
 // Layer mode props - for editing video layers
 interface LayerModeProps {
@@ -163,13 +166,18 @@ export default function VideoSettings(props: VideoSettingsProps) {
   );
 
   // Detect current video type from src variable
-  const videoType = useMemo((): "upload" | "youtube" | "custom_url" | "cms" => {
-    if (!videoSrc) return "upload";
-    if (videoSrc.type === "video") return "youtube";
+  // External video (YouTube / Loom) is the default source: video FILES can't be
+  // uploaded (scope), so an empty layer starts as an embed, not a file picker.
+  const videoType = useMemo((): VideoSourceType => {
+    if (!videoSrc) return "youtube";
+    if (videoSrc.type === "video") {
+      return (videoSrc as VideoVariable).data.provider === "loom" ? "loom" : "youtube";
+    }
     if (videoSrc.type === "field") return "cms";
     if (isDynamicTextVariable(videoSrc)) return "custom_url";
     return "upload";
   }, [videoSrc]);
+  const isEmbedType = videoType === "youtube" || videoType === "loom";
 
   // Get YouTube video ID and privacy mode if video type is YouTube
   const youtubeVideoId = useMemo(() => {
@@ -476,11 +484,11 @@ export default function VideoSettings(props: VideoSettingsProps) {
   );
 
   const handleTypeChange = useCallback(
-    (type: "upload" | "youtube" | "custom_url" | "cms") => {
-      if (type === "youtube") {
+    (type: VideoSourceType) => {
+      if (type === "youtube" || type === "loom") {
         const videoVariable: VideoVariable = {
           type: "video",
-          data: { provider: "youtube", video_id: "" },
+          data: { provider: type, video_id: "" },
         };
         if (isStandaloneMode && standaloneOnChange) {
           standaloneOnChange({ src: videoVariable, poster: undefined });
@@ -559,10 +567,17 @@ export default function VideoSettings(props: VideoSettingsProps) {
   );
 
   const handleYoutubeVideoIdChange = useCallback(
-    (videoId: string) => {
+    (input: string) => {
+      // A pasted share/watch/embed URL is normalized to {provider, video_id};
+      // anything else (a bare id, or text containing CMS field tokens) is kept
+      // as typed and validated at render time. The stored value is never a URL.
+      const currentProvider = videoType === "loom" ? "loom" : "youtube";
+      const parsed = parseVideoInput(input, currentProvider);
       const videoVariable: VideoVariable = {
         type: "video",
-        data: { provider: "youtube", video_id: videoId },
+        data: parsed
+          ? { provider: parsed.provider, video_id: parsed.video_id }
+          : { provider: currentProvider, video_id: input },
       };
 
       if (isStandaloneMode && standaloneOnChange) {
@@ -578,7 +593,7 @@ export default function VideoSettings(props: VideoSettingsProps) {
         },
       });
     },
-    [isStandaloneMode, standaloneOnChange, layer, onLayerUpdate],
+    [isStandaloneMode, standaloneOnChange, layer, onLayerUpdate, videoType],
   );
 
   const handleYoutubePrivacyModeChange = useCallback(
@@ -788,9 +803,13 @@ export default function VideoSettings(props: VideoSettingsProps) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="upload">
-                  <Icon name="folder" className="size-3" /> File manager
-                </SelectItem>
+                {/* Video FILE upload is out of scope; keep the entry only for a
+                    layer that already points at a library asset. */}
+                {videoType === "upload" && (
+                  <SelectItem value="upload">
+                    <Icon name="folder" className="size-3" /> File manager
+                  </SelectItem>
+                )}
                 <SelectItem value="custom_url">
                   <Icon name="link" className="size-3" /> Custom URL
                 </SelectItem>
@@ -800,6 +819,9 @@ export default function VideoSettings(props: VideoSettingsProps) {
                 <SelectSeparator />
                 <SelectItem value="youtube">
                   <Icon name="video" className="size-3" /> YouTube
+                </SelectItem>
+                <SelectItem value="loom">
+                  <Icon name="video" className="size-3" /> Loom
                 </SelectItem>
               </SelectContent>
             </Select>
@@ -918,12 +940,12 @@ export default function VideoSettings(props: VideoSettingsProps) {
         </div>
       )}
 
-      {/* YouTube Video ID Section */}
-      {!linkedVideoVariable && videoType === "youtube" && (
+      {/* External video (YouTube / Loom): paste a URL or enter an id */}
+      {!linkedVideoVariable && isEmbedType && (
         <div className={isStandaloneMode ? "" : "grid grid-cols-3 items-start"}>
           {!isStandaloneMode && (
             <Label variant="muted" className="pt-2">
-              Video ID
+              Video URL or ID
             </Label>
           )}
 
@@ -931,7 +953,11 @@ export default function VideoSettings(props: VideoSettingsProps) {
             <RichTextEditor
               value={youtubeVideoId}
               onChange={handleYoutubeVideoIdChange}
-              placeholder="i.e. dQw4w9WgXcQ"
+              placeholder={
+                videoType === "loom"
+                  ? "Paste a loom.com/share/… link"
+                  : "Paste a YouTube link or id (dQw4w9WgXcQ)"
+              }
               fieldGroups={textFieldGroups}
               allFields={allFields}
               collections={collections}
