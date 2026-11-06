@@ -65,7 +65,7 @@ describe.skipIf(!URL)("deleteAssetAction (real guard + real DB)", () => {
     // carol belongs to no organization
     await pool.query(`INSERT INTO campaigns (id, organization_id, name) VALUES ($1,$2,'A')`, [ids.campA, ids.orgA]);
     await pool.query(`INSERT INTO campaigns (id, organization_id, name) VALUES ($1,$2,'B')`, [ids.campB, ids.orgB]);
-    await pool.query(`INSERT INTO funnels (id, organization_id, campaign_id, name) VALUES ($1,$2,$3,'FA')`, [`fa_${run}`, ids.orgA, ids.campA]);
+    await pool.query(`INSERT INTO funnels (id, organization_id, campaign_id, name) VALUES ($1,$2,$3,'FA'),($4,$5,$6,'FB')`, [`fa_${run}`, ids.orgA, ids.campA, `fb_${run}`, ids.orgB, ids.campB]);
   });
 
   afterAll(async () => {
@@ -114,8 +114,14 @@ describe.skipIf(!URL)("deleteAssetAction (real guard + real DB)", () => {
   it("CROSS-TENANT: org B's owner cannot delete org A's asset via B's OWN campaign (id smuggling)", async () => {
     const a = await insertAsset(ids.orgA, `k_${run}_xt2`);
     currentUser = { id: ids.bob };
+    // positive control: Bob IS authorized in his own campaign and can delete HIS asset,
+    // so the refusal below is about tenancy, not a broken fixture.
+    const bobsAsset = await insertAsset(ids.orgB, `k_${run}_bobs`);
+    expect((await deleteAssetAction(ids.campB, bobsAsset.id)).success).toBe(true);
+    storageCalls.length = 0;
     const res = await deleteAssetAction(ids.campB, a.id);
     expect(res.success).toBe(false);
+    expect(res.success === false && res.error).toMatch(/not found/i);
     expect(storageCalls).toEqual([]); // no storage call for a foreign key
     expect(await repo.getDraftAsset(ids.orgA, a.id)).not.toBeNull();
   });

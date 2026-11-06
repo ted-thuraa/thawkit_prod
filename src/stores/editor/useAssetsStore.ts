@@ -9,6 +9,7 @@ import { getEditorImageUrl } from "@/lib/asset-utils";
 import { isUuid } from "@/lib/editor/bootstrap/collect-asset-ids";
 import { assetsReadApi } from "@/lib/editor/editor-read-api";
 import {
+  assetFoldersApi,
   assetsWriteApi,
   type DeleteAssetResponse,
 } from "@/lib/editor/editor-asset-write-api";
@@ -86,7 +87,6 @@ interface AssetsActions {
   addFolder: (folder: AssetFolder) => void;
   updateFolder: (folderId: string, updates: Partial<AssetFolder>) => void;
   deleteFolder: (folderId: string) => Promise<string[]>;
-  batchReorderFolders: (updatedFolders: AssetFolder[]) => Promise<void>;
   reset: () => void;
 }
 
@@ -373,7 +373,8 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
    */
   removeAsset: (id: string) => {
     set((state) => {
-      const { [id]: removed, ...restAssetsById } = state.assetsById;
+      const restAssetsById = { ...state.assetsById };
+      delete restAssetsById[id];
 
       return {
         assets: state.assets.filter((a) => a.id !== id),
@@ -439,13 +440,11 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
     const descendantIds = getDescendantFolderIds(folderId);
     const allFolderIdsToDelete = [folderId, ...descendantIds];
 
-    // Call API to delete folder (backend handles cascading deletion)
-    const response = await fetch(`/ycode/api/asset-folders/${folderId}`, {
-      method: "DELETE",
-    });
-
-    if (!response.ok) {
-      throw new Error("Failed to delete folder");
+    // Server deletes the folder, its subfolders and the files inside them —
+    // refusing (nothing deleted) while any of those files is still used.
+    const response = await assetFoldersApi.delete(folderId);
+    if (response.error !== undefined) {
+      throw new Error(response.error);
     }
 
     // Update state: remove deleted folders
@@ -484,67 +483,6 @@ export const useAssetsStore = create<AssetsStore>((set, get) => ({
    * Batch reorder folders after drag and drop
    * Optimistically updates UI then syncs with backend
    */
-  batchReorderFolders: async (updatedFolders: AssetFolder[]) => {
-    const { folders } = get();
-
-    // Store original state for rollback
-    const originalFolders = folders;
-
-    try {
-      // Optimistically update the UI
-      set({
-        folders: updatedFolders,
-        isLoading: true,
-      });
-
-      // Batch update folders
-      const updatePromises = updatedFolders.map(async (folder) => {
-        const originalFolder = originalFolders.find((f) => f.id === folder.id);
-        if (!originalFolder) return;
-
-        // Only update if something changed
-        if (
-          originalFolder.asset_folder_id !== folder.asset_folder_id ||
-          originalFolder.order !== folder.order ||
-          originalFolder.depth !== folder.depth
-        ) {
-          const response = await fetch(
-            `/ycode/api/asset-folders/${folder.id}`,
-            {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                asset_folder_id: folder.asset_folder_id,
-                order: folder.order,
-                depth: folder.depth,
-              }),
-            },
-          );
-
-          if (!response.ok) {
-            throw new Error(`Failed to update folder ${folder.id}`);
-          }
-        }
-      });
-
-      // Wait for all updates to complete
-      await Promise.all(updatePromises);
-
-      set({ isLoading: false });
-    } catch (error) {
-      console.error("Failed to reorder folders:", error);
-
-      // Rollback to original state on error
-      set({
-        folders: originalFolders,
-        isLoading: false,
-        error:
-          error instanceof Error ? error.message : "Failed to reorder folders",
-      });
-
-      throw error;
-    }
-  },
 
   /**
    * Reset store to initial state

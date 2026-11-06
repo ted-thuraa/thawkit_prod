@@ -26,16 +26,9 @@
  * instead of an upload UI (videos are external YouTube/Loom links).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  DndContext,
-  DragOverlay,
-  closestCenter,
-  useDraggable,
-  useDroppable,
-} from "@dnd-kit/core";
 import {
   Dialog,
   DialogContent,
@@ -44,7 +37,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-import Icon from "@/components/ui/icon";
+import Icon, { type IconProps } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -57,13 +50,31 @@ import {
   ASSET_CATEGORIES,
   buildSvgDataUrl,
   formatFileSize,
+  getAssetIcon,
+  getAssetProxyUrl,
+  getOptimizedImageUrl,
+  isAssetOfType,
   matchesCategoryFilter,
   normalizeCategoryFilter,
 } from "@/lib/asset-utils";
+import {
+  flattenAssetFolderTree,
+  hasChildFolders,
+  type FlattenedAssetFolderNode,
+} from "@/lib/assets/asset-folder-utils";
+import type { AssetUsageSummary } from "@/lib/assets/asset-usage-summary";
+import { describeUsages } from "@/lib/assets/delete-asset";
+import {
+  fetchRemixIcons,
+  type RemixIcon,
+  type RemixIconCategory,
+} from "@/lib/assets/remix-icons";
+import { sanitizeSvgForInline } from "@/lib/assets/svg-sanitizer";
+import { assetFoldersApi, assetsApi } from "@/lib/editor/editor-asset-write-api";
+import AssetFolderDialog from "./AssetFolderDialog";
 import { useAssetsStore } from "@/stores/editor/useAssetsStore";
 import { useEditorBootstrapStore } from "@/stores/editor/useEditorBootstrapStore";
-import { useEditorStore } from "@/stores/editor/useEditorStore";
-import type { Asset, AssetCategory } from "@/types/funnel";
+import type { Asset, AssetCategory, AssetCategoryFilter } from "@/types/funnel";
 import {
   InputGroup,
   InputGroupAddon,
@@ -97,13 +108,12 @@ import { Label } from "@/components/ui/label";
 const FILE_MANAGER_CATEGORY_OPTIONS: ReadonlyArray<{
   id: AssetCategory;
   label: string;
-  icon: "icon" | "image" | "video" | "audio" | "file-text";
+  icon: "icon" | "image";
 }> = [
   { id: ASSET_CATEGORIES.ICONS, label: "Icons", icon: "icon" },
   { id: ASSET_CATEGORIES.IMAGES, label: "Images", icon: "image" },
-  { id: ASSET_CATEGORIES.VIDEOS, label: "Videos", icon: "video" },
-  { id: ASSET_CATEGORIES.AUDIO, label: "Audio", icon: "audio" },
-  { id: ASSET_CATEGORIES.DOCUMENTS, label: "Documents", icon: "file-text" },
+  // Videos, audio and documents are intentionally not offered: the library only
+  // accepts images and SVG (videos are external YouTube/Loom links, not files).
 ];
 
 const PAGE_SIZE = 40;
@@ -136,10 +146,6 @@ interface FolderRowProps {
   isSelected: boolean;
   hasChildren: boolean;
   isCollapsed: boolean;
-  isOver: boolean;
-  isDragging: boolean;
-  isDragActive: boolean;
-  dropPosition: "above" | "below" | "inside" | null;
   assetCount: number;
   onSelect: (id: string) => void;
   onToggle: (id: string) => void;
@@ -152,35 +158,12 @@ function FolderRow({
   isSelected,
   hasChildren,
   isCollapsed,
-  isOver,
-  isDragging,
-  isDragActive,
-  dropPosition,
   assetCount,
   onSelect,
   onToggle,
   onDelete,
   onEdit,
 }: FolderRowProps) {
-  // Setup drag and drop
-  const { setNodeRef: setDropRef } = useDroppable({
-    id: node.id,
-  });
-
-  const {
-    attributes,
-    listeners,
-    setNodeRef: setDragRef,
-  } = useDraggable({
-    id: node.id,
-  });
-
-  // Combine refs for drag and drop
-  const setRefs = (element: HTMLDivElement | null) => {
-    setDragRef(element);
-    setDropRef(element);
-  };
-
   return (
     <div className="relative">
       {/* Vertical connector lines */}
@@ -201,41 +184,12 @@ function FolderRow({
         </>
       )}
 
-      {/* Drop Indicators */}
-      {isOver && dropPosition === "above" && (
-        <div
-          className="absolute top-0 left-0 right-0 h-[1.5px] bg-primary z-50"
-          style={{
-            marginLeft: `${node.depth * 14 + 8}px`,
-          }}
-        >
-          <div className="absolute -bottom-0.75 -left-[5.5px] size-2 rounded-full border-[1.5px] bg-neutral-950 border-primary" />
-        </div>
-      )}
-      {isOver && dropPosition === "below" && (
-        <div
-          className="absolute bottom-0 left-0 right-0 h-[1.5px] bg-primary z-50"
-          style={{
-            marginLeft: `${node.depth * 14 + 8}px`,
-          }}
-        >
-          <div className="absolute -bottom-0.75 -left-[5.5px] size-2 rounded-full border-[1.5px] bg-neutral-950 border-primary" />
-        </div>
-      )}
-      {isOver && dropPosition === "inside" && (
-        <div className="absolute inset-0 border-[1.5px] border-primary rounded-lg z-40 pointer-events-none" />
-      )}
-
       {/* Main Row */}
       <div
-        ref={setRefs}
-        {...attributes}
-        {...listeners}
-        data-drag-active={isDragActive}
         data-node-id={node.id}
         className={cn(
           "group relative flex items-center h-8 outline-none focus:outline-none rounded-lg cursor-pointer select-none",
-          !isDragActive && !isDragging && "hover:bg-secondary/50",
+          "hover:bg-secondary/50",
           isSelected && "bg-primary text-primary-foreground hover:bg-primary",
           !isSelected &&
             "text-secondary-foreground/80 dark:text-muted-foreground",
@@ -449,7 +403,7 @@ function FileGridItem({
               }
               return (
                 <Icon
-                  name={getAssetIcon(mimeType) as any}
+                  name={getAssetIcon(mimeType) as IconProps["name"]}
                   className="size-10 opacity-50"
                 />
               );
@@ -497,7 +451,7 @@ function FileGridItem({
                   ) : (
                     <>
                       <Icon
-                        name={getAssetIcon(file.type) as any}
+                        name={getAssetIcon(file.type) as IconProps["name"]}
                         className="size-10 opacity-30"
                       />
                       <div className="absolute inset-0 flex items-center justify-center bg-background/20">
@@ -515,14 +469,16 @@ function FileGridItem({
         {showMenu && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <div
+              <button
+                type="button"
+                aria-label={`Options for ${name}`}
                 onClick={(e) => e.stopPropagation()}
                 className={cn(
-                  "absolute top-1.5 right-1.5 size-5.75 opacity-0 group-hover:opacity-80 p-0.5 rounded-sm bg-secondary/80 backdrop-blur-sm hover:bg-secondary cursor-pointer flex items-center justify-center z-20",
+                  "absolute top-1.5 right-1.5 size-5.75 opacity-0 group-hover:opacity-80 focus-visible:opacity-100 p-0.5 rounded-sm bg-secondary/80 backdrop-blur-sm hover:bg-secondary cursor-pointer flex items-center justify-center z-20",
                 )}
               >
                 <Icon name="dotsHorizontal" className="size-3" />
-              </div>
+              </button>
             </DropdownMenuTrigger>
 
             <DropdownMenuContent
@@ -635,7 +591,7 @@ export default function FileManagerDialog({
   const [showDeleteAssetConfirmDialog, setShowDeleteAssetConfirmDialog] =
     useState(false);
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
-  const [assetUsage, setAssetUsage] = useState<AssetUsageResult | null>(null);
+  const [assetUsage, setAssetUsage] = useState<AssetUsageSummary | null>(null);
   const [loadingUsage, setLoadingUsage] = useState(false);
   const [showEditAssetDialog, setShowEditAssetDialog] = useState(false);
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
@@ -645,6 +601,7 @@ export default function FileManagerDialog({
   );
   const [editAssetContent, setEditAssetContent] = useState<string | null>(null);
   const [isCreateSvgMode, setIsCreateSvgMode] = useState(false);
+  const [isSavingAsset, setIsSavingAsset] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{
     current: number;
@@ -704,10 +661,16 @@ export default function FileManagerDialog({
   const addFolder = useAssetsStore((state) => state.addFolder);
   const updateFolder = useAssetsStore((state) => state.updateFolder);
   const deleteFolder = useAssetsStore((state) => state.deleteFolder);
-  const batchReorderFolders = useAssetsStore(
-    (state) => state.batchReorderFolders,
-  );
   const addAsset = useAssetsStore((state) => state.addAsset);
+  const deleteAssetFromLibrary = useAssetsStore((state) => state.deleteAsset);
+  const campaignId = useEditorBootstrapStore((state) => state.campaignId);
+  // Direct-to-UploadThing upload (see src/app/api/uploadthing). The server
+  // authenticates, verifies the real bytes and persists the asset row.
+  const { startUpload } = useUploadThing("assetLibrary", {
+    onUploadError: (error) => {
+      toast.error("Upload failed", { description: error.message });
+    },
+  });
   const updateAsset = useAssetsStore((state) => state.updateAsset);
   const removeAsset = useAssetsStore((state) => state.removeAsset);
 
@@ -792,7 +755,9 @@ export default function FileManagerDialog({
         setHasMoreRemixIcons(more);
         hasMoreRemixRef.current = more;
       } catch (error) {
-        console.error("Failed to fetch Remix Icons:", error);
+        toast.error("Couldn't load icons", {
+          description: error instanceof Error ? error.message : undefined,
+        });
       } finally {
         setIsLoadingRemixIcons(false);
         isLoadingRemixRef.current = false;
@@ -937,7 +902,9 @@ export default function FileManagerDialog({
           currentFetchPage++;
         }
       } catch (error) {
-        console.error("Failed to load assets:", error);
+        toast.error("Couldn't load assets", {
+          description: error instanceof Error ? error.message : undefined,
+        });
       } finally {
         setIsLoadingAssets(false);
         isLoadingAssetsRef.current = false;
@@ -1022,19 +989,18 @@ export default function FileManagerDialog({
     );
   }, [folders, selectedFolderId]);
 
-  // Calculate asset counts for each folder from currently loaded assets
-  // Note: This only shows counts from loaded assets, not total counts
-  const folderAssetCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-
-    // Count assets per folder from cache
-    Object.values(assetsById).forEach((asset) => {
-      const folderId = asset.asset_folder_id || "root";
-      counts[folderId] = (counts[folderId] || 0) + 1;
-    });
-
-    return counts;
-  }, [assetsById]);
+  // Per-folder file counts for the sidebar badges. These come from the server
+  // (a count over ALL files, `"root"` = unassigned) rather than from whichever
+  // assets happen to be loaded in the cache, and are refreshed after every
+  // mutation that can change them.
+  const [folderAssetCounts, setFolderAssetCounts] = useState<Record<string, number>>({});
+  const refreshFolderCounts = useCallback(async () => {
+    const response = await assetsApi.getFolderCounts();
+    if (response.error === undefined) setFolderAssetCounts(response.data);
+  }, []);
+  useEffect(() => {
+    if (open) void refreshFolderCounts();
+  }, [open, refreshFolderCounts]);
 
   // Build flattened folder tree with virtual "All Files" root
   const flattenedFolders = useMemo(() => {
@@ -1084,65 +1050,18 @@ export default function FileManagerDialog({
     });
   };
 
-  // Auto-expand node callback for drag and drop
-  const handleAutoExpandNode = useCallback((nodeId: string) => {
-    setCollapsedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(nodeId);
-      return next;
-    });
-  }, []);
-
-  // Drag and drop using the reusable hook
-  const {
-    activeId,
-    overId,
-    dropPosition,
-    isDropNotAllowed,
-    sensors,
-    handleDragStart,
-    handleDragOver,
-    handleDragEnd,
-    handleDragCancel,
-  } = useTreeDragDrop({
-    flattenedNodes: flattenedFolders.filter((n) => n.id !== "root"), // Exclude virtual root
-    canDrag: (node) => node.id !== "root",
-    canDrop: (activeNode, overNode, position, targetParentId) => {
-      // Can't drop on virtual root
-      if (overNode && overNode.id === "root") return false;
-
-      // Can't drop folder into its own descendant
-      if (overNode) {
-        return !isDescendantAssetFolder(overNode.id, activeNode.id, folders);
-      }
-
-      return true;
-    },
-    onRebuild: (activeNode, newParentId, newOrder) => {
-      return rebuildAssetFolderTree(
-        flattenedFolders.filter((n) => n.id !== "root"),
-        activeNode.id,
-        newParentId,
-        newOrder,
-      );
-    },
-    onReorder: async (updatedFolders) => {
-      try {
-        await batchReorderFolders(updatedFolders);
-      } catch (error) {
-        console.error("Failed to reorder folders:", error);
-      }
-    },
-    onAutoExpandNode: handleAutoExpandNode,
-  });
-
-  // Calculate depth of a folder by traversing up the tree (database depth, 0 for root)
-  const calculateFolderDepth = (folderId: string | null): number => {
-    if (!folderId) return 0;
-    const folder = folders.find((f) => f.id === folderId);
-    if (!folder || !folder.asset_folder_id) return 0;
-    return 1 + calculateFolderDepth(folder.asset_folder_id);
-  };
+  // A selected folder that no longer exists (deleted elsewhere / stale
+  // reference) must not leave the view pointing at nothing: fall back to the
+  // "All files" root.
+  useEffect(() => {
+    if (
+      selectedFolderId &&
+      !isVirtualFolder(selectedFolderId) &&
+      !folders.some((f) => f.id === selectedFolderId)
+    ) {
+      setSelectedFolderId(null);
+    }
+  }, [selectedFolderId, folders]);
 
   // Clear selection when folder changes or dialog closes
   useEffect(() => {
@@ -1246,54 +1165,29 @@ export default function FileManagerDialog({
     [folders],
   );
 
-  // Create new folder
+  // Create a regular folder. It is persisted server-side first; the sidebar
+  // updates from the server's response (no reload), and a failure is reported
+  // instead of closing the dialog as if it had worked.
   const handleCreateFolder = async (
     folderName: string,
     parentFolderId: string | null,
-  ) => {
-    try {
-      const depth = parentFolderId
-        ? calculateFolderDepth(parentFolderId) + 1
-        : 0;
-      const order = folders.filter(
-        (f) => f.asset_folder_id === parentFolderId,
-      ).length;
-
-      const response = await assetFoldersApi.create({
-        name: folderName,
-        asset_folder_id: parentFolderId,
-        depth,
-        order,
-        is_published: false,
-      });
-
-      if (response.error) {
-        console.error("Failed to create folder:", response.error);
-        return;
-      }
-
-      if (response.data) {
-        addFolder(response.data);
-
-        // Auto-expand parent folder so the new child is visible
-        if (parentFolderId) {
-          setCollapsedIds((prev) => {
-            const next = new Set(prev);
-            next.delete(parentFolderId);
-            return next;
-          });
-        } else {
-          // If creating at root, auto-expand root
-          setCollapsedIds((prev) => {
-            const next = new Set(prev);
-            next.delete("root");
-            return next;
-          });
-        }
-      }
-    } catch (error) {
-      console.error("Failed to create folder:", error);
+  ): Promise<boolean> => {
+    const response = await assetFoldersApi.create({
+      name: folderName,
+      parentId: parentFolderId,
+    });
+    if (response.error !== undefined) {
+      toast.error("Unable to create folder", { description: response.error });
+      return false;
     }
+    addFolder(response.data);
+    // Auto-expand the parent (or the virtual "All files" root) so it is visible
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(parentFolderId ?? "root");
+      return next;
+    });
+    return true;
   };
 
   // Show delete confirmation
@@ -1314,26 +1208,35 @@ export default function FileManagerDialog({
     return descendants;
   };
 
-  // Confirm delete folder
+  // Confirm delete folder. The server deletes the folder, its subfolders and
+  // the files inside — or refuses while one of those files is still used; the
+  // UI only changes after the server confirmed.
   const handleConfirmDeleteFolder = async () => {
     if (!deletingFolderId) return;
+    const folderBeingDeleted = folders.find((f) => f.id === deletingFolderId);
+    const parentFolderId = folderBeingDeleted?.asset_folder_id || null;
 
     try {
-      // Get the parent folder of the folder being deleted before deletion
-      const folderBeingDeleted = folders.find((f) => f.id === deletingFolderId);
-      const parentFolderId = folderBeingDeleted?.asset_folder_id || null;
-
-      // Delete folder via store (handles all cascading logic)
       const deletedFolderIds = await deleteFolder(deletingFolderId);
 
-      // If deleted folder or its descendants were selected, select the parent folder
+      // If the deleted folder (or a descendant) was open, go to its parent
       if (selectedFolderId && deletedFolderIds.includes(selectedFolderId)) {
         setSelectedFolderId(parentFolderId);
       }
-
-      setDeletingFolderId(null);
+      setAssets((prev) =>
+        prev.filter(
+          (a) =>
+            !a.asset_folder_id || !deletedFolderIds.includes(a.asset_folder_id),
+        ),
+      );
+      toast.success("Folder deleted");
+      void refreshFolderCounts();
     } catch (error) {
-      console.error("Failed to delete folder:", error);
+      toast.error("Unable to delete folder", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setDeletingFolderId(null);
     }
   };
 
@@ -1348,402 +1251,145 @@ export default function FileManagerDialog({
     }
   };
 
-  // Confirm folder edit
+  // Confirm folder edit (rename and/or move). The server also rewrites the
+  // stored depth of the moved branch; we mirror its result in the store.
   const handleConfirmEdit = async (
     newName: string,
     newParentFolderId: string | null,
-  ) => {
-    if (!editingFolderId) return;
+  ): Promise<boolean> => {
+    if (!editingFolderId) return false;
+    const folder = folders.find((f) => f.id === editingFolderId);
+    const parentChanged = newParentFolderId !== (folder?.asset_folder_id ?? null);
 
-    try {
-      const folder = folders.find((f) => f.id === editingFolderId);
-      const updateData: {
-        name: string;
-        asset_folder_id?: string | null;
-        depth?: number;
-      } = {
-        name: newName,
-      };
-
-      // If parent folder changed, update it and recalculate depth
-      if (newParentFolderId !== folder?.asset_folder_id) {
-        updateData.asset_folder_id = newParentFolderId;
-        updateData.depth = newParentFolderId
-          ? calculateFolderDepth(newParentFolderId) + 1
-          : 0;
-      }
-
-      const response = await assetFoldersApi.update(
-        editingFolderId,
-        updateData,
-      );
-
-      if (response.error) {
-        console.error("Failed to update folder:", response.error);
-        return;
-      }
-
-      if (response.data) {
-        updateFolder(editingFolderId, response.data);
-        setEditingFolderId(null);
-        setEditFolderName("");
-        setEditFolderParentId(null);
-
-        // Auto-expand new parent folder if parent changed
-        if (
-          newParentFolderId &&
-          newParentFolderId !== folder?.asset_folder_id
-        ) {
-          setCollapsedIds((prev) => {
-            const next = new Set(prev);
-            next.delete(newParentFolderId);
-            return next;
-          });
-        }
-      }
-    } catch (error) {
-      console.error("Failed to update folder:", error);
+    const response = await assetFoldersApi.update(editingFolderId, {
+      name: newName,
+      ...(parentChanged ? { parentId: newParentFolderId } : {}),
+    });
+    if (response.error !== undefined) {
+      toast.error("Unable to update folder", { description: response.error });
+      return false;
     }
+
+    const { folder: saved, depths } = response.data;
+    updateFolder(editingFolderId, saved);
+    for (const [id, depth] of Object.entries(depths)) {
+      if (id !== saved.id) updateFolder(id, { depth });
+    }
+    setEditingFolderId(null);
+    setEditFolderName("");
+    setEditFolderParentId(null);
+
+    if (parentChanged) {
+      setCollapsedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(newParentFolderId ?? "root");
+        return next;
+      });
+    }
+    return true;
   };
 
-  // Show delete asset confirmation
+  // Show delete asset confirmation, with where the file is used
   const handleDeleteAsset = async (id: string) => {
     setDeletingAssetId(id);
     setAssetUsage(null);
     setLoadingUsage(true);
     setShowDeleteAssetConfirmDialog(true);
 
-    // Fetch usage in background
-    try {
-      const response = await assetsApi.getUsage(id);
-      if (response.data && !response.error) {
-        setAssetUsage(response.data as AssetUsageResult);
-      }
-    } catch (error) {
-      console.error("Failed to fetch asset usage:", error);
-    } finally {
-      setLoadingUsage(false);
+    const response = await assetsApi.getUsage(id);
+    if (response.error === undefined) {
+      setAssetUsage(response.data);
+    } else {
+      toast.error("Couldn't check where this file is used", {
+        description: response.error,
+      });
     }
+    setLoadingUsage(false);
   };
 
-  // Confirm delete asset
+  // Confirm delete asset. Not optimistic: the file leaves the UI only after
+  // the server removed the stored object AND the record. A file that is still
+  // used is refused (the dialog already lists where).
   const handleConfirmDeleteAsset = async () => {
     if (!deletingAssetId) return;
-
-    // Save asset for rollback if needed
-    const assetToDelete =
-      assetsById[deletingAssetId] ||
-      assets.find((a) => a.id === deletingAssetId);
-    if (!assetToDelete) return;
-
-    try {
-      // Optimistically remove from store and local state
-      removeAsset(deletingAssetId);
-      setAssets((prev) => prev.filter((a) => a.id !== deletingAssetId));
-      setDeletingAssetId(null);
-
-      // Make API call
-      const response = await assetsApi.delete(deletingAssetId);
-
-      if (response.error) {
-        console.error("Failed to delete asset:", response.error);
-        // Rollback: add asset back to store and local state
-        addAsset(assetToDelete);
-        setAssets((prev) => [assetToDelete, ...prev]);
-        return;
-      }
-
-      // Sync affected entities and create versions
-      const responseData = response.data as
-        | {
-            success: boolean;
-            cleanup?: {
-              affectedPages?: AffectedPageEntity[];
-              affectedComponents?: AffectedComponentEntity[];
-            };
-          }
-        | undefined;
-
-      if (responseData?.cleanup) {
-        await syncAffectedEntitiesAfterAssetDelete(responseData.cleanup);
-      }
-    } catch (error) {
-      console.error("Failed to delete asset:", error);
-      // Rollback: add asset back to store and local state
-      addAsset(assetToDelete);
-      setAssets((prev) => [assetToDelete, ...prev]);
+    const id = deletingAssetId;
+    const result = await deleteAssetFromLibrary(id);
+    if (result.ok) {
+      setAssets((prev) => prev.filter((a) => a.id !== id));
+      setTotalAssets((prev) => Math.max(0, prev - 1));
+      setSelectedAssetIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      toast.success("Asset deleted");
+      void refreshFolderCounts();
+    } else {
+      toast.error(result.inUse ? "This file is still in use" : "Unable to delete asset", {
+        description: result.error,
+      });
     }
+    setDeletingAssetId(null);
+    setAssetUsage(null);
   };
 
-  /**
-   * Sync affected pages/components and create undo versions after asset deletion
-   */
-  const syncAffectedEntitiesAfterAssetDelete = async (cleanup: {
-    affectedPages?: AffectedPageEntity[];
-    affectedComponents?: AffectedComponentEntity[];
-  }) => {
-    const { affectedPages = [], affectedComponents = [] } = cleanup;
+  // Bulk delete. Every file is checked and removed on its own server-side and
+  // reported individually: files still in use (or failing) are KEPT and named.
+  const handleBulkDelete = async () => {
+    if (selectedAssetIds.size === 0) return;
+    const ids = Array.from(selectedAssetIds);
 
-    if (affectedPages.length === 0 && affectedComponents.length === 0) {
+    const response = await assetsApi.bulkDelete(ids);
+    if (response.error !== undefined) {
+      toast.error("Failed to delete assets", { description: response.error });
       return;
     }
 
-    // Import version tracking utilities
-    const { recordVersionViaApi, initializeVersionTracking } =
-      await import("@/lib/version-tracking");
+    const { deleted, inUse, failed } = response.data;
+    deleted.forEach((id) => removeAsset(id));
+    setAssets((prev) => prev.filter((a) => !deleted.includes(a.id)));
+    setTotalAssets((prev) => Math.max(0, prev - deleted.length));
+    // Whatever was not deleted stays selected so the user can see/act on it
+    setSelectedAssetIds(new Set(ids.filter((id) => !deleted.includes(id))));
+    void refreshFolderCounts();
 
-    // Get stores
-    const pagesStore = usePagesStore.getState();
-    const componentsStore = useComponentsStore.getState();
-
-    // Sync affected pages
-    for (const entity of affectedPages) {
-      // Sync local draft if it exists
-      const draft = pagesStore.draftsByPageId[entity.pageId];
-      if (draft) {
-        pagesStore.setDraftLayers(entity.pageId, entity.newLayers);
-      }
-
-      // Initialize version tracking with previous state, then record new version
-      initializeVersionTracking(
-        "page_layers",
-        entity.pageId,
-        entity.previousLayers,
-      );
-      await recordVersionViaApi("page_layers", entity.pageId, entity.newLayers);
-    }
-
-    // Sync affected components
-    for (const entity of affectedComponents) {
-      // Update component in store
-      const component = componentsStore.components.find(
-        (c) => c.id === entity.componentId,
-      );
-      if (component) {
-        // Update the components array directly
-        componentsStore.setComponents(
-          componentsStore.components.map((c) =>
-            c.id === entity.componentId
-              ? { ...c, layers: entity.newLayers }
-              : c,
-          ),
-        );
-
-        // Update the primary variant draft if a draft exists. Cleanup
-        // currently runs against the legacy `layers` field, which mirrors
-        // variants[0] — so we replace that variant's working copy.
-        const variantDrafts =
-          componentsStore.componentDrafts[entity.componentId];
-        if (variantDrafts) {
-          const primaryVariantId =
-            component.variants && component.variants.length > 0
-              ? component.variants[0].id
-              : Object.keys(variantDrafts)[0];
-          if (primaryVariantId) {
-            componentsStore.updateComponentDraft(
-              entity.componentId,
-              primaryVariantId,
-              entity.newLayers,
-            );
-          }
-        }
-      }
-
-      // Initialize version tracking with previous state, then record new version
-      initializeVersionTracking(
-        "component",
-        entity.componentId,
-        entity.previousLayers,
-      );
-      await recordVersionViaApi(
-        "component",
-        entity.componentId,
-        entity.newLayers,
-      );
+    if (inUse.length > 0 || failed.length > 0) {
+      const first = inUse[0];
+      toast.error(`${deleted.length} deleted, ${inUse.length + failed.length} kept`, {
+        description: first
+          ? `“${first.filename}” is still used by ${describeUsages(first.usages)}.`
+          : failed[0]?.error,
+      });
+    } else {
+      toast.success(deleted.length === 1 ? "Asset deleted" : `${deleted.length} assets deleted`);
     }
   };
 
-  // Bulk delete assets
-  const handleBulkDelete = async () => {
-    if (selectedAssetIds.size === 0) return;
-
-    const idsToDelete = Array.from(selectedAssetIds);
-
-    // Save assets for rollback
-    const assetsToDelete = idsToDelete
-      .map((id) => {
-        const asset = assetsById[id] || assets.find((a) => a.id === id);
-        return { id, asset };
-      })
-      .filter((item) => item.asset) as Array<{ id: string; asset: Asset }>;
-
-    if (assetsToDelete.length === 0) return;
-
-    try {
-      // Optimistically remove from store and local state
-      assetsToDelete.forEach(({ id }) => {
-        removeAsset(id);
-      });
-      setAssets((prev) => prev.filter((a) => !idsToDelete.includes(a.id)));
-
-      // Clear selection
-      setSelectedAssetIds(new Set());
-
-      // Make bulk API call
-      const response = await assetsApi.bulkDelete(idsToDelete);
-
-      if (response.error) {
-        console.error("Failed to delete assets:", response.error);
-        // Rollback: add all assets back to store and local state
-        assetsToDelete.forEach(({ asset }) => {
-          addAsset(asset);
-        });
-        setAssets((prev) => [
-          ...assetsToDelete.map(({ asset }) => asset),
-          ...prev,
-        ]);
-        toast.error("Failed to delete assets", {
-          description: response.error,
-        });
-        return;
-      }
-
-      if (response.data) {
-        const { success, failed, cleanup } = response.data as {
-          success: string[];
-          failed: string[];
-          cleanup?: {
-            affectedPages?: AffectedPageEntity[];
-            affectedComponents?: AffectedComponentEntity[];
-          };
-        };
-
-        // Rollback failed deletions
-        if (failed.length > 0) {
-          const failedAssets: Asset[] = [];
-          failed.forEach((id) => {
-            const item = assetsToDelete.find((a) => a.id === id);
-            if (item) {
-              addAsset(item.asset);
-              failedAssets.push(item.asset);
-            }
-          });
-          // Re-add failed assets to local state
-          if (failedAssets.length > 0) {
-            setAssets((prev) => [...failedAssets, ...prev]);
-          }
-        }
-
-        if (failed.length > 0) {
-          toast.error("Some assets could not be deleted", {
-            description: `${success.length} deleted, ${failed.length} failed`,
-          });
-        }
-
-        // Sync affected entities and create versions
-        if (cleanup) {
-          await syncAffectedEntitiesAfterAssetDelete(cleanup);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to delete assets:", error);
-      // Rollback: add all assets back to store and local state
-      assetsToDelete.forEach(({ asset }) => {
-        addAsset(asset);
-      });
-      setAssets((prev) => [
-        ...assetsToDelete.map(({ asset }) => asset),
-        ...prev,
-      ]);
-      toast.error("Failed to delete assets");
-    }
-  };
-
-  // Bulk move assets
+  // Bulk move (target `null` = All files). Persisted first, then reflected.
   const handleBulkMove = async (targetFolderId: string | null) => {
     if (selectedAssetIds.size === 0) return;
+    const ids = Array.from(selectedAssetIds);
 
-    const idsToMove = Array.from(selectedAssetIds);
+    const response = await assetsApi.move(ids, targetFolderId);
+    if (response.error !== undefined) {
+      toast.error("Failed to move assets", { description: response.error });
+      return;
+    }
 
-    // Save original folder IDs for rollback
-    const assetsToMove = idsToMove
-      .map((id) => {
-        const asset = assetsById[id] || assets.find((a) => a.id === id);
-        return { id, asset, originalFolderId: asset?.asset_folder_id };
-      })
-      .filter((item) => item.asset) as Array<{
-      id: string;
-      asset: Asset;
-      originalFolderId: string | null | undefined;
-    }>;
+    const moved = new Set(response.data.movedIds);
+    moved.forEach((id) => updateAsset(id, { asset_folder_id: targetFolderId }));
+    if (targetFolderId !== selectedFolderId) {
+      setAssets((prev) => prev.filter((a) => !moved.has(a.id)));
+      setTotalAssets((prev) => Math.max(0, prev - moved.size));
+    }
+    setSelectedAssetIds(new Set());
+    setShowBulkMoveDialog(false);
+    void refreshFolderCounts();
 
-    if (assetsToMove.length === 0) return;
-
-    try {
-      // Optimistically update in store
-      assetsToMove.forEach(({ id }) => {
-        updateAsset(id, { asset_folder_id: targetFolderId });
+    if (moved.size < ids.length) {
+      toast.error("Some assets could not be moved", {
+        description: `${moved.size} moved, ${ids.length - moved.size} no longer exist`,
       });
-
-      // Remove moved assets from local list if they no longer belong in current folder
-      const movedIds = new Set(idsToMove);
-      setAssets((prev) => prev.filter((a) => !movedIds.has(a.id)));
-
-      // Clear selection
-      setSelectedAssetIds(new Set());
-      setShowBulkMoveDialog(false);
-
-      // Make bulk API call
-      const response = await assetsApi.bulkMove(idsToMove, targetFolderId);
-
-      if (response.error) {
-        console.error("Failed to move assets:", response.error);
-        // Rollback: restore original folders and re-add to local list
-        assetsToMove.forEach(({ id, originalFolderId }) => {
-          updateAsset(id, { asset_folder_id: originalFolderId });
-        });
-        setAssets((prev) => [
-          ...assetsToMove.map(({ asset }) => asset),
-          ...prev,
-        ]);
-        toast.error("Failed to move assets", {
-          description: response.error,
-        });
-        return;
-      }
-
-      if (response.data) {
-        const { success, failed } = response.data;
-
-        // Rollback failed moves and re-add to local list
-        if (failed.length > 0) {
-          const failedAssets: Asset[] = [];
-          failed.forEach((id) => {
-            const item = assetsToMove.find((a) => a.id === id);
-            if (item) {
-              updateAsset(id, { asset_folder_id: item.originalFolderId });
-              failedAssets.push(item.asset);
-            }
-          });
-          if (failedAssets.length > 0) {
-            setAssets((prev) => [...failedAssets, ...prev]);
-          }
-        }
-
-        if (failed.length > 0) {
-          toast.error("Some assets could not be moved", {
-            description: `${success.length} moved, ${failed.length} failed`,
-          });
-        }
-      }
-    } catch (error) {
-      console.error("Failed to move assets:", error);
-      // Rollback: restore original folders and re-add to local list
-      assetsToMove.forEach(({ id, originalFolderId }) => {
-        updateAsset(id, { asset_folder_id: originalFolderId });
-      });
-      setAssets((prev) => [...assetsToMove.map(({ asset }) => asset), ...prev]);
-      toast.error("Failed to move assets");
     }
   };
 
@@ -1776,149 +1422,99 @@ export default function FileManagerDialog({
     }
   };
 
-  // Create SVG asset
+  // Create a custom SVG icon asset (typed/pasted markup or a library icon).
+  // The server sanitizes the markup; a rejected SVG keeps the dialog open.
   const handleCreateSvgAsset = async (
     name: string,
     folderId: string | null,
     content: string,
-  ) => {
-    if (!name.trim() || !content.trim()) return;
+  ): Promise<boolean> => {
+    if (!name.trim() || !content.trim()) return false;
 
-    try {
-      const response = await assetsApi.create({
-        filename: name,
-        content,
-        asset_folder_id: folderId,
-        source: "file-manager",
-      });
-
-      if (response.error) {
-        toast.error("Unable to create SVG icon", {
-          description: response.error,
-        });
-        return;
-      }
-
-      if (response.data) {
-        const newAsset = response.data;
-        addAsset(newAsset);
-        // Add to local assets if in the same folder (avoid duplicates)
-        if (
-          newAsset.asset_folder_id === selectedFolderId ||
-          (newAsset.asset_folder_id === null && selectedFolderId === null)
-        ) {
-          setAssets((prev) => {
-            if (prev.some((a) => a.id === newAsset.id)) return prev;
-            return [newAsset, ...prev];
-          });
-          setTotalAssets((prev) => prev + 1);
-        }
-      }
-
-      setShowEditAssetDialog(false);
-      setEditAssetName("");
-      setEditAssetFolderId(null);
-      setEditAssetContent(null);
-      setIsCreateSvgMode(false);
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Failed to create SVG asset";
-      toast.error("Unable to create SVG icon", {
-        description: errorMessage,
-      });
+    const response = await assetsApi.createSvg({ name, folderId, content });
+    if (response.error !== undefined) {
+      toast.error("Unable to create SVG icon", { description: response.error });
+      return false;
     }
+
+    const created = response.data;
+    addAsset(created);
+    // Show it right away when it belongs to the folder being viewed
+    if ((created.asset_folder_id ?? null) === selectedFolderId) {
+      setAssets((prev) =>
+        prev.some((a) => a.id === created.id) ? prev : [created, ...prev],
+      );
+      setTotalAssets((prev) => prev + 1);
+    }
+    setEditAssetName("");
+    setEditAssetFolderId(null);
+    setEditAssetContent(null);
+    toast.success("SVG icon created");
+    void refreshFolderCounts();
+    return true;
   };
 
-  // Confirm asset edit
+  // Save from the edit / new-SVG dialog. Resolves true when it succeeded.
   const handleConfirmEditAsset = async (
     newName: string,
     newFolderId: string | null,
     newContent?: string | null,
-  ) => {
+  ): Promise<boolean> => {
     if (isCreateSvgMode) {
-      await handleCreateSvgAsset(newName, newFolderId, newContent || "");
-      return;
+      return handleCreateSvgAsset(newName, newFolderId, newContent ?? "");
+    }
+    if (!editingAssetId || !newName.trim()) return false;
+
+    const original =
+      assetsById[editingAssetId] || assets.find((a) => a.id === editingAssetId);
+    if (!original) return false;
+
+    const patch: { filename?: string; folderId?: string | null; content?: string } = {};
+    if (newName !== original.filename) patch.filename = newName;
+    const folderChanged = newFolderId !== (original.asset_folder_id ?? null);
+    if (folderChanged) patch.folderId = newFolderId;
+    // Markup of an UPLOADED svg mirrors its stored file and isn't editable
+    if (newContent != null && !original.storage_path && newContent !== original.content) {
+      patch.content = newContent;
     }
 
-    if (!editingAssetId || !newName.trim()) return;
+    if (Object.keys(patch).length > 0) {
+      const response = await assetsApi.update(editingAssetId, patch);
+      if (response.error !== undefined) {
+        toast.error("Unable to update asset", { description: response.error });
+        return false;
+      }
+      updateAsset(editingAssetId, response.data);
+      if (folderChanged) void refreshFolderCounts();
+      const saved = response.data;
+      setAssets((prev) =>
+        folderChanged && newFolderId !== selectedFolderId
+          ? prev.filter((a) => a.id !== saved.id)
+          : prev.map((a) => (a.id === saved.id ? saved : a)),
+      );
+    }
 
-    // Save original asset for rollback
-    const originalAsset =
-      assetsById[editingAssetId] || assets.find((a) => a.id === editingAssetId);
-    if (!originalAsset) return;
+    setEditingAssetId(null);
+    setEditAssetName("");
+    setEditAssetFolderId(null);
+    setEditAssetContent(null);
+    return true;
+  };
 
-    // Check if folder is changing before try block (needed for rollback in catch)
-    const folderChanged = newFolderId !== originalAsset.asset_folder_id;
-
+  // Used by the Enter key and the Save/Create button: awaits the result and
+  // only closes the dialog when it worked (so errors never vanish with it).
+  const submitEditAsset = async () => {
+    if (isSavingAsset) return;
+    setIsSavingAsset(true);
     try {
-      // Build update data
-      const updateData: {
-        filename?: string;
-        asset_folder_id?: string | null;
-        content?: string | null;
-      } = {};
-      if (newName !== originalAsset.filename) {
-        updateData.filename = newName;
-      }
-      if (folderChanged) {
-        updateData.asset_folder_id = newFolderId;
-      }
-      if (newContent !== undefined && newContent !== originalAsset.content) {
-        updateData.content = newContent;
-      }
-
-      // Only update if there are changes
-      if (Object.keys(updateData).length === 0) {
-        setEditingAssetId(null);
-        setEditAssetName("");
-        setEditAssetFolderId(null);
-        setEditAssetContent(null);
-        return;
-      }
-
-      // Optimistically update in store
-      updateAsset(editingAssetId, updateData);
-
-      // Remove from local list if folder changed (asset no longer belongs here)
-      if (folderChanged) {
-        setAssets((prev) => prev.filter((a) => a.id !== editingAssetId));
-      }
-
-      setEditingAssetId(null);
-      setEditAssetName("");
-      setEditAssetFolderId(null);
-      setEditAssetContent(null);
-
-      // Make API call (server will clean SVG content and save it)
-      const response = await assetsApi.update(editingAssetId, updateData);
-
-      if (response.error) {
-        // Rollback: restore original values
-        updateAsset(editingAssetId, originalAsset);
-        if (folderChanged) {
-          setAssets((prev) => [originalAsset, ...prev]);
-        }
-        toast.error("Unable to update asset", {
-          description: response.error,
-        });
-        return;
-      }
-
-      if (response.data) {
-        // Update with server response to ensure consistency
-        updateAsset(editingAssetId, response.data);
-      }
-    } catch (error) {
-      // Rollback on error
-      updateAsset(editingAssetId, originalAsset);
-      if (folderChanged) {
-        setAssets((prev) => [originalAsset, ...prev]);
-      }
-      const errorMessage =
-        error instanceof Error ? error.message : "Failed to update asset";
-      toast.error("Unable to update asset", {
-        description: errorMessage,
-      });
+      const ok = await handleConfirmEditAsset(
+        editAssetName,
+        editAssetFolderId,
+        editAssetContent,
+      );
+      if (ok) setShowEditAssetDialog(false);
+    } finally {
+      setIsSavingAsset(false);
     }
   };
 
@@ -1952,84 +1548,84 @@ export default function FileManagerDialog({
     setSelectedAssetIds(new Set());
   };
 
-  // Handle file selection
+  // Handle file selection → UploadThing. The server re-verifies the real bytes
+  // and persists the row; an asset is shown only from that confirmed response.
   const handleFileChange = async (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
+    const picked = Array.from(event.target.files ?? []);
+    const resetInput = () => {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    };
+    if (picked.length === 0) return;
+    if (!campaignId) {
+      toast.error("The editor is still loading.");
+      resetInput();
+      return;
+    }
+
+    // Fast pre-checks for friendly messages (not the security boundary)
+    const accepted: File[] = [];
+    for (const file of picked) {
+      const problem = validateUploadCandidate(file);
+      if (problem) toast.error("Can't upload this file", { description: problem });
+      else accepted.push(file);
+    }
+    if (accepted.length === 0) {
+      resetInput();
+      return;
+    }
 
     setIsUploading(true);
-    setUploadProgress({ current: 0, total: files.length });
-
-    // Create temporary uploading assets
-    const tempAssets = Array.from(files).map((file) => ({
-      id: `temp-${Math.random().toString(36).substr(2, 9)}`,
-      filename: file.name,
-      file,
-    }));
-    setUploadingAssets(tempAssets);
+    setUploadProgress({ current: 0, total: accepted.length });
+    setUploadingAssets(
+      accepted.map((file) => ({
+        id: `temp-${Math.random().toString(36).slice(2, 11)}`,
+        filename: file.name,
+        file,
+      })),
+    );
 
     try {
-      const uploadPromises = tempAssets.map(async (tempAsset) => {
-        try {
-          const asset = await uploadFileApi(
-            tempAsset.file,
-            "file-manager",
-            null,
-            undefined,
-            selectedFolderId,
-          );
+      const targetFolderId = isVirtualFolder(selectedFolderId) ? null : selectedFolderId;
+      const results = await startUpload(accepted, { campaignId, folderId: targetFolderId });
+      // `undefined` = the upload failed and onUploadError already told the user
 
-          if (asset) {
-            addAsset(asset);
-            // Add to local assets list (avoid duplicates)
-            setAssets((prev) => {
-              if (prev.some((a) => a.id === asset.id)) return prev;
-              return [asset, ...prev];
-            });
-            setTotalAssets((prev) => prev + 1);
-            setUploadProgress((prev) =>
-              prev ? { ...prev, current: prev.current + 1 } : null,
-            );
+      const uploaded = (results ?? [])
+        .map((r) => (r.serverData as { asset?: Asset } | null)?.asset)
+        .filter((a): a is Asset => !!a);
 
-            // Remove the temp asset once real asset is added
-            setUploadingAssets((prev) =>
-              prev.filter((temp) => temp.id !== tempAsset.id),
-            );
-          }
-        } catch (error) {
-          console.error(`Failed to upload ${tempAsset.filename}:`, error);
-          // Remove the temp asset on error too
-          setUploadingAssets((prev) =>
-            prev.filter((temp) => temp.id !== tempAsset.id),
-          );
-        }
-      });
-
-      await Promise.all(uploadPromises);
+      uploaded.forEach((asset) => addAsset(asset));
+      const visible = uploaded.filter(
+        (a) => (a.asset_folder_id ?? null) === targetFolderId,
+      );
+      if (visible.length > 0) {
+        setAssets((prev) => [
+          ...visible.filter((v) => !prev.some((p) => p.id === v.id)),
+          ...prev,
+        ]);
+        setTotalAssets((prev) => prev + visible.length);
+      }
+      if (uploaded.length > 0) {
+        void refreshFolderCounts();
+        toast.success(
+          uploaded.length === 1 ? `Uploaded ${uploaded[0].filename}` : `Uploaded ${uploaded.length} files`,
+        );
+      }
     } catch (error) {
-      console.error("Failed to upload files:", error);
+      toast.error("Upload failed", {
+        description: error instanceof Error ? error.message : undefined,
+      });
     } finally {
       setIsUploading(false);
       setUploadProgress(null);
       setUploadingAssets([]);
-      // Reset file input
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+      resetInput();
     }
   };
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
-      onDragEnd={handleDragEnd}
-      onDragCancel={handleDragCancel}
-    >
+    <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
           width="1200px"
@@ -2209,7 +1805,7 @@ export default function FileManagerDialog({
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept={getAcceptString()}
+                accept={UPLOAD_ACCEPT}
                 onChange={handleFileChange}
                 className="hidden"
               />
@@ -2225,6 +1821,8 @@ export default function FileManagerDialog({
                   <Button
                     size="xs"
                     variant="secondary"
+                    aria-label="New folder"
+                    title="New folder"
                     onClick={() => {
                       // Expand selected folder when creating a child
                       if (selectedFolderId) {
@@ -2337,10 +1935,6 @@ export default function FileManagerDialog({
                       isSelected={folder.id === selectedFolderId}
                       hasChildren={hasChildFolders(folder.id, folders)}
                       isCollapsed={collapsedIds.has(folder.id)}
-                      isOver={folder.id === overId}
-                      isDragging={folder.id === activeId}
-                      isDragActive={activeId !== null}
-                      dropPosition={folder.id === overId ? dropPosition : null}
                       assetCount={folderAssetCounts[folder.id] || 0}
                       onSelect={setSelectedFolderId}
                       onToggle={handleToggle}
@@ -2733,7 +2327,7 @@ export default function FileManagerDialog({
                             <div
                               data-icon
                               className="relative w-full h-full flex items-center justify-center p-5 pointer-events-none text-foreground z-10"
-                              dangerouslySetInnerHTML={{ __html: icon.svg }}
+                              dangerouslySetInnerHTML={{ __html: sanitizeSvgForInline(icon.svg) }}
                             />
                           </div>
                           <span
@@ -3025,7 +2619,9 @@ export default function FileManagerDialog({
         onConfirm={handleConfirmDeleteFolder}
       />
 
-      {/* Delete Asset Confirmation Dialog */}
+      {/* Delete Asset Confirmation Dialog.
+          A file that is still used can't be deleted: the confirm button is
+          disabled and the places that use it are listed. */}
       <ConfirmDialog
         open={showDeleteAssetConfirmDialog}
         onOpenChange={(open) => {
@@ -3035,10 +2631,11 @@ export default function FileManagerDialog({
             setLoadingUsage(false);
           }
         }}
-        title="Delete asset"
+        title={assetUsage && assetUsage.total > 0 ? "Asset is in use" : "Delete asset"}
         confirmLabel="Delete"
         cancelLabel="Cancel"
         confirmVariant="destructive"
+        disableConfirm={loadingUsage || (assetUsage?.total ?? 0) > 0}
         onConfirm={handleConfirmDeleteAsset}
       >
         {loadingUsage ? (
@@ -3049,98 +2646,42 @@ export default function FileManagerDialog({
         ) : assetUsage && assetUsage.total > 0 ? (
           <div className="space-y-3">
             <p>
-              Deleting{" "}
               <span className="text-foreground">
                 {(
                   assetsById[deletingAssetId ?? ""] ||
                   assets.find((a) => a.id === deletingAssetId)
-                )?.filename ?? "this asset"}
+                )?.filename ?? "This asset"}
               </span>{" "}
-              will break the asset where it is being used. Are you sure you want
-              to delete it? This action cannot be undone. This asset is used in:
+              is still in use, so it can&apos;t be deleted yet. Remove it from
+              the places below first, then delete it. It is used in:
             </p>
             <div className="space-y-2 text-muted-foreground">
-              {assetUsage.pages.length > 0 && (
-                <div>
-                  <div className="flex gap-1.5 font-medium text-muted-foreground mb-1">
-                    <span className="text-foreground">Pages</span>
-                    <span>&mdash;</span>
-                    <span>
-                      {assetUsage.pages.length} item
-                      {assetUsage.pages.length > 1 ? "s" : ""}
-                    </span>
+              {(
+                [
+                  ["Pages", assetUsage.pages],
+                  ["Components", assetUsage.components],
+                  ["Layer styles", assetUsage.layerStyles],
+                  ["CMS collections", assetUsage.cmsItems],
+                  ["Published funnels", assetUsage.publishedFunnels],
+                ] as const
+              )
+                .filter(([, items]) => items.length > 0)
+                .map(([label, items]) => (
+                  <div key={label}>
+                    <div className="flex gap-1.5 font-medium text-muted-foreground mb-1">
+                      <span className="text-foreground">{label}</span>
+                      <span>&mdash;</span>
+                      <span>
+                        {items.length} item{items.length > 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    <ul className="list-disc list-inside space-y-0.5 ml-1">
+                      {items.map((item) => (
+                        <li key={item.id}>{item.name}</li>
+                      ))}
+                    </ul>
                   </div>
-                  <ul className="list-disc list-inside space-y-0.5 ml-1">
-                    {assetUsage.pages.map((p) => (
-                      <li key={p.id}>{p.name}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {assetUsage.components.length > 0 && (
-                <div>
-                  <div className="flex gap-1.5 font-medium text-muted-foreground mb-1">
-                    <span className="text-foreground">Components</span>
-                    <span>&mdash;</span>
-                    <span>
-                      {assetUsage.components.length} item
-                      {assetUsage.components.length > 1 ? "s" : ""}
-                    </span>
-                  </div>
-                  <ul className="list-disc list-inside space-y-0.5 ml-1">
-                    {assetUsage.components.map((c) => (
-                      <li key={c.id}>{c.name}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {assetUsage.cmsItems.length > 0 && (
-                <div>
-                  <div className="flex gap-1.5 font-medium text-muted-foreground mb-1">
-                    <span className="text-foreground">CMS items</span>
-                    <span>&mdash;</span>
-                    <span>
-                      {assetUsage.cmsItems.length} item
-                      {assetUsage.cmsItems.length > 1 ? "s" : ""}
-                    </span>
-                  </div>
-                  <ul className="list-disc list-inside space-y-0.5 ml-1">
-                    {assetUsage.cmsItems.map((i) => {
-                      const item = i as CmsItemUsageEntry;
-                      return (
-                        <li key={item.id}>
-                          {item.collectionName}: {item.name}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              )}
-              {assetUsage.fieldDefaults.length > 0 && (
-                <div>
-                  <div className="flex gap-1.5 font-medium text-muted-foreground mb-1">
-                    <span className="text-foreground">
-                      Field default values
-                    </span>
-                    <span>&mdash;</span>
-                    <span>
-                      {assetUsage.fieldDefaults.length} field
-                      {assetUsage.fieldDefaults.length > 1 ? "s" : ""}
-                    </span>
-                  </div>
-                  <ul className="list-disc list-inside space-y-0.5 ml-1">
-                    {assetUsage.fieldDefaults.map((f) => {
-                      const field = f as FieldDefaultUsageEntry;
-                      return (
-                        <li key={field.id}>
-                          Field &quot;{field.name}&quot; in the &quot;
-                          {field.collectionName}&quot; collection
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              )}
+                ))}
             </div>
           </div>
         ) : (
@@ -3262,12 +2803,7 @@ export default function FileManagerDialog({
                     !editAssetContent
                   ) {
                     e.preventDefault();
-                    handleConfirmEditAsset(
-                      editAssetName,
-                      editAssetFolderId,
-                      editAssetContent,
-                    );
-                    setShowEditAssetDialog(false);
+                    void submitEditAsset();
                   }
                 }}
                 autoFocus
@@ -3304,6 +2840,10 @@ export default function FileManagerDialog({
                   id="svg-code"
                   value={editAssetContent || ""}
                   onChange={(e) => setEditAssetContent(e.target.value)}
+                  readOnly={
+                    !isCreateSvgMode &&
+                    !!(editingAssetId && assetsById[editingAssetId]?.storage_path)
+                  }
                   className="font-mono text-xs min-h-50 max-h-100"
                   placeholder="<svg>...</svg>"
                   autoComplete="off"
@@ -3319,15 +2859,9 @@ export default function FileManagerDialog({
                 Cancel
               </Button>
               <Button
-                onClick={() => {
-                  handleConfirmEditAsset(
-                    editAssetName,
-                    editAssetFolderId,
-                    editAssetContent,
-                  );
-                  setShowEditAssetDialog(false);
-                }}
+                onClick={() => void submitEditAsset()}
                 disabled={
+                  isSavingAsset ||
                   !editAssetName.trim() ||
                   (isCreateSvgMode && !editAssetContent?.trim())
                 }
@@ -3339,24 +2873,6 @@ export default function FileManagerDialog({
         </DialogContent>
       </Dialog>
 
-      {/* Drag Overlay - rendered outside Dialog for correct positioning */}
-      <DragOverlay dropAnimation={null}>
-        {activeId ? (
-          <div
-            className={cn(
-              "flex items-center h-8 rounded-lg px-2 select-none pointer-events-none",
-              "bg-primary text-primary-foreground",
-              isDropNotAllowed && "opacity-50",
-            )}
-          >
-            <Icon name="folder" className="size-3 mr-2 opacity-90" />
-            <span className="text-xs font-medium">
-              {flattenedFolders.find((n) => n.id === activeId)?.data.name ||
-                "Folder"}
-            </span>
-          </div>
-        ) : null}
-      </DragOverlay>
-    </DndContext>
+    </>
   );
 }
