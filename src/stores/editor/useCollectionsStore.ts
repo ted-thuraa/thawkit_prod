@@ -44,6 +44,7 @@ interface CollectionsState {
   itemsTotalCount: Record<string, number>; // keyed by collection_id (UUID) - total count for pagination
   lastItemsQuery: Record<string, ItemsQueryParams>; // keyed by collection_id — last loadItems params
   selectedCollectionId: string | null; // UUID
+  cmsSection: "collections" | "globals";
   /**
    * Slugs of items referenced by link fields but not present in the currently
    * loaded `items` (e.g. cross-collection refs or items on a different page).
@@ -68,6 +69,7 @@ interface CollectionsActions {
   hydrateFromBootstrap: (data: CollectionsBootstrapData) => void;
   /** The bootstrap's collections section failed — surface it, show nothing stale. */
   setLoadError: (message: string) => void;
+  setCmsSection: (val: "collections" | "globals") => void;
   /** Back to the empty state (campaign switch). */
   reset: () => void;
   createCollection: (data: CreateCollectionData) => Promise<Collection>;
@@ -170,6 +172,7 @@ const emptyState: CollectionsState = {
   lastItemsQuery: {},
   selectedCollectionId: null,
   crossCollectionSlugs: {},
+  cmsSection: "collections",
   isLoading: false,
   error: null,
 };
@@ -192,6 +195,9 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
 
   setLoadError: (message) => {
     set({ ...emptyState, error: message });
+  },
+  setCmsSection: (val) => {
+    set({ ...emptyState, cmsSection: val });
   },
 
   reset: () => {
@@ -529,7 +535,10 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
         }));
       } else {
         // Load fields for a specific collection
-        const response = await collectionsReadApi.getFields(collectionId, search);
+        const response = await collectionsReadApi.getFields(
+          collectionId,
+          search,
+        );
 
         if (response.error) {
           throw new Error(response.error);
@@ -1117,13 +1126,17 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     set({ isLoading: true, error: null });
 
     try {
-      const response = await collectionsReadApi.searchItems(collectionId, query, {
-        page,
-        limit,
-        sortBy,
-        sortOrder,
-        includeAssets: true,
-      });
+      const response = await collectionsReadApi.searchItems(
+        collectionId,
+        query,
+        {
+          page,
+          limit,
+          sortBy,
+          sortOrder,
+          includeAssets: true,
+        },
+      );
 
       if (response.error) {
         throw new Error(response.error);
@@ -1472,7 +1485,10 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     if (existing.some((item) => item.id === itemId)) return;
 
     try {
-      const response = await collectionsReadApi.getItemById(collectionId, itemId);
+      const response = await collectionsReadApi.getItemById(
+        collectionId,
+        itemId,
+      );
       if (response.error || !response.data) return;
       const item = response.data;
 

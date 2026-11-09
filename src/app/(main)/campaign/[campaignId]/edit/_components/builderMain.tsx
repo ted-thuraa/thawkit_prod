@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  lazy,
   ReactNode,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -31,6 +33,12 @@ import LeftPanel from "./LeftPanel";
 import RightPanelDrawer from "./RightPanelDrawer";
 import EditorToolbar from "./EditorToolbar";
 import EditorCenterCanvas from "./EditorCanvas";
+import CollectionsSidebar from "./CMS/collectionsSidebar";
+import CollectionsContent from "./CMS/cmsContentEditor";
+import CmsContentEditor from "./CMS/cmsContentEditor";
+
+// Lazy-loaded components (heavy, not needed on initial render)
+const CMS = lazy(() => import("./CMS"));
 
 interface EditorShellProps {
   /** Floating panel pinned to the left edge. */
@@ -47,7 +55,7 @@ interface EditorShellProps {
   children?: ReactNode;
 }
 
-export default function EditorShell({
+export function EditorShell({
   leftPanel,
   overlay,
   toolbar,
@@ -78,6 +86,32 @@ export default function EditorShell({
 
       {/* Overlays (RightPanel drawer) — portal target is this root */}
       {overlay}
+    </div>
+  );
+}
+
+interface CMSEditorShellProps {
+  /** left panel  */
+  collectionsSidebar?: ReactNode;
+
+  overlay?: ReactNode;
+  /** Floating button group, pinned bottom-centre. */
+  toolbar?: ReactNode;
+  /** The canvas — rendered full-bleed behind every floating element. */
+  children?: ReactNode;
+}
+
+export function CMSEditorShell({
+  collectionsSidebar,
+  overlay,
+  toolbar,
+  children,
+}: CMSEditorShellProps) {
+  return (
+    <div className="flex-1 bg-background flex min-w-0">
+      {/* collectionsSidebar */}
+      {collectionsSidebar && <>{collectionsSidebar}</>}
+      <>{children}</>
     </div>
   );
 }
@@ -372,13 +406,17 @@ export function CampaignEditorMain({
     );
   }
 
+  if (urlState.type === "cms") {
+    return (
+      <CMSEditorShell collectionsSidebar={<CollectionsSidebar />}>
+        <CmsContentEditor />
+      </CMSEditorShell>
+    );
+  }
+
   // CMS / Forms / Settings are reachable from the header's area switcher, but
   // their editor UIs are not built yet — say so instead of a blank canvas.
-  if (
-    urlState.type === "cms" ||
-    urlState.type === "forms" ||
-    urlState.type === "settings"
-  ) {
+  if (urlState.type === "forms" || urlState.type === "settings") {
     return (
       <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
         {EDITOR_AREA_LABELS[areaForRouteType(urlState.type)]} isn&apos;t
