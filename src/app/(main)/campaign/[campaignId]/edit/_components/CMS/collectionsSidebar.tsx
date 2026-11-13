@@ -20,15 +20,10 @@ import Icon from "@/components/ui/icon";
 import { InlineRenameInput } from "@/components/ui/inline-rename-input";
 import { Spinner } from "@/components/ui/spinner";
 import { useInlineRename } from "@/hooks/use-inline-rename";
-import { collectionsApi } from "@/lib/api";
-import {
-  CollectionFieldUsageResult,
-  CollectionUsageResult,
-} from "@/lib/collection-usage-utils";
+import { useCampaignEditorUrl } from "@/hooks/use-editor-url";
 import { getSampleCollectionOptions } from "@/lib/sample-collections";
 import { cn } from "@/lib/utils";
 import { useCollectionsStore } from "@/stores/editor/useCollectionsStore";
-import { useEditorStore } from "@/stores/editor/useEditorStore";
 import { Collection } from "@/types/funnel";
 import {
   closestCenter,
@@ -43,22 +38,24 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import React, { useState } from "react";
+import { toast } from "sonner";
+import DeleteCollectionDialog from "./DeleteCollectionDialog";
 
-interface CollectionsSidebarProps {}
+interface CollectionsSidebarProps {
+  campaignId: string;
+}
 
 // Sortable collection item component for sidebar drag-and-drop reordering
 interface SortableCollectionItemProps {
   collection: Collection;
   isSelected: boolean;
-  isAiActive?: boolean;
   isHovered: boolean;
   openDropdownId: string | null;
   isRenaming: boolean;
   renameValue: string;
   itemCount?: number;
-  isItemCountLoading?: boolean;
-  canManageSchema?: boolean;
   onRenameValueChange: (value: string) => void;
   onSelect: () => void;
   onDoubleClick: () => void;
@@ -74,14 +71,11 @@ interface SortableCollectionItemProps {
 function SortableCollectionItem({
   collection,
   isSelected,
-  isAiActive,
   isHovered,
   openDropdownId,
   isRenaming,
   renameValue,
   itemCount,
-  isItemCountLoading,
-  canManageSchema = true,
   onRenameValueChange,
   onSelect,
   onDoubleClick,
@@ -141,7 +135,6 @@ function SortableCollectionItem({
             isSelected
               ? "bg-primary text-primary-foreground"
               : "hover:bg-secondary/50 text-secondary-foreground/80 dark:text-muted-foreground",
-            isAiActive && "ai-activity-shimmer",
           )}
           onClick={onSelect}
           onDoubleClick={onDoubleClick}
@@ -153,8 +146,7 @@ function SortableCollectionItem({
             <span className="truncate">{collection.name}</span>
           </div>
 
-          {canManageSchema && (
-            <div className="group-hover:opacity-100 opacity-0">
+          <div className="group-hover:opacity-100 opacity-0">
               <DropdownMenu
                 open={openDropdownId === collection.id}
                 onOpenChange={onDropdownOpenChange}
@@ -177,45 +169,38 @@ function SortableCollectionItem({
                   <DropdownMenuItem onClick={onDelete}>Delete</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-            </div>
-          )}
+          </div>
 
-          <span
-            className={cn(
-              "block text-xs opacity-50",
-              canManageSchema && "group-hover:hidden",
-            )}
-          >
-            {isItemCountLoading ? (
-              <Spinner className="size-3" />
-            ) : (
-              (itemCount ?? collection.draft_items_count)
-            )}
+          <span className="block text-xs opacity-50 group-hover:hidden">
+            {itemCount ?? collection.draft_items_count}
           </span>
         </div>
       </ContextMenuTrigger>
-      {canManageSchema && (
-        <ContextMenuContent>
-          <ContextMenuItem onClick={onRename}>Rename</ContextMenuItem>
-          <ContextMenuItem onClick={onDelete}>Delete</ContextMenuItem>
-        </ContextMenuContent>
-      )}
+      <ContextMenuContent>
+        <ContextMenuItem onClick={onRename}>Rename</ContextMenuItem>
+        <ContextMenuItem onClick={onDelete}>Delete</ContextMenuItem>
+      </ContextMenuContent>
     </ContextMenu>
   );
 }
 
 const CollectionsSidebar = React.memo(
-  function CollectionsSidebar({}: CollectionsSidebarProps) {
+  function CollectionsSidebar({ campaignId }: CollectionsSidebarProps) {
     const {
       cmsSection,
       collections,
-      selectedCollectionId,
       itemsTotalCount,
       setCmsSection,
-      setSelectedCollectionId,
       updateCollection,
       reorderCollections,
+      createCollection,
+      createSampleCollection,
     } = useCollectionsStore();
+    const { urlState, navigateToCollection, navigateToCollections } =
+      useCampaignEditorUrl(campaignId);
+
+    // The URL is the single source of truth for the open collection.
+    const activeCollectionId = urlState.cms.collectionId;
 
     const [hoveredCollectionId, setHoveredCollectionId] = useState<
       string | null
@@ -226,32 +211,26 @@ const CollectionsSidebar = React.memo(
     const [loadingSampleCollectionId, setLoadingSampleCollectionId] = useState<
       string | null
     >(null);
+    const [isCreating, setIsCreating] = useState(false);
 
-    // Confirm dialog state
-    const [deleteItemDialogOpen, setDeleteItemDialogOpen] = useState(false);
-    const [deleteItemId, setDeleteItemId] = useState<string | null>(null);
-    const [deleteSelectedDialogOpen, setDeleteSelectedDialogOpen] =
-      useState(false);
-    const [deleteFieldDialogOpen, setDeleteFieldDialogOpen] = useState(false);
-    const [deleteFieldId, setDeleteFieldId] = useState<string | null>(null);
+    // Delete-collection dialog (single owner: DeleteCollectionDialog)
     const [deleteCollectionDialogOpen, setDeleteCollectionDialogOpen] =
       useState(false);
     const [deleteCollectionId, setDeleteCollectionId] = useState<string | null>(
       null,
     );
 
-    // Usage check state for deletion protection
-    const [collectionUsage, setCollectionUsage] =
-      useState<CollectionUsageResult | null>(null);
-    const [loadingCollectionUsage, setLoadingCollectionUsage] = useState(false);
-    const [fieldUsage, setFieldUsage] =
-      useState<CollectionFieldUsageResult | null>(null);
-    const [loadingFieldUsage, setLoadingFieldUsage] = useState(false);
-
     // Collection sidebar rename state
     const collectionRename = useInlineRename({
       onSubmit: async (id, name) => {
-        await updateCollection(id, { name });
+        try {
+          await updateCollection(id, { name });
+        } catch (error) {
+          toast.error("Failed to rename collection", {
+            description:
+              error instanceof Error ? error.message : "Please try again.",
+          });
+        }
       },
     });
     // Collection drag and drop sensors
@@ -281,13 +260,19 @@ const CollectionsSidebar = React.memo(
       const [movedItem] = newOrder.splice(oldIndex, 1);
       newOrder.splice(newIndex, 0, movedItem);
 
-      reorderCollections(newOrder.map((c) => c.id));
+      reorderCollections(newOrder.map((c) => c.id)).catch((error) => {
+        toast.error("Failed to reorder collections", {
+          description:
+            error instanceof Error ? error.message : "Please try again.",
+        });
+      });
     };
 
     const handleCollectionSelect = (collectionId: string) => {
       setCmsSection("collections");
-      setSelectedCollectionId(collectionId);
-      //navigateToCollection(collectionId);
+      // Navigation only: the content editor derives the selected collection
+      // from the URL and loads its data.
+      navigateToCollection(collectionId);
     };
 
     const handleCollectionDoubleClick = (collection: {
@@ -296,21 +281,51 @@ const CollectionsSidebar = React.memo(
     }) => {
       collectionRename.startRename(collection.id, collection.name);
     };
-    const handleCollectionDelete = async (collectionId: string) => {
-      setDeleteCollectionId(collectionId);
-      setCollectionUsage(null);
-      setLoadingCollectionUsage(true);
-      setDeleteCollectionDialogOpen(true);
 
+    const handleCollectionDelete = (collectionId: string) => {
+      setDeleteCollectionId(collectionId);
+      setDeleteCollectionDialogOpen(true);
+    };
+
+    const handleCreateCollection = async () => {
+      if (isCreating) return;
+      setIsCreating(true);
       try {
-        const response = await collectionsApi.getUsage(collectionId);
-        if (response.data && !response.error) {
-          setCollectionUsage(response.data as CollectionUsageResult);
+        const baseName = "Collection";
+        let name = baseName;
+        let counter = 1;
+        while (collections.some((c) => c.name === name)) {
+          name = `${baseName} ${counter}`;
+          counter++;
         }
+        const created = await createCollection({ name });
+        setCmsSection("collections");
+        navigateToCollection(created.id);
+        collectionRename.startRename(created.id, created.name);
       } catch (error) {
-        console.error("Failed to fetch collection usage:", error);
+        toast.error("Failed to create collection", {
+          description:
+            error instanceof Error ? error.message : "Please try again.",
+        });
       } finally {
-        setLoadingCollectionUsage(false);
+        setIsCreating(false);
+      }
+    };
+
+    const handleCreateSampleCollection = async (sampleId: string) => {
+      if (loadingSampleCollectionId) return;
+      setLoadingSampleCollectionId(sampleId);
+      try {
+        const created = await createSampleCollection(sampleId);
+        setCmsSection("collections");
+        navigateToCollection(created.id);
+      } catch (error) {
+        toast.error("Failed to create sample collection", {
+          description:
+            error instanceof Error ? error.message : "Please try again.",
+        });
+      } finally {
+        setLoadingSampleCollectionId(null);
       }
     };
 
@@ -338,12 +353,22 @@ const CollectionsSidebar = React.memo(
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="xs" variant="secondary">
-                <Icon name="plus" />
+              <Button
+                size="xs"
+                variant="secondary"
+                disabled={isCreating || loadingSampleCollectionId !== null}
+              >
+                {isCreating || loadingSampleCollectionId !== null ? (
+                  <Spinner className="size-3" />
+                ) : (
+                  <Icon name="plus" />
+                )}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem>New collection</DropdownMenuItem>
+              <DropdownMenuItem onClick={handleCreateCollection}>
+                New collection
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>Samples</DropdownMenuSubTrigger>
@@ -351,7 +376,7 @@ const CollectionsSidebar = React.memo(
                   {getSampleCollectionOptions().map((option) => (
                     <DropdownMenuItem
                       key={option.id}
-                      //onClick={() => handleCreateSampleCollection(option.id)}
+                      onClick={() => handleCreateSampleCollection(option.id)}
                     >
                       <Icon name="database" className="size-3 shrink-0" />
                       {option.name}
@@ -379,18 +404,13 @@ const CollectionsSidebar = React.memo(
                     collection={collection}
                     isSelected={
                       cmsSection === "collections" &&
-                      selectedCollectionId === collection.id
+                      activeCollectionId === collection.id
                     }
-                    //isAiActive={aiActiveCollectionIds.includes(collection.id)}
                     isHovered={hoveredCollectionId === collection.id}
                     openDropdownId={collectionDropdownId}
                     isRenaming={collectionRename.renamingId === collection.id}
                     renameValue={collectionRename.renameValue}
                     itemCount={itemsTotalCount[collection.id]}
-                    isItemCountLoading={
-                      loadingSampleCollectionId === collection.id
-                    }
-                    canManageSchema={true}
                     onRenameValueChange={collectionRename.setRenameValue}
                     onSelect={() => handleCollectionSelect(collection.id)}
                     onDoubleClick={() =>
@@ -420,6 +440,22 @@ const CollectionsSidebar = React.memo(
             </SortableContext>
           </DndContext>
         </div>
+
+        <DeleteCollectionDialog
+          collectionId={deleteCollectionId}
+          open={deleteCollectionDialogOpen}
+          onOpenChange={(open) => {
+            setDeleteCollectionDialogOpen(open);
+            if (!open) setTimeout(() => setDeleteCollectionId(null), 200);
+          }}
+          onDeleted={(id) => {
+            if (activeCollectionId === id) {
+              // Fall back to the bare CMS route; the content editor then
+              // selects the first remaining collection.
+              navigateToCollections({ replace: true });
+            }
+          }}
+        />
       </div>
     );
   },

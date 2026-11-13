@@ -18,7 +18,7 @@ import { getFieldIcon } from '@/lib/collection-field-utils';
 import { ASSET_CATEGORIES, getOptimizedImageUrl, isAssetOfType, formatFileSize, getFileExtension } from '@/lib/asset-utils';
 import { cn } from '@/lib/utils';
 
-import type { Asset, CollectionFieldType } from '@/types';
+import type { Asset, CollectionFieldType } from '@/types/funnel';
 
 export interface AssetFieldCardProps {
   asset: Asset | null;

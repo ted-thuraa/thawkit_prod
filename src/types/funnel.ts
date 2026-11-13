@@ -93,8 +93,7 @@ export type CollectionFieldType =
   | "email"
   | "phone"
   | "option"
-  | "count"
-  | "status";
+  | "count";
 
 export type CollectionSortDirection = "asc" | "desc" | "manual";
 
@@ -542,7 +541,13 @@ export interface FormSettings {
 // 'asset' variant (no asset system yet) and the 'field' variant (CMS-bound
 // href from a collection field).
 
+/** Page publish-status action (draft / stage / publish). Pages only — CMS items have no status. */
+export type StatusAction = "draft" | "stage" | "publish";
+
 export type LinkType = "url" | "email" | "phone" | "page";
+
+/** Link-type choices offered by the rich-text link popover (a superset of `LinkType`). */
+export type RichTextLinkOptionType = LinkType | "asset" | "field";
 
 export interface LinkSettings {
   type: LinkType;

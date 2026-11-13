@@ -1,470 +1,169 @@
+// path: src/lib/collection-usage-utils.ts
+
 /**
- * Collection & Field Usage Utilities
+ * Collection & field usage detection (server-only, Drizzle).
  *
- * Functions to detect where collections and collection fields are used
- * across pages, components, and other collections (reference fields).
+ * Answers "what breaks if I delete this collection / field?" across:
+ *   - pages            (layer trees + page settings, scoped to the funnel),
+ *   - components       (layers, variants, variables — scoped to the organization),
+ *   - collection fields that depend on the target (reference, multi-reference
+ *     and count fields).
+ *
+ * Replaces the Supabase-based Ycode implementation. The reference discovery
+ * itself is pure and lives in `collection-usage-scan.ts` (unit-tested); this
+ * file only loads the rows, tenant-scoped by `CampaignScope` — the scope is
+ * always derived from the authorized campaign, never from client input.
+ *
+ * Only DRAFT rows are inspected (`is_published = false`, not deleted): that is
+ * what the editor edits and what the usage list can tell the user to fix.
  */
 
-import { getConnections as getAirtableConnections } from "@/lib/apps/airtable/sync-service";
-import { GRID_SPAN_BINDING_KEYS } from "@/lib/grid-span-binding-utils";
-import type {
-  Layer,
-  CollectionVariable,
-  FieldVariable,
-  DesignColorVariable,
-} from "@/types/funnel";
+import "server-only";
+import { and, eq, isNull } from "drizzle-orm";
+import { db } from "@/drizzle/db";
+import { page } from "@/drizzle/schemas/funnel-content-schema";
+import { component } from "@/drizzle/schemas/design-system-schema";
+import {
+  collection,
+  collectionField,
+} from "@/drizzle/schemas/collections-schema";
+import type { CampaignScope } from "@/lib/editor/read/guards";
+import {
+  countFieldsDependingOnField,
+  fieldsDependingOnCollection,
+  scanRows,
+  type CollectionFieldUsageResult,
+  type CollectionUsageResult,
+  type FieldDependencyRow,
+  type ScannableRow,
+} from "./collection-usage-scan";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+export type {
+  CollectionFieldUsageResult,
+  CollectionUsageResult,
+  DependentFieldUsageEntry,
+  ReferenceFieldUsageEntry,
+  UsageEntry,
+} from "./collection-usage-scan";
 
-export interface UsageEntry {
-  id: string;
-  name: string;
+async function loadPageRows(funnelId: string): Promise<ScannableRow[]> {
+  const rows = await db
+    .select({
+      id: page.id,
+      name: page.name,
+      layers: page.layers,
+      settings: page.settings,
+    })
+    .from(page)
+    .where(eq(page.funnelId, funnelId));
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    data: [r.layers, r.settings],
+  }));
 }
 
-export interface ReferenceFieldUsageEntry extends UsageEntry {
-  collectionId: string;
-  collectionName: string;
+async function loadComponentRows(
+  organizationId: string,
+): Promise<ScannableRow[]> {
+  const rows = await db
+    .select({
+      id: component.id,
+      name: component.name,
+      layers: component.layers,
+      variants: component.variants,
+      variables: component.variables,
+    })
+    .from(component)
+    .where(eq(component.organizationId, organizationId));
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    data: [r.layers, r.variants, r.variables],
+  }));
 }
 
-export interface AirtableConnectionUsageEntry extends UsageEntry {
-  baseName: string;
-  tableName: string;
-}
-
-export interface CollectionUsageResult {
-  pages: UsageEntry[];
-  components: UsageEntry[];
-  referenceFields: ReferenceFieldUsageEntry[];
-  airtableConnections: AirtableConnectionUsageEntry[];
-  total: number;
-}
-
-export interface CollectionFieldUsageResult {
-  pages: UsageEntry[];
-  components: UsageEntry[];
-  total: number;
-}
-
-// ---------------------------------------------------------------------------
-// Layer scanning helpers
-// ---------------------------------------------------------------------------
-
-/** Extract collection variable from a layer */
-function getCollectionVar(layer: Layer): CollectionVariable | null {
-  return layer.variables?.collection ?? null;
-}
-
-/** Check if a layer's collection binding references the given collection ID */
-function layerReferencesCollection(
-  layer: Layer,
-  collectionId: string,
-): boolean {
-  const cv = getCollectionVar(layer);
-  if (cv?.id === collectionId) return true;
-
-  // Page-level CMS binding is checked separately via page settings
-  return false;
-}
-
-/** Recursively check if any layer references a collection */
-function layersReferenceCollection(
-  layers: Layer[],
-  collectionId: string,
-): boolean {
-  for (const layer of layers) {
-    if (layerReferencesCollection(layer, collectionId)) return true;
-    if (
-      layer.children &&
-      layersReferenceCollection(layer.children, collectionId)
+/** Every live draft field of the funnel, with its collection's name. */
+async function loadFieldRows(funnelId: string): Promise<FieldDependencyRow[]> {
+  const rows = await db
+    .select({
+      id: collectionField.id,
+      name: collectionField.name,
+      type: collectionField.type,
+      collectionId: collectionField.collectionId,
+      collectionName: collection.name,
+      referenceCollectionId: collectionField.referenceCollectionId,
+      data: collectionField.data,
+    })
+    .from(collectionField)
+    .innerJoin(
+      collection,
+      and(
+        eq(collection.id, collectionField.collectionId),
+        eq(collection.isPublished, collectionField.isPublished),
+      ),
     )
-      return true;
-  }
-  return false;
+    .where(
+      and(
+        eq(collection.funnelId, funnelId),
+        eq(collectionField.isPublished, false),
+        isNull(collectionField.deletedAt),
+        isNull(collection.deletedAt),
+      ),
+    );
+  return rows;
 }
-
-/** Check if a variable is a FieldVariable referencing the given field ID */
-function isFieldVarWithId(v: unknown, fieldId: string): boolean {
-  if (!v || typeof v !== "object") return false;
-  const fv = v as FieldVariable;
-  return fv.type === "field" && fv.data?.field_id === fieldId;
-}
-
-/** Check if a layer's collection sort_by references the given field ID */
-function collectionVarUsesField(layer: Layer, fieldId: string): boolean {
-  const cv = getCollectionVar(layer);
-  if (!cv) return false;
-
-  if (cv.sort_by === fieldId) return true;
-  if (cv.source_field_id === fieldId) return true;
-
-  // Check collection filter conditions
-  if (cv.filters?.groups) {
-    for (const group of cv.filters.groups) {
-      for (const condition of group.conditions) {
-        if (condition.fieldId === fieldId) return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-/** Check if a DesignColorVariable references a field ID (solid field or gradient stops) */
-function designColorUsesField(
-  dcv: DesignColorVariable | undefined,
-  fieldId: string,
-): boolean {
-  if (!dcv) return false;
-  if (isFieldVarWithId(dcv.field, fieldId)) return true;
-  for (const stop of dcv.linear?.stops ?? []) {
-    if (isFieldVarWithId(stop.field, fieldId)) return true;
-  }
-  for (const stop of dcv.radial?.stops ?? []) {
-    if (isFieldVarWithId(stop.field, fieldId)) return true;
-  }
-  return false;
-}
-
-/** Recursively scan all field variable bindings in a layer's variables */
-function layerFieldVarsContainId(layer: Layer, fieldId: string): boolean {
-  const vars = layer.variables;
-  if (!vars) return false;
-
-  // Image src
-  if (isFieldVarWithId(vars.image?.src, fieldId)) return true;
-  // Image alt
-  if (isFieldVarWithId(vars.image?.alt, fieldId)) return true;
-  // Audio src
-  if (isFieldVarWithId(vars.audio?.src, fieldId)) return true;
-  // Video src / poster
-  if (isFieldVarWithId(vars.video?.src, fieldId)) return true;
-  if (isFieldVarWithId(vars.video?.poster, fieldId)) return true;
-  // Background image src
-  if (isFieldVarWithId(vars.backgroundImage?.src, fieldId)) return true;
-  // Text variable
-  if (isFieldVarWithId(vars.text, fieldId)) return true;
-  // Link field
-  if (isFieldVarWithId(vars.link?.field, fieldId)) return true;
-
-  // Inline variables (dynamic text)
-  const textVar = vars.text as Record<string, unknown> | undefined;
-  if (
-    textVar?.type === "dynamic_text" ||
-    textVar?.type === "dynamic_rich_text"
-  ) {
-    const data = textVar.data as Record<string, unknown> | undefined;
-    if (data?.variables && Array.isArray(data.variables)) {
-      for (const iv of data.variables) {
-        if (isFieldVarWithId(iv, fieldId)) return true;
-      }
-    }
-    if (data?.content) {
-      if (richTextContainsFieldId(data.content, fieldId)) return true;
-    }
-  }
-
-  // Design color variable field bindings (backgroundColor, color, borderColor, etc.)
-  if (vars.design) {
-    if (designColorUsesField(vars.design.backgroundColor, fieldId)) return true;
-    if (designColorUsesField(vars.design.color, fieldId)) return true;
-    if (designColorUsesField(vars.design.borderColor, fieldId)) return true;
-    if (designColorUsesField(vars.design.divideColor, fieldId)) return true;
-    if (designColorUsesField(vars.design.outlineColor, fieldId)) return true;
-    if (designColorUsesField(vars.design.textDecorationColor, fieldId))
-      return true;
-    if (
-      GRID_SPAN_BINDING_KEYS.some((key) =>
-        isFieldVarWithId(vars.design?.[key], fieldId),
-      )
-    )
-      return true;
-  }
-
-  return false;
-}
-
-/** Scan rich text content for FieldVariable references */
-function richTextContainsFieldId(content: unknown, fieldId: string): boolean {
-  if (!content || typeof content !== "object") return false;
-  const node = content as Record<string, unknown>;
-
-  // Check inline variable marks
-  if (Array.isArray(node.marks)) {
-    for (const mark of node.marks) {
-      const m = mark as Record<string, unknown>;
-      if (m.type === "inlineVariable" && isFieldVarWithId(m.attrs, fieldId))
-        return true;
-    }
-  }
-
-  // Recurse
-  if (Array.isArray(node.content)) {
-    for (const child of node.content) {
-      if (richTextContainsFieldId(child, fieldId)) return true;
-    }
-  }
-  if (Array.isArray(content)) {
-    for (const child of content) {
-      if (richTextContainsFieldId(child, fieldId)) return true;
-    }
-  }
-  return false;
-}
-
-/** Check if a layer references a specific field (bindings + collection config) */
-function layerReferencesField(layer: Layer, fieldId: string): boolean {
-  if (collectionVarUsesField(layer, fieldId)) return true;
-  if (layerFieldVarsContainId(layer, fieldId)) return true;
-  return false;
-}
-
-/** Recursively check if layers reference a field */
-function layersReferenceField(layers: Layer[], fieldId: string): boolean {
-  for (const layer of layers) {
-    if (layerReferencesField(layer, fieldId)) return true;
-    if (layer.children && layersReferenceField(layer.children, fieldId))
-      return true;
-  }
-  return false;
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
 
 /**
- * Get collection usage across pages, components, and reference fields
+ * Where is this collection used? The caller must already have verified the
+ * collection belongs to `scope.funnelId` (`requireCollectionInFunnel`).
  */
 export async function getCollectionUsage(
+  scope: CampaignScope,
   collectionId: string,
 ): Promise<CollectionUsageResult> {
-  const client = await getSupabaseAdmin();
-  if (!client) throw new Error("Supabase not configured");
+  const target = { kind: "collection", id: collectionId } as const;
+  const [pageRows, componentRows, fieldRows] = await Promise.all([
+    loadPageRows(scope.funnelId),
+    loadComponentRows(scope.organizationId),
+    loadFieldRows(scope.funnelId),
+  ]);
 
-  const pages: UsageEntry[] = [];
-  const components: UsageEntry[] = [];
-  const referenceFields: ReferenceFieldUsageEntry[] = [];
-
-  const pageIdsWithUsage = new Set<string>();
-
-  // 1. Check page layers for collection bindings
-  const { data: pageLayersRecords, error: plErr } = await client
-    .from("page_layers")
-    .select("page_id, layers")
-    .eq("is_published", false)
-    .is("deleted_at", null);
-
-  if (plErr) throw new Error(`Failed to fetch page layers: ${plErr.message}`);
-
-  for (const record of pageLayersRecords || []) {
-    if (
-      record.layers &&
-      layersReferenceCollection(record.layers, collectionId)
-    ) {
-      pageIdsWithUsage.add(record.page_id);
-    }
-  }
-
-  // 2. Check page-level CMS settings (collection pages)
-  const { data: pagesData, error: pagesErr } = await client
-    .from("pages")
-    .select("id, name, settings")
-    .eq("is_published", false)
-    .is("deleted_at", null);
-
-  if (pagesErr) throw new Error(`Failed to fetch pages: ${pagesErr.message}`);
-
-  for (const page of pagesData || []) {
-    if (page.settings?.cms?.collection_id === collectionId) {
-      pageIdsWithUsage.add(page.id);
-    }
-  }
-
-  // Build page entries with names
-  for (const pageId of pageIdsWithUsage) {
-    const page = (pagesData || []).find((p) => p.id === pageId);
-    pages.push({ id: pageId, name: page?.name ?? "Unknown Page" });
-  }
-
-  // 3. Check components
-  const { data: componentsData, error: compErr } = await client
-    .from("components")
-    .select("id, name, layers")
-    .eq("is_published", false)
-    .is("deleted_at", null);
-
-  if (compErr)
-    throw new Error(`Failed to fetch components: ${compErr.message}`);
-
-  for (const component of componentsData || []) {
-    if (
-      component.layers &&
-      layersReferenceCollection(component.layers, collectionId)
-    ) {
-      components.push({
-        id: component.id,
-        name: component.name ?? "Unknown Component",
-      });
-    }
-  }
-
-  // 4. Check reference fields pointing to this collection
-  const { data: refFields, error: rfErr } = await client
-    .from("collection_fields")
-    .select("id, name, collection_id")
-    .eq("reference_collection_id", collectionId)
-    .eq("is_published", false)
-    .is("deleted_at", null);
-
-  if (rfErr)
-    throw new Error(`Failed to fetch reference fields: ${rfErr.message}`);
-
-  if (refFields && refFields.length > 0) {
-    const parentCollectionIds = [
-      ...new Set(refFields.map((f) => f.collection_id)),
-    ];
-
-    const { data: parentCollections, error: pcErr } = await client
-      .from("collections")
-      .select("id, name")
-      .in("id", parentCollectionIds)
-      .eq("is_published", false)
-      .is("deleted_at", null);
-
-    if (pcErr) throw new Error(`Failed to fetch collections: ${pcErr.message}`);
-
-    const collectionNames: Record<string, string> = {};
-    (parentCollections || []).forEach((c) => {
-      collectionNames[c.id] = c.name ?? "Unknown Collection";
-    });
-
-    for (const field of refFields) {
-      referenceFields.push({
-        id: field.id,
-        name: field.name ?? "Unknown Field",
-        collectionId: field.collection_id,
-        collectionName:
-          collectionNames[field.collection_id] ?? "Unknown Collection",
-      });
-    }
-  }
-
-  // 5. Check Airtable connections targeting this collection
-  const airtableConnections: AirtableConnectionUsageEntry[] = [];
-  try {
-    const allConns = await getAirtableConnections();
-    for (const conn of allConns) {
-      if (conn.collectionId === collectionId) {
-        airtableConnections.push({
-          id: conn.id,
-          name: `[${conn.baseName}] ${conn.tableName}`,
-          baseName: conn.baseName,
-          tableName: conn.tableName,
-        });
-      }
-    }
-  } catch {
-    // Airtable not configured — skip
-  }
+  const pages = scanRows(pageRows, target);
+  const components = scanRows(componentRows, target);
+  const referenceFields = fieldsDependingOnCollection(fieldRows, collectionId);
 
   return {
     pages,
     components,
     referenceFields,
-    airtableConnections,
-    total:
-      pages.length +
-      components.length +
-      referenceFields.length +
-      airtableConnections.length,
+    total: pages.length + components.length + referenceFields.length,
   };
 }
 
 /**
- * Get collection field usage across pages and components (layer bindings)
+ * Where is this field used? The caller must already have verified the field's
+ * collection belongs to `scope.funnelId`.
  */
 export async function getCollectionFieldUsage(
+  scope: CampaignScope,
   fieldId: string,
 ): Promise<CollectionFieldUsageResult> {
-  const client = await getSupabaseAdmin();
-  if (!client) throw new Error("Supabase not configured");
+  const target = { kind: "field", id: fieldId } as const;
+  const [pageRows, componentRows, fieldRows] = await Promise.all([
+    loadPageRows(scope.funnelId),
+    loadComponentRows(scope.organizationId),
+    loadFieldRows(scope.funnelId),
+  ]);
 
-  const pages: UsageEntry[] = [];
-  const components: UsageEntry[] = [];
-
-  const pageIdsWithUsage = new Set<string>();
-
-  // 1. Check page layers for field bindings
-  const { data: pageLayersRecords, error: plErr } = await client
-    .from("page_layers")
-    .select("page_id, layers")
-    .eq("is_published", false)
-    .is("deleted_at", null);
-
-  if (plErr) throw new Error(`Failed to fetch page layers: ${plErr.message}`);
-
-  for (const record of pageLayersRecords || []) {
-    if (record.layers && layersReferenceField(record.layers, fieldId)) {
-      pageIdsWithUsage.add(record.page_id);
-    }
-  }
-
-  // 2. Check page-level CMS settings (slug field)
-  const { data: pagesData, error: pagesErr } = await client
-    .from("pages")
-    .select("id, name, settings")
-    .eq("is_published", false)
-    .is("deleted_at", null);
-
-  if (pagesErr) throw new Error(`Failed to fetch pages: ${pagesErr.message}`);
-
-  for (const page of pagesData || []) {
-    if (page.settings?.cms?.slug_field_id === fieldId) {
-      pageIdsWithUsage.add(page.id);
-    }
-    // SEO image field binding
-    const seoImage = page.settings?.seo?.image;
-    if (
-      seoImage &&
-      typeof seoImage === "object" &&
-      (seoImage as FieldVariable).type === "field"
-    ) {
-      if ((seoImage as FieldVariable).data?.field_id === fieldId) {
-        pageIdsWithUsage.add(page.id);
-      }
-    }
-  }
-
-  // Build page entries
-  for (const pageId of pageIdsWithUsage) {
-    const page = (pagesData || []).find((p) => p.id === pageId);
-    pages.push({ id: pageId, name: page?.name ?? "Unknown Page" });
-  }
-
-  // 3. Check components
-  const { data: componentsData, error: compErr } = await client
-    .from("components")
-    .select("id, name, layers")
-    .eq("is_published", false)
-    .is("deleted_at", null);
-
-  if (compErr)
-    throw new Error(`Failed to fetch components: ${compErr.message}`);
-
-  for (const component of componentsData || []) {
-    if (component.layers && layersReferenceField(component.layers, fieldId)) {
-      components.push({
-        id: component.id,
-        name: component.name ?? "Unknown Component",
-      });
-    }
-  }
+  const pages = scanRows(pageRows, target);
+  const components = scanRows(componentRows, target);
+  const dependentFields = countFieldsDependingOnField(fieldRows, fieldId);
 
   return {
     pages,
     components,
-    total: pages.length + components.length,
+    dependentFields,
+    total: pages.length + components.length + dependentFields.length,
   };
 }

@@ -1,14 +1,8 @@
 import { create } from "zustand";
-import { collectionsApi } from "@/lib/api";
+import { collectionsWriteApi } from "@/lib/editor/editor-collection-write-api";
 import { collectionsReadApi } from "@/lib/editor/editor-read-api";
 import { sortCollectionsByOrder } from "@/lib/collection-utils";
-import {
-  MULTI_ASSET_COLLECTION_ID,
-  findStatusFieldId,
-  buildStatusValue,
-  getStatusFlagsFromAction,
-} from "@/lib/collection-field-utils";
-import type { StatusAction } from "@/lib/collection-field-utils";
+import { MULTI_ASSET_COLLECTION_ID } from "@/lib/collection-field-utils";
 
 import type {
   Collection,
@@ -35,6 +29,8 @@ interface ItemsQueryParams {
   limit?: number;
   sortBy?: string;
   sortOrder?: string;
+  /** Set when the last query was a text search rather than a plain page load. */
+  search?: string;
 }
 
 interface CollectionsState {
@@ -91,6 +87,7 @@ interface CollectionsActions {
     data: UpdateCollectionFieldData,
   ) => Promise<void>;
   deleteField: (collectionId: string, fieldId: string) => Promise<void>;
+  reorderFields: (collectionId: string, orderedIds: string[]) => Promise<void>;
 
   // Items
   loadItems: (
@@ -100,7 +97,6 @@ interface CollectionsActions {
     sortBy?: string,
     sortOrder?: string,
   ) => Promise<void>;
-  loadPublishedItems: (collectionId: string) => Promise<void>;
   getDropdownItems: (
     collectionId: string,
   ) => Promise<Array<{ id: string; label: string }>>;
@@ -111,17 +107,19 @@ interface CollectionsActions {
   ) => Promise<Array<{ id: string; label: string }>>;
   ensureItemLoaded: (collectionId: string, itemId: string) => Promise<void>;
   loadMissingItemSlugs: (itemIds: string[]) => Promise<void>;
+  /** Server-confirmed. Rejects with the server's message (validation etc.). */
   createItem: (
     collectionId: string,
-    values: Record<string, any>,
-    statusAction?: StatusAction,
+    values: Record<string, unknown>,
   ) => Promise<CollectionItemWithValues>;
+  /** Server-confirmed. Resolves with the persisted item. */
   updateItem: (
     collectionId: string,
     itemId: string,
-    values: Record<string, any>,
-  ) => Promise<void>;
+    values: Record<string, unknown>,
+  ) => Promise<CollectionItemWithValues>;
   deleteItem: (collectionId: string, itemId: string) => Promise<void>;
+  deleteItems: (collectionId: string, itemIds: string[]) => Promise<void>;
   duplicateItem: (
     collectionId: string,
     itemId: string,
@@ -133,18 +131,6 @@ interface CollectionsActions {
     limit?: number,
     sortBy?: string,
     sortOrder?: string,
-  ) => Promise<void>;
-
-  // Publishing
-  setItemPublishable: (
-    collectionId: string,
-    itemId: string,
-    isPublishable: boolean,
-  ) => Promise<void>;
-  setItemStatus: (
-    collectionId: string,
-    itemId: string,
-    action: StatusAction,
   ) => Promise<void>;
 
   // Sorting
@@ -159,10 +145,32 @@ interface CollectionsActions {
 
   // Utility
   reloadCurrentItems: () => Promise<void>;
+  /** Re-run the last items query (page / sort / search) for one collection. */
+  reloadItemsFor: (collectionId: string) => Promise<void>;
   clearError: () => void;
 }
 
 type CollectionsStore = CollectionsState & CollectionsActions;
+
+/**
+ * Monotonic request counter per collection for items queries. Page / search /
+ * sort changes fire overlapping requests; without this a slow, older response
+ * could land after a newer one and overwrite the table with stale rows.
+ */
+const itemsRequestSeq = new Map<string, number>();
+
+/** Copy of `record` without `key`. */
+function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  const copy = { ...record };
+  delete copy[key];
+  return copy;
+}
+
+function nextItemsRequest(collectionId: string): number {
+  const seq = (itemsRequestSeq.get(collectionId) ?? 0) + 1;
+  itemsRequestSeq.set(collectionId, seq);
+  return seq;
+}
 
 const emptyState: CollectionsState = {
   collections: [],
@@ -197,10 +205,12 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     set({ ...emptyState, error: message });
   },
   setCmsSection: (val) => {
-    set({ ...emptyState, cmsSection: val });
+    // Only the section flag changes — collections, fields and items stay.
+    set({ cmsSection: val });
   },
 
   reset: () => {
+    itemsRequestSeq.clear();
     set(emptyState);
   },
 
@@ -245,101 +255,22 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     set({ isLoading: true, error: null });
 
     try {
-      const response = await collectionsApi.create(data);
-
-      if (response.error) {
-        throw new Error(response.error);
+      // The server creates the collection AND its built-in fields in one
+      // transaction and returns both — no client-side field fan-out.
+      const response = await collectionsWriteApi.create(data.name);
+      if (response.error || !response.data) {
+        throw new Error(response.error || "Failed to create collection");
       }
+      const { collection: created, fields } = response.data;
 
-      const newCollection = response.data!;
-
-      // Automatically create built-in fields
-      try {
-        const builtInFields = [
-          {
-            name: "ID",
-            key: "id",
-            type: "number" as const,
-            order: 0,
-            fillable: false,
-            hidden: false,
-          },
-          {
-            name: "Status",
-            key: "status",
-            type: "status" as const,
-            order: 1,
-            fillable: false,
-            is_computed: true,
-            hidden: false,
-          },
-          {
-            name: "Name",
-            key: "name",
-            type: "text" as const,
-            order: 2,
-            fillable: true,
-            hidden: false,
-          },
-          {
-            name: "Slug",
-            key: "slug",
-            type: "text" as const,
-            order: 3,
-            fillable: true,
-            hidden: false,
-          },
-          {
-            name: "Created Date",
-            key: "created_at",
-            type: "date" as const,
-            order: 4,
-            fillable: false,
-            hidden: false,
-          },
-          {
-            name: "Updated Date",
-            key: "updated_at",
-            type: "date" as const,
-            order: 5,
-            fillable: false,
-            hidden: false,
-          },
-        ];
-
-        // Create all built-in fields in parallel
-        const fieldResponses = await Promise.all(
-          builtInFields.map((field) =>
-            collectionsApi.createField(newCollection.id, field),
-          ),
-        );
-        const createdFields: CollectionField[] = fieldResponses
-          .filter((r) => !r.error && r.data)
-          .map((r) => r.data!);
-
-        // Load created fields into store
-        if (createdFields.length > 0) {
-          set((state) => ({
-            fields: {
-              ...state.fields,
-              [newCollection.id]: createdFields,
-            },
-          }));
-        }
-      } catch (fieldError) {
-        console.error("Failed to create built-in fields:", fieldError);
-        // Continue anyway - collection was created successfully
-      }
-
-      set((state) => {
-        const updatedCollections = [...state.collections, newCollection];
-        const sortedCollections = sortCollectionsByOrder(updatedCollections);
-        return {
-          collections: sortedCollections,
-          isLoading: false,
-        };
-      });
-      return newCollection;
+      set((state) => ({
+        collections: sortCollectionsByOrder([...state.collections, created]),
+        fields: { ...state.fields, [created.id]: fields },
+        items: { ...state.items, [created.id]: [] },
+        itemsTotalCount: { ...state.itemsTotalCount, [created.id]: 0 },
+        isLoading: false,
+      }));
+      return created;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to create collection";
@@ -352,35 +283,20 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     set({ isLoading: true, error: null });
 
     try {
-      const response = await collectionsApi.createSample(sampleId);
-
-      if (response.error) {
-        throw new Error(response.error);
+      const response = await collectionsWriteApi.createSample(sampleId);
+      if (response.error || !response.data) {
+        throw new Error(response.error || "Failed to create sample collection");
       }
+      const { collection: created, fields, items } = response.data;
 
-      const { collection, fields, assets, items } = response.data!;
-
-      // Add created assets to the assets store so images render immediately
-      if (assets.length > 0) {
-        useAssetsStore.getState().addAssetsToCache(assets);
-      }
-
-      set((state) => {
-        const updatedCollections = [...state.collections, collection];
-        const sortedCollections = sortCollectionsByOrder(updatedCollections);
-        return {
-          collections: sortedCollections,
-          fields: { ...state.fields, [collection.id]: fields },
-          items: { ...state.items, [collection.id]: items },
-          itemsTotalCount: {
-            ...state.itemsTotalCount,
-            [collection.id]: items.length,
-          },
-          isLoading: false,
-        };
-      });
-
-      return collection;
+      set((state) => ({
+        collections: sortCollectionsByOrder([...state.collections, created]),
+        fields: { ...state.fields, [created.id]: fields },
+        items: { ...state.items, [created.id]: items },
+        itemsTotalCount: { ...state.itemsTotalCount, [created.id]: items.length },
+        isLoading: false,
+      }));
+      return created;
     } catch (error) {
       const errorMessage =
         error instanceof Error
@@ -395,24 +311,25 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     set({ isLoading: true, error: null });
 
     try {
-      const response = await collectionsApi.update(id, data);
-
-      if (response.error) {
-        throw new Error(response.error);
-      }
-
-      const updated = response.data!;
-
-      set((state) => {
-        const updatedCollections = state.collections.map((c) =>
-          c.id === id ? updated : c,
-        );
-        const sortedCollections = sortCollectionsByOrder(updatedCollections);
-        return {
-          collections: sortedCollections,
-          isLoading: false,
-        };
+      const response = await collectionsWriteApi.update(id, {
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.sorting !== undefined ? { sorting: data.sorting } : {}),
       });
+      if (response.error || !response.data) {
+        throw new Error(response.error || "Failed to update collection");
+      }
+      const updated = response.data;
+
+      set((state) => ({
+        collections: sortCollectionsByOrder(
+          state.collections.map((c) =>
+            c.id === id
+              ? { ...c, ...updated, has_published_version: c.has_published_version }
+              : c,
+          ),
+        ),
+        isLoading: false,
+      }));
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to update collection";
@@ -425,35 +342,25 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     set({ isLoading: true, error: null });
 
     try {
-      const response = await collectionsApi.delete(id);
-
-      if (response.error) {
-        throw new Error(response.error);
-      }
+      // The server refuses (with a user-facing message) when the collection is
+      // still referenced by a page, component or another collection's field.
+      const response = await collectionsWriteApi.delete(id);
+      if (response.error) throw new Error(response.error);
 
       set((state) => {
-        const remainingCollections = state.collections.filter(
-          (c) => c.id !== id,
-        );
-        const sortedCollections = sortCollectionsByOrder(remainingCollections);
-        const wasSelected = state.selectedCollectionId === id;
-
-        // If the deleted collection was selected, select the first remaining collection
-        const newSelectedId =
-          wasSelected && sortedCollections.length > 0
-            ? sortedCollections[0].id
-            : state.selectedCollectionId === id
-              ? null
-              : state.selectedCollectionId;
-
         return {
-          collections: sortedCollections,
-          selectedCollectionId: newSelectedId,
+          collections: state.collections.filter((c) => c.id !== id),
+          fields: omitKey(state.fields, id),
+          items: omitKey(state.items, id),
+          itemsTotalCount: omitKey(state.itemsTotalCount, id),
+          lastItemsQuery: omitKey(state.lastItemsQuery, id),
+          selectedCollectionId:
+            state.selectedCollectionId === id ? null : state.selectedCollectionId,
           isLoading: false,
         };
       });
 
-      // Reset CMS bindings referencing the deleted collection across every page's layer tree
+      // Reset CMS bindings that pointed at the deleted collection.
       usePagesStore.getState().cleanupDeletedCollection(id);
     } catch (error) {
       const errorMessage =
@@ -464,34 +371,26 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
   },
 
   reorderCollections: async (collectionIds: string[]) => {
-    // Optimistically reorder collections
+    const previous = get().collections;
+    // Optimistic: apply the new order immediately, roll back on failure.
     set((state) => {
-      const reorderedCollections = collectionIds
+      const byId = new Map(state.collections.map((c) => [c.id, c]));
+      const reordered = collectionIds
         .map((id, index) => {
-          const collection = state.collections.find((c) => c.id === id);
-          return collection ? { ...collection, order: index } : null;
+          const c = byId.get(id);
+          return c ? { ...c, order: index } : null;
         })
         .filter((c): c is Collection => c !== null);
-
-      return { collections: reorderedCollections };
+      return { collections: sortCollectionsByOrder(reordered), error: null };
     });
 
-    try {
-      const response = await collectionsApi.reorder(collectionIds);
-
-      if (response.error) {
-        throw new Error(response.error);
-      }
-    } catch (error) {
-      // Reload collections to revert optimistic update
-      await get().loadCollections();
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : "Failed to reorder collections";
-      set({ error: errorMessage });
+    const response = await collectionsWriteApi.reorder(collectionIds);
+    if (response.error) {
+      set({ collections: previous, error: response.error });
+      throw new Error(response.error);
     }
   },
+
 
   setSelectedCollectionId: (id) => {
     set({ selectedCollectionId: id });
@@ -564,18 +463,28 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     set({ isLoading: true, error: null });
 
     try {
-      const response = await collectionsApi.createField(collectionId, data);
-
-      if (response.error) {
-        throw new Error(response.error);
+      const response = await collectionsWriteApi.createField(collectionId, {
+        name: data.name,
+        type: data.type,
+        default: data.default ?? null,
+        reference_collection_id: data.reference_collection_id ?? null,
+        data: data.data,
+      });
+      if (response.error || !response.data) {
+        throw new Error(response.error || "Failed to create field");
       }
+      const newField = response.data;
 
-      const newField = response.data!;
-
+      // The server inserts custom fields before the trailing built-ins and
+      // shifts their order — reload this collection's fields to stay in step.
+      const refreshed = await collectionsReadApi.getFields(collectionId);
       set((state) => ({
         fields: {
           ...state.fields,
-          [collectionId]: [...(state.fields[collectionId] || []), newField],
+          [collectionId]: refreshed.data ?? [
+            ...(state.fields[collectionId] || []),
+            newField,
+          ],
         },
         isLoading: false,
       }));
@@ -593,17 +502,19 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     set({ isLoading: true, error: null });
 
     try {
-      const response = await collectionsApi.updateField(
-        collectionId,
-        fieldId,
-        data,
-      );
-
-      if (response.error) {
-        throw new Error(response.error);
+      const response = await collectionsWriteApi.updateField(fieldId, {
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.default !== undefined ? { default: data.default } : {}),
+        ...(data.reference_collection_id !== undefined
+          ? { reference_collection_id: data.reference_collection_id }
+          : {}),
+        ...(data.hidden !== undefined ? { hidden: data.hidden } : {}),
+        ...(data.data !== undefined ? { data: data.data } : {}),
+      });
+      if (response.error || !response.data) {
+        throw new Error(response.error || "Failed to update field");
       }
-
-      const updated = response.data!;
+      const updated = response.data;
 
       set((state) => ({
         fields: {
@@ -626,11 +537,11 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     set({ isLoading: true, error: null });
 
     try {
-      const response = await collectionsApi.deleteField(collectionId, fieldId);
-
-      if (response.error) {
-        throw new Error(response.error);
-      }
+      // The server refuses when the field is still bound on a page / component
+      // or counted by another field, and falls the collection's sort back to
+      // manual order when it was sorted by this field.
+      const response = await collectionsWriteApi.deleteField(fieldId);
+      if (response.error) throw new Error(response.error);
 
       set((state) => ({
         fields: {
@@ -639,6 +550,11 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
             (f) => f.id !== fieldId,
           ),
         },
+        collections: state.collections.map((c) =>
+          c.id === collectionId && c.sorting?.field === fieldId
+            ? { ...c, sorting: null }
+            : c,
+        ),
         isLoading: false,
       }));
 
@@ -651,6 +567,29 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
       throw error;
     }
   },
+
+  reorderFields: async (collectionId, orderedIds) => {
+    const previous = get().fields[collectionId] || [];
+    set((state) => {
+      const byId = new Map(previous.map((f) => [f.id, f]));
+      const reordered = orderedIds
+        .map((id, order) => {
+          const f = byId.get(id);
+          return f ? { ...f, order } : null;
+        })
+        .filter((f): f is CollectionField => f !== null);
+      return { fields: { ...state.fields, [collectionId]: reordered }, error: null };
+    });
+    const response = await collectionsWriteApi.reorderFields(collectionId, orderedIds);
+    if (response.error) {
+      set((state) => ({
+        fields: { ...state.fields, [collectionId]: previous },
+        error: response.error,
+      }));
+      throw new Error(response.error);
+    }
+  },
+
 
   // Items
   loadItems: async (
@@ -666,6 +605,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     }
 
     // Remember query params for reloadCurrentItems
+    const seq = nextItemsRequest(collectionId);
     set((state) => ({
       isLoading: true,
       error: null,
@@ -684,6 +624,9 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
         includeAssets: true,
       });
 
+      // A newer query for this collection superseded this one — drop it.
+      if (itemsRequestSeq.get(collectionId) !== seq) return;
+
       if (response.error) {
         throw new Error(response.error);
       }
@@ -706,6 +649,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
         isLoading: false,
       }));
     } catch (error) {
+      if (itemsRequestSeq.get(collectionId) !== seq) return;
       const errorMessage =
         error instanceof Error ? error.message : "Failed to load items";
       set({ error: errorMessage, isLoading: false });
@@ -713,407 +657,110 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     }
   },
 
-  loadPublishedItems: async (collectionId) => {
-    set({ isLoading: true, error: null });
+  createItem: async (collectionId, values) => {
+    set({ error: null });
 
-    try {
-      const response = await collectionsApi.getPublishedItems(collectionId);
-
-      if (response.error) {
-        throw new Error(response.error);
-      }
-
-      set((state) => ({
-        items: {
-          ...state.items,
-          [collectionId]: response.data || [],
-        },
-        isLoading: false,
-      }));
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : "Failed to load published items";
-      set({ error: errorMessage, isLoading: false });
-      throw error;
+    // Server-confirmed (no optimistic row): validation (required name, unique
+    // slug, reference integrity) lives on the server, and the caller keeps the
+    // form open on failure so the user's input is never lost.
+    const response = await collectionsWriteApi.createItem(collectionId, values);
+    if (response.error || !response.data) {
+      const message = response.error || "Failed to create item";
+      set({ error: message });
+      throw new Error(message);
     }
-  },
+    const created = response.data;
 
-  createItem: async (collectionId, values, statusAction) => {
-    // Create optimistic item with temporary ID
-    const tempId = `temp-${Date.now()}`;
-    const statusFieldId = findStatusFieldId(get().fields[collectionId] || []);
-    const { isPublishable, isPublished } = statusAction
-      ? getStatusFlagsFromAction(statusAction)
-      : { isPublishable: true, isPublished: false };
-    const optimisticValues = { ...values };
-    if (statusFieldId) {
-      optimisticValues[statusFieldId] = buildStatusValue(
-        isPublishable,
-        isPublished,
-      );
-    }
-    const optimisticItem: CollectionItemWithValues = {
-      id: tempId,
-      collection_id: collectionId,
-      manual_order: get().items[collectionId]?.length || 0,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      deleted_at: null,
-      is_published: false,
-      is_publishable: isPublishable,
-      content_hash: null,
-      values: optimisticValues,
-    };
-
-    // Optimistically add item to store (no loading state)
     set((state) => ({
-      items: {
-        ...state.items,
-        [collectionId]: [...(state.items[collectionId] || []), optimisticItem],
-      },
       itemsTotalCount: {
         ...state.itemsTotalCount,
         [collectionId]: (state.itemsTotalCount[collectionId] || 0) + 1,
       },
-      error: null,
     }));
-
-    try {
-      const response = await collectionsApi.createItem(
-        collectionId,
-        values,
-        statusAction,
-      );
-
-      if (response.error) {
-        throw new Error(response.error);
-      }
-
-      const newItem = response.data!;
-
-      // Replace temporary item with real item from server
-      set((state) => ({
-        items: {
-          ...state.items,
-          [collectionId]: (state.items[collectionId] || []).map((item) =>
-            item.id === tempId ? newItem : item,
-          ),
-        },
-      }));
-
-      return newItem;
-    } catch (error) {
-      // Revert optimistic update on error
-      set((state) => ({
-        items: {
-          ...state.items,
-          [collectionId]: (state.items[collectionId] || []).filter(
-            (item) => item.id !== tempId,
-          ),
-        },
-        itemsTotalCount: {
-          ...state.itemsTotalCount,
-          [collectionId]: Math.max(
-            0,
-            (state.itemsTotalCount[collectionId] || 0) - 1,
-          ),
-        },
-        error: error instanceof Error ? error.message : "Failed to create item",
-      }));
-      throw error;
-    }
+    // Re-run the table's current query so the new row lands where the active
+    // sort / page / search says it belongs.
+    await get().reloadItemsFor(collectionId);
+    return created;
   },
 
   updateItem: async (collectionId, itemId, values) => {
-    // Store previous state for rollback on error
-    const previousItems = get().items[collectionId] || [];
-    const previousItem = previousItems.find((item) => item.id === itemId);
+    set({ error: null });
 
-    // Optimistically set status to "Published · Edited" if the item is currently published
-    const collectionFields = get().fields[collectionId] || [];
-    const statusFieldId = findStatusFieldId(collectionFields);
-    const optimisticStatus: Record<string, string> = {};
-    if (statusFieldId && previousItem) {
-      try {
-        const current = JSON.parse(previousItem.values[statusFieldId] || "{}");
-        if (current.is_published) {
-          optimisticStatus[statusFieldId] = buildStatusValue(
-            current.is_publishable,
-            true,
-            true,
-          );
-        }
-      } catch {
-        /* non-JSON status value, skip */
-      }
+    const response = await collectionsWriteApi.updateItem(
+      collectionId,
+      itemId,
+      values,
+    );
+    if (response.error || !response.data) {
+      const message = response.error || "Failed to save item";
+      set({ error: message });
+      throw new Error(message);
     }
-
-    // Optimistically bump the virtual `updated_at` field to mirror the
-    // server-side auto-bump in setValuesByFieldName.
-    const now = new Date().toISOString();
-    const updatedAtFieldId = collectionFields.find(
-      (f) => f.key === "updated_at",
-    )?.id;
-    const optimisticTimestamps: Record<string, string> = {};
-    if (updatedAtFieldId && !(updatedAtFieldId in values)) {
-      optimisticTimestamps[updatedAtFieldId] = now;
-    }
+    const updated = response.data;
 
     set((state) => ({
       items: {
         ...state.items,
         [collectionId]: (state.items[collectionId] || []).map((item) =>
-          item.id === itemId
-            ? {
-                ...item,
-                values: {
-                  ...item.values,
-                  ...values,
-                  ...optimisticStatus,
-                  ...optimisticTimestamps,
-                },
-                updated_at: now,
-              }
-            : item,
+          item.id === itemId ? updated : item,
         ),
       },
-      error: null,
     }));
-
-    try {
-      const response = await collectionsApi.updateItem(
-        collectionId,
-        itemId,
-        values,
-      );
-
-      if (response.error) {
-        throw new Error(response.error);
-      }
-
-      const updated = response.data!;
-
-      // Update with server response (ensures consistency)
-      set((state) => ({
-        items: {
-          ...state.items,
-          [collectionId]: (state.items[collectionId] || []).map((item) =>
-            item.id === itemId ? updated : item,
-          ),
-        },
-      }));
-    } catch (error) {
-      // Revert to previous state on error
-      if (previousItem) {
-        set((state) => ({
-          items: {
-            ...state.items,
-            [collectionId]: (state.items[collectionId] || []).map((item) =>
-              item.id === itemId ? previousItem : item,
-            ),
-          },
-          error:
-            error instanceof Error ? error.message : "Failed to update item",
-        }));
-      }
-      throw error;
-    }
+    return updated;
   },
 
   deleteItem: async (collectionId, itemId) => {
-    // Store item for rollback on error
-    const previousItems = get().items[collectionId] || [];
-    const deletedItem = previousItems.find((item) => item.id === itemId);
-    const previousCount = get().itemsTotalCount[collectionId] || 0;
+    await get().deleteItems(collectionId, [itemId]);
+  },
 
-    // Optimistically remove item (no loading state)
+  deleteItems: async (collectionId, itemIds) => {
+    set({ error: null });
+
+    const response = await collectionsWriteApi.deleteItems(collectionId, itemIds);
+    if (response.error) {
+      set({ error: response.error });
+      throw new Error(response.error);
+    }
+
+    const gone = new Set(itemIds);
     set((state) => ({
       items: {
         ...state.items,
         [collectionId]: (state.items[collectionId] || []).filter(
-          (item) => item.id !== itemId,
+          (item) => !gone.has(item.id),
         ),
       },
       itemsTotalCount: {
         ...state.itemsTotalCount,
         [collectionId]: Math.max(
           0,
-          (state.itemsTotalCount[collectionId] || 0) - 1,
+          (state.itemsTotalCount[collectionId] || 0) - (response.data?.deleted ?? 0),
         ),
       },
-      error: null,
     }));
-
-    try {
-      const response = await collectionsApi.deleteItem(collectionId, itemId);
-
-      if (response.error) {
-        throw new Error(response.error);
-      }
-      // Success - item already removed from state
-    } catch (error) {
-      // Revert optimistic delete on error
-      if (deletedItem) {
-        set((state) => ({
-          items: {
-            ...state.items,
-            [collectionId]: [...(state.items[collectionId] || []), deletedItem],
-          },
-          itemsTotalCount: {
-            ...state.itemsTotalCount,
-            [collectionId]: previousCount,
-          },
-          error:
-            error instanceof Error ? error.message : "Failed to delete item",
-        }));
-      }
-      throw error;
-    }
   },
 
-  duplicateItem: async (collectionId: string, itemId: string) => {
-    // Find the source item to create optimistic duplicate
-    const sourceItem = get().items[collectionId]?.find(
-      (item) => item.id === itemId,
-    );
-    const tempId = `temp-dup-${Date.now()}`;
+  duplicateItem: async (collectionId, itemId) => {
+    set({ error: null });
 
-    // Optimistically add duplicate item (no loading state)
-    if (sourceItem) {
-      const collectionFields = get().fields[collectionId] || [];
-      const allItems = get().items[collectionId] || [];
-      const idField = collectionFields.find((f) => f.key === "id");
-      const nameField = collectionFields.find((f) => f.key === "name");
-      const slugField = collectionFields.find((f) => f.key === "slug");
-      const createdAtField = collectionFields.find(
-        (f) => f.key === "created_at",
-      );
-      const updatedAtField = collectionFields.find(
-        (f) => f.key === "updated_at",
-      );
-
-      // Build values matching server logic
-      const newValues = { ...sourceItem.values };
-      const now = new Date().toISOString();
-
-      if (idField && newValues[idField.id]) {
-        let highestId = 0;
-        allItems.forEach((item) => {
-          const val = item.values[idField.id];
-          if (val) {
-            const num = parseInt(String(val), 10);
-            if (!isNaN(num)) highestId = Math.max(highestId, num);
-          }
-        });
-        newValues[idField.id] = String(highestId + 1);
-      }
-      if (createdAtField) newValues[createdAtField.id] = now;
-      if (updatedAtField) newValues[updatedAtField.id] = now;
-
-      if (nameField && newValues[nameField.id]) {
-        newValues[nameField.id] = `${newValues[nameField.id]} (Copy)`;
-      }
-
-      if (slugField) {
-        const originalSlug = newValues[slugField.id]
-          ? String(newValues[slugField.id]).trim()
-          : "";
-        const baseSlug = originalSlug || "copy";
-        const baseSlugClean = baseSlug.replace(/-\d+$/, "");
-        const existingSlugs = new Set(
-          allItems
-            .map((item) => item.values[slugField.id])
-            .filter((s): s is string => !!s && typeof s === "string"),
-        );
-        let newSlug = `${baseSlugClean}-copy`;
-        if (existingSlugs.has(newSlug)) {
-          let n = 1;
-          while (existingSlugs.has(`${baseSlugClean}-copy-${n}`)) n++;
-          newSlug = `${baseSlugClean}-copy-${n}`;
-        }
-        newValues[slugField.id] = newSlug;
-      }
-
-      const dupStatusFieldId = findStatusFieldId(
-        get().fields[collectionId] || [],
-      );
-      if (dupStatusFieldId) {
-        newValues[dupStatusFieldId] = buildStatusValue(true, false);
-      }
-
-      const optimisticItem: CollectionItemWithValues = {
-        id: tempId,
-        collection_id: collectionId,
-        manual_order: get().items[collectionId]?.length || 0,
-        created_at: now,
-        updated_at: now,
-        deleted_at: null,
-        is_published: false,
-        is_publishable: true,
-        content_hash: null,
-        values: newValues,
-      };
-
-      set((state) => ({
-        items: {
-          ...state.items,
-          [collectionId]: [
-            ...(state.items[collectionId] || []),
-            optimisticItem,
-          ],
-        },
-        itemsTotalCount: {
-          ...state.itemsTotalCount,
-          [collectionId]: (state.itemsTotalCount[collectionId] || 0) + 1,
-        },
-        error: null,
-      }));
+    const response = await collectionsWriteApi.duplicateItem(collectionId, itemId);
+    if (response.error || !response.data) {
+      const message = response.error || "Failed to duplicate item";
+      set({ error: message });
+      throw new Error(message);
     }
+    const copy = response.data;
 
-    try {
-      const response = await collectionsApi.duplicateItem(collectionId, itemId);
-
-      if (response.error) {
-        throw new Error(response.error);
-      }
-
-      // Replace temporary item with real item from server
-      if (response.data) {
-        set((state) => ({
-          items: {
-            ...state.items,
-            [collectionId]: (state.items[collectionId] || []).map((item) =>
-              item.id === tempId ? response.data! : item,
-            ),
-          },
-        }));
-      }
-
-      return response.data;
-    } catch (error) {
-      // Revert optimistic update on error
-      set((state) => ({
-        items: {
-          ...state.items,
-          [collectionId]: (state.items[collectionId] || []).filter(
-            (item) => item.id !== tempId,
-          ),
-        },
-        itemsTotalCount: {
-          ...state.itemsTotalCount,
-          [collectionId]: Math.max(
-            0,
-            (state.itemsTotalCount[collectionId] || 0) - 1,
-          ),
-        },
-        error:
-          error instanceof Error ? error.message : "Failed to duplicate item",
-      }));
-      throw error;
-    }
+    set((state) => ({
+      itemsTotalCount: {
+        ...state.itemsTotalCount,
+        [collectionId]: (state.itemsTotalCount[collectionId] || 0) + 1,
+      },
+    }));
+    await get().reloadItemsFor(collectionId);
+    return copy;
   },
+
 
   searchItems: async (
     collectionId: string,
@@ -1123,7 +770,15 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     sortBy?: string,
     sortOrder?: string,
   ) => {
-    set({ isLoading: true, error: null });
+    const seq = nextItemsRequest(collectionId);
+    set((state) => ({
+      isLoading: true,
+      error: null,
+      lastItemsQuery: {
+        ...state.lastItemsQuery,
+        [collectionId]: { page, limit, sortBy, sortOrder, search: query },
+      },
+    }));
 
     try {
       const response = await collectionsReadApi.searchItems(
@@ -1138,6 +793,8 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
         },
       );
 
+      if (itemsRequestSeq.get(collectionId) !== seq) return;
+
       if (response.error) {
         throw new Error(response.error);
       }
@@ -1160,149 +817,10 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
         isLoading: false,
       }));
     } catch (error) {
+      if (itemsRequestSeq.get(collectionId) !== seq) return;
       const errorMessage =
         error instanceof Error ? error.message : "Failed to search items";
       set({ error: errorMessage, isLoading: false });
-      throw error;
-    }
-  },
-
-  // Publishing
-  setItemPublishable: async (
-    collectionId: string,
-    itemId: string,
-    isPublishable: boolean,
-  ) => {
-    // Store previous state for rollback
-    const previousItems = get().items[collectionId] || [];
-    const previousItem = previousItems.find((item) => item.id === itemId);
-    const statusFieldId = findStatusFieldId(get().fields[collectionId] || []);
-
-    // Optimistically update both item flag and status value
-    set((state) => ({
-      items: {
-        ...state.items,
-        [collectionId]: (state.items[collectionId] || []).map((item) => {
-          if (item.id !== itemId) return item;
-          const updatedItem = { ...item, is_publishable: isPublishable };
-          if (statusFieldId) {
-            updatedItem.values = {
-              ...item.values,
-              [statusFieldId]: buildStatusValue(isPublishable, false),
-            };
-          }
-          return updatedItem;
-        }),
-      },
-    }));
-
-    try {
-      const response = await collectionsApi.setItemPublishable(
-        collectionId,
-        itemId,
-        isPublishable,
-      );
-
-      if (response.error) {
-        throw new Error(response.error);
-      }
-
-      // Replace with server response to get accurate status
-      const serverItem = response.data;
-      if (serverItem) {
-        set((state) => ({
-          items: {
-            ...state.items,
-            [collectionId]: (state.items[collectionId] || []).map((item) =>
-              item.id === itemId ? serverItem : item,
-            ),
-          },
-        }));
-      }
-    } catch (error) {
-      // Revert optimistic update
-      if (previousItem) {
-        set((state) => ({
-          items: {
-            ...state.items,
-            [collectionId]: (state.items[collectionId] || []).map((item) =>
-              item.id === itemId ? previousItem : item,
-            ),
-          },
-          error:
-            error instanceof Error ? error.message : "Failed to update item",
-        }));
-      }
-      throw error;
-    }
-  },
-
-  setItemStatus: async (
-    collectionId: string,
-    itemId: string,
-    action: StatusAction,
-  ) => {
-    const previousItems = get().items[collectionId] || [];
-    const previousItem = previousItems.find((item) => item.id === itemId);
-    const statusFieldId = findStatusFieldId(get().fields[collectionId] || []);
-    const { isPublishable, isPublished } = getStatusFlagsFromAction(action);
-
-    set((state) => ({
-      items: {
-        ...state.items,
-        [collectionId]: (state.items[collectionId] || []).map((item) => {
-          if (item.id !== itemId) return item;
-          const updatedItem = { ...item, is_publishable: isPublishable };
-          if (statusFieldId) {
-            updatedItem.values = {
-              ...item.values,
-              [statusFieldId]: buildStatusValue(isPublishable, isPublished),
-            };
-          }
-          return updatedItem;
-        }),
-      },
-    }));
-
-    try {
-      const response = await collectionsApi.setItemStatus(
-        collectionId,
-        itemId,
-        action,
-      );
-
-      if (response.error) {
-        throw new Error(response.error);
-      }
-
-      // Replace with server response for accurate status
-      const serverItem = response.data;
-      if (serverItem) {
-        set((state) => ({
-          items: {
-            ...state.items,
-            [collectionId]: (state.items[collectionId] || []).map((item) =>
-              item.id === itemId ? serverItem : item,
-            ),
-          },
-        }));
-      }
-    } catch (error) {
-      // Revert optimistic update
-      if (previousItem) {
-        set((state) => ({
-          items: {
-            ...state.items,
-            [collectionId]: (state.items[collectionId] || []).map((item) =>
-              item.id === itemId ? previousItem : item,
-            ),
-          },
-          error:
-            error instanceof Error
-              ? error.message
-              : "Failed to update item status",
-        }));
-      }
       throw error;
     }
   },
@@ -1325,7 +843,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
           collections: sortedCollections,
         };
       });
-      const response = await collectionsApi.update(collectionId, { sorting });
+      const response = await collectionsWriteApi.update(collectionId, { sorting });
 
       if (response.error) {
         throw new Error(response.error);
@@ -1371,7 +889,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
         };
       });
 
-      const response = await collectionsApi.reorderItems(collectionId, updates);
+      const response = await collectionsWriteApi.reorderItems(collectionId, updates);
 
       if (response.error) {
         throw new Error(response.error);
@@ -1390,16 +908,25 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
 
   // Utility
   reloadCurrentItems: async () => {
-    const { selectedCollectionId, lastItemsQuery, loadItems } = get();
+    const { selectedCollectionId } = get();
     if (!selectedCollectionId) return;
-    const q = lastItemsQuery[selectedCollectionId] || {};
-    await loadItems(
-      selectedCollectionId,
-      q.page,
-      q.limit,
-      q.sortBy,
-      q.sortOrder,
-    );
+    await get().reloadItemsFor(selectedCollectionId);
+  },
+
+  reloadItemsFor: async (collectionId) => {
+    const q = get().lastItemsQuery[collectionId] || {};
+    if (q.search) {
+      await get().searchItems(
+        collectionId,
+        q.search,
+        q.page,
+        q.limit,
+        q.sortBy,
+        q.sortOrder,
+      );
+    } else {
+      await get().loadItems(collectionId, q.page, q.limit, q.sortBy, q.sortOrder);
+    }
   },
 
   clearError: () => {

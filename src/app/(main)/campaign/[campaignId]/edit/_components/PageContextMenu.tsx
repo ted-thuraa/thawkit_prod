@@ -9,7 +9,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import type { Page } from "@/types/funnel";
-import type { StatusAction } from "@/lib/collection-field-utils";
+import type { StatusAction } from "@/types/funnel";
 import { isHomepage } from "@/lib/page-utils";
 
 interface PageContextMenuProps {

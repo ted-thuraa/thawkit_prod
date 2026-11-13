@@ -69,7 +69,7 @@ import { usePagesStore } from "@/stores/editor/usePagesStore";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
 import { useComponentsStore } from "@/stores/editor/useComponentsStore";
 import { useCollectionsStore } from "@/stores/editor/useCollectionsStore";
-import { collectionsApi } from "@/lib/api";
+import { collectionsReadApi } from "@/lib/editor/editor-read-api";
 import type { CollectionItemWithValues } from "@/types/funnel";
 
 interface ConditionalVisibilitySettingsProps {
@@ -141,7 +141,7 @@ function ReferenceItemsSelector({
       const fetchItems = async () => {
         setLoading(true);
         try {
-          const response = await collectionsApi.getItems(collectionId, {
+          const response = await collectionsReadApi.getItems(collectionId, {
             limit: 100,
           });
           if (!response.error) {

@@ -23,6 +23,11 @@ import {
   type EditorRouteType,
   type EditorStandaloneArea,
 } from "@/lib/editor/editor-areas";
+import {
+  buildCmsUrl,
+  parseCmsUrlState,
+  type CmsUrlState,
+} from "@/lib/editor/cms-url";
 
 /**
  * ─────────────────────────────────────────────────────────────────────────
@@ -39,6 +44,8 @@ import {
  *   /campaign/{campaignId}/edit/components/{componentId}?tab=…&layer=…&variant=…
  *   /campaign/{campaignId}/edit/cms | forms | settings   (editor AREAS — see
  *                                          lib/editor/editor-areas.ts)
+ *   /campaign/{campaignId}/edit/cms/{collectionId}?page=&limit=&search=&edit=<itemId>|new
+ *                                          (CMS contract — lib/editor/cms-url.ts)
  *
  * Route classification lives in `parseEditorRoute` (pure, unit-tested); this
  * hook only adds the query-string fields.
@@ -78,7 +85,15 @@ export interface CampaignEditorUrlState {
   rightTab: RightPanelTab | null;
   layerId: string | null;
   variantId: string | null;
+  /**
+   * CMS state (collection / item / pagination / search). Always present so
+   * consumers don't branch on route type; `collectionId` is null outside the
+   * CMS area or on the bare `/edit/cms` route.
+   */
+  cms: CmsUrlState;
 }
+
+const EMPTY_CMS_STATE: CmsUrlState = parseCmsUrlState(null, null);
 
 /** State with no page/component resource: base `/edit` and the standalone areas. */
 const EMPTY_URL_STATE: CampaignEditorUrlState = {
@@ -90,7 +105,16 @@ const EMPTY_URL_STATE: CampaignEditorUrlState = {
   rightTab: null,
   layerId: null,
   variantId: null,
+  cms: EMPTY_CMS_STATE,
 };
+
+export interface NavigateToCollectionOptions {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  /** router.replace() instead of push() — for synthetic corrections. */
+  replace?: boolean;
+}
 
 export interface NavigateToPageOptions {
   view?: Viewport;
@@ -141,6 +165,12 @@ export function useCampaignEditorUrl(campaignId: string) {
           variantId: searchParams?.get("variant") ?? null,
         };
       case "cms":
+        return {
+          ...EMPTY_URL_STATE,
+          type: "cms",
+          resourceId: route.resourceId,
+          cms: parseCmsUrlState(route.resourceId, searchParams),
+        };
       case "forms":
       case "settings":
         return {
@@ -291,6 +321,71 @@ export function useCampaignEditorUrl(campaignId: string) {
     [router, campaignId],
   );
 
+  /** Go to the CMS area with no collection selected. */
+  const navigateToCollections = useCallback(
+    (options?: { replace?: boolean }) => {
+      const url = buildCmsUrl(campaignId, null);
+      if (options?.replace) router.replace(url);
+      else router.push(url);
+    },
+    [router, campaignId],
+  );
+
+  /**
+   * Open a collection's table. Switching to a DIFFERENT collection resets
+   * page / search (they belong to the previous collection's data); staying on
+   * the same collection preserves them unless overridden. Always closes the
+   * item sheet.
+   */
+  const navigateToCollection = useCallback(
+    (collectionId: string, options?: NavigateToCollectionOptions) => {
+      const cms = urlStateRef.current.cms;
+      const same = cms.collectionId === collectionId;
+      const url = buildCmsUrl(campaignId, collectionId, {
+        page: options?.page ?? (same ? cms.page : 1),
+        pageSize: options?.pageSize ?? cms.pageSize,
+        search: options?.search ?? (same ? cms.search : ""),
+      });
+      if (options?.replace) router.replace(url);
+      else router.push(url);
+    },
+    [router, campaignId],
+  );
+
+  /** Open an existing item's edit sheet, keeping the table's page / search. */
+  const navigateToCollectionItem = useCallback(
+    (collectionId: string, itemId: string) => {
+      const cms = urlStateRef.current.cms;
+      const same = cms.collectionId === collectionId;
+      router.push(
+        buildCmsUrl(campaignId, collectionId, {
+          page: same ? cms.page : 1,
+          pageSize: cms.pageSize,
+          search: same ? cms.search : "",
+          item: itemId,
+        }),
+      );
+    },
+    [router, campaignId],
+  );
+
+  /** Open the create-item sheet, keeping the table's page / search. */
+  const navigateToNewCollectionItem = useCallback(
+    (collectionId: string) => {
+      const cms = urlStateRef.current.cms;
+      const same = cms.collectionId === collectionId;
+      router.push(
+        buildCmsUrl(campaignId, collectionId, {
+          page: same ? cms.page : 1,
+          pageSize: cms.pageSize,
+          search: same ? cms.search : "",
+          item: "new",
+        }),
+      );
+    },
+    [router, campaignId],
+  );
+
   /**
    * Fine-grained state mirrors — `history.replaceState`, no new history
    * entry. `useEditorStore.setSelectedLayerId` calls
@@ -312,6 +407,10 @@ export function useCampaignEditorUrl(campaignId: string) {
     navigateToComponent,
     navigateToEditor,
     navigateToArea,
+    navigateToCollections,
+    navigateToCollection,
+    navigateToCollectionItem,
+    navigateToNewCollectionItem,
     replaceLayerIdInUrl,
     replaceViewInUrl,
   };

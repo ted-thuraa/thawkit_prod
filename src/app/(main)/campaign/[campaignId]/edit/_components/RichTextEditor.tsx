@@ -116,7 +116,7 @@ import type {
   CollectionFieldType,
   Layer,
   LinkSettings,
-  LinkType,
+  RichTextLinkOptionType,
   Asset,
 } from "@/types/funnel";
 import { DEFAULT_TEXT_STYLES } from "@/lib/text-format-utils";
@@ -151,7 +151,7 @@ interface RichTextEditorProps {
   /** Size variant for compact mode: 'xs' for smaller text, 'sm' for larger text */
   size?: "xs" | "sm";
   /** Link types to exclude from the link settings dropdown */
-  excludedLinkTypes?: LinkType[];
+  excludedLinkTypes?: RichTextLinkOptionType[];
   /** Hide "Current page item" and "Reference field" options (e.g. when editing CMS item content) */
   hidePageContextOptions?: boolean;
   /** Stretch editor to fill parent height (scrolls content instead of growing) */

@@ -189,11 +189,10 @@ export const FIELD_TYPES_BY_CATEGORY = FIELD_TYPE_CATEGORIES.map((cat) => ({
   types: FIELD_TYPES.filter((t) => t.category === cat.id),
 }));
 
-/** Valid field type values for API validation (includes system types like 'status') */
-export const VALID_FIELD_TYPES: readonly string[] = [
-  ...FIELD_TYPES.map((t) => t.value),
-  "status",
-];
+/** Valid field type values for API validation. */
+export const VALID_FIELD_TYPES: readonly string[] = FIELD_TYPES.map(
+  (t) => t.value,
+);
 
 /** Check if a field type supports setting a default value */
 export function supportsDefaultValue(
@@ -697,38 +696,6 @@ export function getFieldName(
   fieldId: string,
 ): string {
   return findFieldById(fields, fieldId)?.name ?? "Unknown field";
-}
-
-/** Find the computed status field ID for a collection's fields */
-export function findStatusFieldId(fields: CollectionField[]): string | null {
-  return fields.find((f) => f.type === "status" && f.is_computed)?.id ?? null;
-}
-
-/** Action types for changing an item's publish status */
-export type StatusAction = "draft" | "stage" | "publish";
-
-/** Serialize a status value object to JSON for storage in item values */
-export function buildStatusValue(
-  isPublishable: boolean,
-  isPublished: boolean,
-  isModified = false,
-): string {
-  return JSON.stringify({
-    is_publishable: isPublishable,
-    is_published: isPublished,
-    is_modified: isModified,
-  });
-}
-
-/** Derive optimistic is_publishable/is_published flags from a status action */
-export function getStatusFlagsFromAction(action: StatusAction): {
-  isPublishable: boolean;
-  isPublished: boolean;
-} {
-  return {
-    isPublishable: action !== "draft",
-    isPublished: action === "publish",
-  };
 }
 
 /** Get field type by ID. Returns undefined if not found. */

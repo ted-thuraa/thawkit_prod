@@ -34,11 +34,7 @@ import RightPanelDrawer from "./RightPanelDrawer";
 import EditorToolbar from "./EditorToolbar";
 import EditorCenterCanvas from "./EditorCanvas";
 import CollectionsSidebar from "./CMS/collectionsSidebar";
-import CollectionsContent from "./CMS/cmsContentEditor";
 import CmsContentEditor from "./CMS/cmsContentEditor";
-
-// Lazy-loaded components (heavy, not needed on initial render)
-const CMS = lazy(() => import("./CMS"));
 
 interface EditorShellProps {
   /** Floating panel pinned to the left edge. */
@@ -408,8 +404,10 @@ export function CampaignEditorMain({
 
   if (urlState.type === "cms") {
     return (
-      <CMSEditorShell collectionsSidebar={<CollectionsSidebar />}>
-        <CmsContentEditor />
+      <CMSEditorShell
+        collectionsSidebar={<CollectionsSidebar campaignId={campaignId} />}
+      >
+        <CmsContentEditor campaignId={campaignId} />
       </CMSEditorShell>
     );
   }

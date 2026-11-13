@@ -25,7 +25,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useDebounce } from "@/hooks/use-debounce";
-import { collectionsApi } from "@/lib/api";
+import { collectionsReadApi } from "@/lib/editor/editor-read-api";
 import {
   findDisplayField,
   getItemDisplayName,
@@ -118,7 +118,7 @@ export default function ReferenceFieldCombobox({
       setLoading(true);
       setError(null);
       try {
-        const response = await collectionsApi.getItems(collectionId, {
+        const response = await collectionsReadApi.getItems(collectionId, {
           limit: 100,
           search: debouncedSearch.trim() || undefined,
         });
@@ -151,7 +151,7 @@ export default function ReferenceFieldCombobox({
 
     missing.forEach((id) => fetchingRef.current.add(id));
     Promise.all(
-      missing.map((id) => collectionsApi.getItemById(collectionId, id)),
+      missing.map((id) => collectionsReadApi.getItemById(collectionId, id)),
     )
       .then((responses) => {
         const resolved: Record<string, CollectionItemWithValues> = {};

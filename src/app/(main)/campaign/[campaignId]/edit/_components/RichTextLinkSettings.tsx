@@ -33,6 +33,7 @@ import type {
   Collection,
   LinkSettings,
   LinkType,
+  RichTextLinkOptionType,
 } from "@/types/funnel";
 import {
   createDynamicTextVariable,
@@ -78,7 +79,7 @@ export interface RichTextLinkSettingsProps {
   /** Current layer (for context - collection layer detection) */
   layer?: Layer | null;
   /** Link types to exclude from the dropdown */
-  excludedLinkTypes?: LinkType[];
+  excludedLinkTypes?: RichTextLinkOptionType[];
   /** Hide "Current page item" and "Reference field" options (e.g. when editing CMS item content) */
   hidePageContextOptions?: boolean;
 }
@@ -288,7 +289,7 @@ export default function RichTextLinkSettings({
       if ("type" in option && option.type === "separator") return true;
       if (
         "value" in option &&
-        excludedLinkTypes.includes(option.value as LinkType)
+        excludedLinkTypes.includes(option.value as RichTextLinkOptionType)
       )
         return false;
       return true;

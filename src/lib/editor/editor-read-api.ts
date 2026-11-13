@@ -87,6 +87,14 @@ async function call<T>(
   return result.success ? { data: result.data } : { error: result.error };
 }
 
+/**
+ * The shared campaign-switch-safe action runner. The write adapters
+ * (`editor-collection-write-api.ts`) reuse it so reads and writes follow one
+ * contract: `{ data?, error? }`, never throws, drops results that arrive after
+ * the editor moved to another campaign.
+ */
+export { call as callEditorAction };
+
 // ─── Pages ──────────────────────────────────────────────────────────────────
 
 export const pagesReadApi = {

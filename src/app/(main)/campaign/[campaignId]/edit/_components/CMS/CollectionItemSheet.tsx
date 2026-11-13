@@ -45,10 +45,9 @@ import RichTextEditor from "../RichTextEditor";
 import RichTextEditorSheet from "../RichTextEditorSheet";
 import { useCollectionsStore } from "@/stores/editor/useCollectionsStore";
 import { useCollectionLayerStore } from "@/stores/editor/useCollectionLayerStore";
-import { usePagesStore } from "@/stores/editor/usePagesStore";
 import { useEditorStore } from "@/stores/editor/useEditorStore";
 import { useAssetsStore } from "@/stores/editor/useAssetsStore";
-import { useLocalizationMode } from "@/hooks/use-localization-mode";
+import { collectionsReadApi } from "@/lib/editor/editor-read-api";
 import {
   slugify,
   normalizeBooleanValue,
@@ -62,10 +61,7 @@ import {
   getAssetFieldLabel,
   getAssetFieldTypeLabel,
   isValidAssetForField,
-  findStatusFieldId,
 } from "@/lib/collection-field-utils";
-import type { StatusAction } from "@/lib/collection-field-utils";
-import { CollectionStatusPill, parseStatusValue } from "./CollectionStatusPill";
 import {
   formatDateInTimezone,
   localDatetimeToUTC,
@@ -91,12 +87,7 @@ import {
   rectSortingStrategy,
   arrayMove,
 } from "@dnd-kit/sortable";
-import type {
-  Asset,
-  CollectionField,
-  CollectionItemWithValues,
-  CreateTranslationData,
-} from "@/types/funnel";
+import type { Asset, CollectionItemWithValues } from "@/types/funnel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -105,8 +96,12 @@ interface CollectionItemSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   collectionId: string;
-  itemId?: string | null; // null = create new, string = edit existing
+  /** null / undefined = create a new item; a string = edit that existing item. */
+  itemId?: string | null;
+  /** Called after the item has been persisted (the sheet should close). */
   onSuccess?: () => void;
+  /** Ask the host to delete the item being edited (it owns the confirm dialog). */
+  onDeleteItem?: (itemId: string) => void;
 }
 
 export default function CollectionItemSheet({
@@ -115,17 +110,15 @@ export default function CollectionItemSheet({
   collectionId,
   itemId,
   onSuccess,
+  onDeleteItem,
 }: CollectionItemSheetProps) {
-  const { collections, fields, items, updateItem, createItem, setItemStatus } =
+  const { collections, fields, items, updateItem, createItem } =
     useCollectionsStore();
   const {
     updateItemInLayerData,
     invalidateLayerData,
     refetchLayersForCollection,
   } = useCollectionLayerStore();
-  const { updatePageCollectionItem, refetchPageCollectionItem, pages } =
-    usePagesStore();
-  const currentPageId = useEditorStore((state) => state.currentPageId);
   const openFileManager = useEditorStore((state) => state.openFileManager);
   const getAsset = useAssetsStore((state) => state.getAsset);
   const timezone =
@@ -133,49 +126,21 @@ export default function CollectionItemSheet({
       (state) => state.settingsByKey.timezone as string | null,
     ) ?? "UTC";
 
-  // Localization: when the user is browsing the canvas in a non-default
-  // locale, this sheet edits CMS *translations* rather than the canonical
-  // collection item values. Reads/writes go through the translations table
-  // so canvas + preview pick up the new copy via applyCmsTranslations.
-  const { isLocalizing, currentLocale } = useLocalizationMode();
-  const selectedLocaleId = useLocalisationStore(
-    (state) => state.selectedLocaleId,
-  );
-  const createTranslation = useLocalisationStore(
-    (state) => state.createTranslation,
-  );
-  const updateTranslation = useLocalisationStore(
-    (state) => state.updateTranslation,
-  );
-  const deleteTranslation = useLocalisationStore(
-    (state) => state.deleteTranslation,
-  );
-
-  // Collection collaboration sync
-  const liveCollectionUpdates = useLiveCollectionUpdates();
-
-  // Item locking for collaboration
-  const itemLock = useResourceLock({
-    resourceType: "collection_item",
-    channelName: collectionId ? `collection:${collectionId}:item_locks` : "",
-  });
-
-  // Stable ref for lock functions to avoid dependency issues in effects
-  const itemLockRef = useRef(itemLock);
-  useEffect(() => {
-    itemLockRef.current = itemLock;
-  }, [itemLock]);
-
-  const lockedItemIdRef = useRef<string | null>(null);
-
+  // The item being edited. Resolved ONCE per (sheet open, collection, item id):
+  // from the already-loaded page of items when present, otherwise fetched by id
+  // (deep links / items on another page). Deliberately not re-derived on every
+  // store refresh so a background reload can't reset the user's in-flight edits.
   const [editingItem, setEditingItem] =
     useState<CollectionItemWithValues | null>(null);
+  const [itemLoadState, setItemLoadState] = useState<
+    "idle" | "loading" | "missing"
+  >("idle");
+  const [isSaving, setIsSaving] = useState(false);
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [expandedRichTextField, setExpandedRichTextField] = useState<
     string | null
   >(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const pendingStatusActionRef = useRef<StatusAction | null>(null);
 
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -190,30 +155,10 @@ export default function CollectionItemSheet({
     () => (collectionId ? items[collectionId] || [] : []),
     [collectionId, items],
   );
-  const statusFieldId = useMemo(
-    () => findStatusFieldId(collectionFields),
-    [collectionFields],
-  );
-
-  // Fields managed by Airtable sync — disabled in the form
-  const [syncedFieldIds, setSyncedFieldIds] = useState<Set<string>>(() =>
-    getSyncedFieldIds(collectionId),
-  );
-
+  const collectionItemsRef = useRef(collectionItems);
   useEffect(() => {
-    setSyncedFieldIds(getSyncedFieldIds(collectionId));
-    fetchCachedConnections().then(() => {
-      setSyncedFieldIds(getSyncedFieldIds(collectionId));
-    });
-  }, [collectionId]);
-
-  // Check if the current page is a dynamic page using this collection
-  const currentPage = currentPageId
-    ? pages.find((p) => p.id === currentPageId)
-    : null;
-  const isPageLevelItem =
-    currentPage?.is_dynamic &&
-    currentPage?.settings?.cms?.collection_id === collectionId;
+    collectionItemsRef.current = collectionItems;
+  }, [collectionItems]);
 
   // Find name and slug fields for validation (only if editable in the form)
   const nameField = useMemo(
@@ -226,11 +171,11 @@ export default function CollectionItemSheet({
     [collectionFields],
   );
 
-  // Validate slug uniqueness
+  // Fast client-side slug check against the loaded page of items. The server
+  // re-checks against the WHOLE collection and is authoritative.
   const validateSlugUniqueness = useCallback(
     (value: string, fieldId: string) => {
       if (!value) return true; // Allow empty (other validation can handle required)
-      // Check if slug exists in other items (exclude current item when editing)
       const existingItem = collectionItems.find(
         (item) => item.values[fieldId] === value && item.id !== editingItem?.id,
       );
@@ -243,144 +188,79 @@ export default function CollectionItemSheet({
   // Subscribe to isDirty at render level so react-hook-form tracks it
   const { isDirty } = form.formState;
 
-  // Helper to detect temporary IDs (from optimistic creates)
-  const isTempId = (id: string | null | undefined): boolean => {
-    return !!id && (id.startsWith("temp-") || id.startsWith("temp-dup-"));
-  };
+  const isCreateMode = !itemId;
 
-  // Compute status for the current item from the status field value
-  const isNewItem = !editingItem || isTempId(editingItem.id);
-  const statusValue =
-    editingItem && statusFieldId
-      ? parseStatusValue(editingItem.values[statusFieldId])
-      : null;
-  const isPublishable =
-    statusValue?.is_publishable ?? editingItem?.is_publishable ?? true;
-  const hasPublishedVersion = statusValue?.is_published ?? false;
-
-  // Load item data when sheet opens with an itemId
+  // Resolve the item for edit mode.
   useEffect(() => {
-    // Only load item data when sheet is open and we have an itemId
     if (!open) return;
 
-    if (itemId && collectionItems.length > 0) {
-      const item = collectionItems.find((i) => i.id === itemId);
-      // If itemId is a temp ID, also try to find by matching the temp pattern
-      // (the item might have been replaced with the real ID)
-      if (!item && isTempId(itemId)) {
-        // Item with temp ID not found - it may have been replaced with real ID
-        // Keep the current editingItem if it exists
-        return;
-      }
-      setEditingItem(item || null);
-    } else if (!itemId) {
+    if (!itemId) {
       setEditingItem(null);
-    }
-  }, [itemId, open, collectionItems]);
-
-  // Acquire/release item lock when sheet opens/closes
-  useEffect(() => {
-    const acquireItemLock = async () => {
-      if (open && itemId && itemId !== "new") {
-        const acquired = await itemLockRef.current.acquireLock(itemId);
-        if (acquired) {
-          lockedItemIdRef.current = itemId;
-        }
-      }
-    };
-
-    const releaseItemLock = async () => {
-      if (lockedItemIdRef.current) {
-        await itemLockRef.current.releaseLock(lockedItemIdRef.current);
-        lockedItemIdRef.current = null;
-      }
-    };
-
-    if (open && itemId && itemId !== "new") {
-      acquireItemLock();
-    } else {
-      releaseItemLock();
+      setItemLoadState("idle");
+      return;
     }
 
+    const loaded = collectionItemsRef.current.find((i) => i.id === itemId);
+    if (loaded) {
+      setEditingItem(loaded);
+      setItemLoadState("idle");
+      return;
+    }
+
+    let cancelled = false;
+    setEditingItem(null);
+    setItemLoadState("loading");
+    collectionsReadApi.getItemById(collectionId, itemId).then((response) => {
+      if (cancelled) return;
+      if (response.data) {
+        setEditingItem(response.data);
+        setItemLoadState("idle");
+      } else {
+        setItemLoadState("missing");
+      }
+    });
     return () => {
-      releaseItemLock();
+      cancelled = true;
     };
-  }, [open, itemId]);
+  }, [open, itemId, collectionId]);
 
-  // Translatable CMS field types — must match extractCmsTranslatableItems /
-  // applyCmsTranslations so the read + write paths agree on which fields are
-  // localised vs canonical.
-  const isTranslatableField = useCallback((field: CollectionField) => {
-    return field.type === "text" || field.type === "rich_text";
-  }, []);
+  // An id that doesn't exist in this collection (stale link, deleted item):
+  // tell the user and hand control back to the host instead of showing a
+  // blank "Edit" form that could never save.
+  useEffect(() => {
+    if (itemLoadState !== "missing") return;
+    toast.error("Item not found", {
+      description: "It may have been deleted.",
+    });
+    onOpenChange(false);
+  }, [itemLoadState, onOpenChange]);
 
-  const buildCmsContentKey = useCallback((field: CollectionField) => {
-    return field.key ? `field:key:${field.key}` : `field:id:${field.id}`;
-  }, []);
-
-  // Reset form when editing item changes. In localizing mode, translatable
-  // fields seed from the saved translation (parsed for rich text); other
-  // fields keep their canonical values for read-only context. We deliberately
-  // snapshot translations once on mount/locale switch so a background refresh
-  // doesn't clobber the user's in-flight edits.
+  // Reset form when the item (or the collection's fields) change.
   useEffect(() => {
     const editableFields = collectionFields.filter((f) => f.fillable);
 
     if (editingItem) {
-      const localeTranslations =
-        isLocalizing && selectedLocaleId
-          ? useLocalisationStore.getState().translations[selectedLocaleId]
-          : undefined;
-
-      const values: Record<string, any> = {};
+      const values: Record<string, unknown> = {};
       editableFields.forEach((field) => {
-        let value: any;
-        if (isLocalizing && localeTranslations && isTranslatableField(field)) {
-          const tKey = `cms:${editingItem.id}:${buildCmsContentKey(field)}`;
-          const translation = localeTranslations[tKey];
-          const stored = translation?.content_value || "";
-          if (field.type === "rich_text") {
-            if (stored) {
-              try {
-                value = JSON.parse(stored);
-              } catch {
-                value = "";
-              }
-            } else {
-              value = "";
-            }
-          } else {
-            value = stored;
-          }
-        } else {
-          value = editingItem.values[field.id] ?? "";
-          if (field.type === "boolean") {
-            value = normalizeBooleanValue(value);
-          }
+        let value: unknown = editingItem.values[field.id] ?? "";
+        if (field.type === "boolean") {
+          value = normalizeBooleanValue(value as string);
         }
         values[field.id] = value;
       });
       form.reset(values);
     } else {
-      const defaultValues: Record<string, any> = {};
+      const defaultValues: Record<string, unknown> = {};
       editableFields.forEach((field) => {
-        let value = field.default || "";
+        let value: unknown = field.default || "";
         if (field.type === "boolean") {
-          value = normalizeBooleanValue(value);
+          value = normalizeBooleanValue(value as string);
         }
         defaultValues[field.id] = value;
       });
       form.reset(defaultValues);
     }
-  }, [
-    editingItem,
-    collectionFields,
-    form,
-    isLocalizing,
-    selectedLocaleId,
-    isTranslatableField,
-    buildCmsContentKey,
-  ]);
+  }, [editingItem, collectionFields, form]);
 
   // Handle auto-focus on sheet open
   const handleOpenAutoFocus = useCallback(
@@ -431,112 +311,11 @@ export default function CollectionItemSheet({
     }
   }, [form, editingItem, collectionFields]);
 
-  // Save flow for non-default locales. Each translatable text/rich_text
-  // field is created/updated/deleted in the translations table; everything
-  // else is left untouched. Canvas + preview re-read translations from the
-  // store via applyCmsTranslations, so no extra optimistic patching of the
-  // canonical item is needed.
-  const handleLocalizedSubmit = (values: Record<string, any>) => {
-    if (!editingItem || !selectedLocaleId) {
-      toast.error("Cannot save translation", {
-        description: !editingItem
-          ? "Translations can only be added to existing items."
-          : "No locale selected.",
-      });
-      return;
-    }
-
-    const localeTranslations =
-      useLocalisationStore.getState().translations[selectedLocaleId] || {};
-    const itemId = editingItem.id;
-    const promises: Promise<unknown>[] = [];
-
-    for (const field of collectionFields) {
-      if (!field.fillable || !isTranslatableField(field)) continue;
-      const contentKey = buildCmsContentKey(field);
-      const tKey = `cms:${itemId}:${contentKey}`;
-      const existing = localeTranslations[tKey];
-
-      const raw = values[field.id];
-      let serialized: string;
-      if (field.type === "rich_text") {
-        if (raw && typeof raw === "object") {
-          serialized = JSON.stringify(raw);
-        } else if (typeof raw === "string") {
-          serialized = raw.trim();
-        } else {
-          serialized = "";
-        }
-      } else {
-        serialized = typeof raw === "string" ? raw.trim() : "";
-      }
-
-      const previous = existing?.content_value || "";
-      if (serialized === previous) continue;
-
-      if (!serialized) {
-        if (existing) {
-          promises.push(deleteTranslation(existing));
-        }
-        continue;
-      }
-
-      if (existing) {
-        promises.push(
-          updateTranslation(existing, {
-            content_value: serialized,
-            is_completed: true,
-          }),
-        );
-      } else {
-        const data: CreateTranslationData = {
-          locale_id: selectedLocaleId,
-          source_type: "cms",
-          source_id: itemId,
-          content_key: contentKey,
-          content_type: field.type === "rich_text" ? "richtext" : "text",
-          content_value: serialized,
-          is_completed: true,
-        };
-        promises.push(createTranslation(data));
-      }
-    }
-
-    setEditingItem(null);
-    form.reset();
-    if (onSuccess) {
-      onSuccess();
-    } else {
-      onOpenChange(false);
-    }
-
-    if (promises.length === 0) return;
-
-    Promise.all(promises)
-      .then(() => {
-        if (isPageLevelItem && currentPageId) {
-          refetchPageCollectionItem(currentPageId);
-        }
-      })
-      .catch((error) => {
-        console.error("Failed to save translations:", error);
-        toast.error("Failed to save translations", {
-          description: "Please try again.",
-        });
-      });
-  };
-
-  const handleSubmit = (values: Record<string, any>) => {
-    if (!collectionId) return;
-
-    // Localising flow runs entirely against the translations table — see
-    // the dedicated branch further down. Skip canonical-field validation
-    // (required name / unique slug) since the translation may be empty
-    // (= fall back to source) and slug uniqueness is per-locale anyway.
-    if (isLocalizing) {
-      handleLocalizedSubmit(values);
-      return;
-    }
+  const handleSubmit = async (values: Record<string, any>) => {
+    if (!collectionId || isSaving) return;
+    // Edit mode but the item hasn't loaded (or was lost): never fall through
+    // to a create.
+    if (itemId && !editingItem) return;
 
     // Normalize boolean values to strings before submitting
     collectionFields.forEach((field) => {
@@ -574,7 +353,6 @@ export default function CollectionItemSheet({
         });
         hasErrors = true;
       } else if (!validateSlugUniqueness(slugValue, slugField.id)) {
-        // Validate slug uniqueness
         form.setError(slugField.id, {
           type: "manual",
           message: "This slug already exists in this collection",
@@ -585,93 +363,41 @@ export default function CollectionItemSheet({
 
     if (hasErrors) return;
 
-    // Store editingItem reference before closing (needed for API call below)
-    const itemToUpdate = editingItem;
-
-    // Close sheet immediately (optimistic UI) - only use onSuccess to avoid double-close race condition
-    setEditingItem(null);
-    form.reset();
-    if (onSuccess) {
-      onSuccess();
-    } else {
-      onOpenChange(false);
-    }
-
-    if (itemToUpdate) {
-      // Update existing item
-
-      // 1. Optimistically update in collection layer store (for collection layers)
-      updateItemInLayerData(itemToUpdate.id, values);
-
-      // 2. Optimistically update in pages store (for dynamic pages)
-      if (isPageLevelItem && currentPageId) {
-        updatePageCollectionItem(currentPageId, {
-          ...itemToUpdate,
-          values,
-          updated_at: new Date().toISOString(),
-        });
+    setIsSaving(true);
+    try {
+      if (editingItem) {
+        const saved = await updateItem(collectionId, editingItem.id, values);
+        // Keep collection layers (canvas) in step with the persisted values.
+        updateItemInLayerData(saved.id, saved.values);
+      } else {
+        await createItem(collectionId, values);
       }
 
-      // 3. Update in main collections store (fire and forget - store handles optimistic update & rollback)
-      const itemId = itemToUpdate.id;
-      const statusAction = pendingStatusActionRef.current;
-      pendingStatusActionRef.current = null;
-      updateItem(collectionId, itemId, values)
-        .then(() => {
-          // Apply status action after save completes
-          if (statusAction) {
-            setItemStatus(collectionId, itemId, statusAction);
-          }
-          // Broadcast item update to other collaborators
-          if (liveCollectionUpdates) {
-            liveCollectionUpdates.broadcastItemUpdate(collectionId, itemId, {
-              values,
-            } as any);
-          }
+      invalidateLayerData(collectionId);
+      refetchLayersForCollection(collectionId);
 
-          // Invalidate + refetch AFTER the API update completes to avoid
-          // stale data overwriting the optimistic update
-          invalidateLayerData(collectionId);
-          refetchLayersForCollection(collectionId);
-
-          if (isPageLevelItem && currentPageId) {
-            refetchPageCollectionItem(currentPageId);
-          }
-        })
-        .catch((error) => {
-          console.error("Failed to update item:", error);
-          toast.error("Failed to save item", {
-            description: "Changes have been reverted.",
-          });
-        });
-    } else {
-      // Create new item (store handles optimistic update & rollback)
-      const statusAction = pendingStatusActionRef.current;
-      pendingStatusActionRef.current = null;
-      createItem(collectionId, values, statusAction ?? undefined)
-        .then((newItem) => {
-          // Broadcast item creation to other collaborators
-          if (liveCollectionUpdates && newItem) {
-            liveCollectionUpdates.broadcastItemCreate(collectionId, newItem);
-          }
-
-          // Invalidate + refetch to sync collection layers
-          invalidateLayerData(collectionId);
-          setTimeout(() => {
-            refetchLayersForCollection(collectionId);
-
-            // Also refetch page data if on dynamic page
-            if (isPageLevelItem && currentPageId) {
-              refetchPageCollectionItem(currentPageId);
-            }
-          }, 100);
-        })
-        .catch((error) => {
-          console.error("Failed to create item:", error);
-          toast.error("Failed to create item", {
-            description: "Please try again.",
-          });
-        });
+      // Persisted — close. The form stays open (with the user's input) on any
+      // failure above, so nothing is lost.
+      form.reset();
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        onOpenChange(false);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Please try again.";
+      if (slugField && /slug/i.test(message)) {
+        form.setError(slugField.id, { type: "server", message });
+      }
+      toast.error(
+        editingItem ? "Failed to save item" : "Failed to create item",
+        { description: message },
+      );
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -696,7 +422,6 @@ export default function CollectionItemSheet({
     setShowUnsavedDialog(false);
     form.clearErrors();
     form.reset();
-    setEditingItem(null);
     onOpenChange(false);
   }, [form, onOpenChange]);
 
@@ -724,22 +449,10 @@ export default function CollectionItemSheet({
       >
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2 flex-wrap">
-            {isLocalizing && currentLocale
-              ? `Translate ${collection?.name} Item`
-              : `${editingItem ? "Edit" : "Create"} ${collection?.name} Item`}
-            {!isNewItem && statusValue && !isLocalizing && (
-              <CollectionStatusPill statusValue={statusValue} />
-            )}
-            {isLocalizing && currentLocale && (
-              <span className="text-xs text-muted-foreground font-normal">
-                Translate to {currentLocale.label}
-              </span>
-            )}
+            {`${isCreateMode ? "Create" : "Edit"} ${collection?.name ?? ""} Item`}
           </SheetTitle>
           <SheetActions>
-            {/* More options dropdown — hidden while translating, the only
-                action there is Delete which doesn't apply to translations. */}
-            {editingItem && !isTempId(editingItem.id) && !isLocalizing && (
+            {editingItem && onDeleteItem && (
               <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
                   <Button size="sm" variant="secondary">
@@ -748,12 +461,7 @@ export default function CollectionItemSheet({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem
-                    onClick={() => {
-                      onOpenChange(false);
-                      toast.info(
-                        "Use the context menu in the CMS table to delete items",
-                      );
-                    }}
+                    onClick={() => onDeleteItem(editingItem.id)}
                   >
                     Delete
                   </DropdownMenuItem>
@@ -761,71 +469,20 @@ export default function CollectionItemSheet({
               </DropdownMenu>
             )}
 
-            {/* Save button. The status-action dropdown (draft / publish) is
-                hidden when translating since those operate at the canonical
-                item level — translations are saved as a single unit. */}
-            <div className="flex">
-              <Button
-                size="sm"
-                type="submit"
-                form="collection-item-form"
-                disabled={
-                  isTempId(editingItem?.id) || (isLocalizing && !editingItem)
-                }
-                className={isLocalizing ? "" : "rounded-r-none"}
-              >
-                {isLocalizing
-                  ? "Save translation"
-                  : editingItem
-                    ? isTempId(editingItem.id)
-                      ? "Saving..."
-                      : "Save"
-                    : "Create"}
-              </Button>
-              {!isLocalizing && (
-                <DropdownMenu modal={false}>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      size="sm"
-                      variant="default"
-                      className="rounded-l-none border-l border-primary-foreground/20 px-1.5"
-                      disabled={isTempId(editingItem?.id)}
-                    >
-                      <Icon name="triangle-down" className="w-3 h-3" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {!isNewItem && (
-                      <DropdownMenuItem
-                        onClick={() => {
-                          pendingStatusActionRef.current = "stage";
-                          form.handleSubmit(handleSubmit)();
-                        }}
-                      >
-                        Save as staged for publish
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuItem
-                      onClick={() => {
-                        pendingStatusActionRef.current = "draft";
-                        form.handleSubmit(handleSubmit)();
-                      }}
-                    >
-                      {isNewItem ? "Create" : "Save"} as draft
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={!collection?.has_published_version}
-                      onClick={() => {
-                        pendingStatusActionRef.current = "publish";
-                        form.handleSubmit(handleSubmit)();
-                      }}
-                    >
-                      {isNewItem ? "Create" : "Save"} and publish
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-            </div>
+            <Button
+              size="sm"
+              type="submit"
+              form="collection-item-form"
+              disabled={isSaving || (!!itemId && !editingItem)}
+            >
+              {isSaving
+                ? "Saving..."
+                : itemLoadState === "loading"
+                  ? "Loading..."
+                  : isCreateMode
+                    ? "Create"
+                    : "Save"}
+            </Button>
           </SheetActions>
         </SheetHeader>
 
@@ -839,15 +496,6 @@ export default function CollectionItemSheet({
               {collectionFields
                 .filter((f) => f.fillable)
                 .map((field) => {
-                  const isSynced = syncedFieldIds.has(field.id);
-                  // While translating, lock everything that isn't a
-                  // translatable text/rich_text field — the canonical value
-                  // is shown read-only so the user has context, but only
-                  // translatable fields can be edited per locale.
-                  const isLockedForLocale =
-                    isLocalizing && !isTranslatableField(field);
-                  const isFieldDisabled = isSynced || isLockedForLocale;
-
                   return (
                     <FormField
                       key={field.id}
@@ -869,25 +517,9 @@ export default function CollectionItemSheet({
                                   </span>
                                 ) : null;
                               })()}
-                            {isSynced && (
-                              <span className="text-[10px] text-muted-foreground leading-none">
-                                Synced from Airtable
-                              </span>
-                            )}
-                            {isLockedForLocale && (
-                              <span className="text-[10px] text-muted-foreground leading-none">
-                                Not translatable
-                              </span>
-                            )}
                           </div>
                           <FormControl>
-                            <div
-                              className={cn(
-                                "min-w-0",
-                                isFieldDisabled &&
-                                  "opacity-50 pointer-events-none",
-                              )}
-                            >
+                            <div className="min-w-0">
                               {field.type === "rich_text" ? (
                                 <div>
                                   <RichTextEditor

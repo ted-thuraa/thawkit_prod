@@ -62,7 +62,7 @@ import { Empty, EmptyDescription } from "@/components/ui/empty";
 
 import { generateId } from "@/lib/utils";
 import { useCollectionsStore } from "@/stores/editor/useCollectionsStore";
-import { collectionsApi } from "@/lib/api";
+import { collectionsReadApi } from "@/lib/editor/editor-read-api";
 import {
   findDisplayField,
   getItemDisplayName,
@@ -737,7 +737,7 @@ export default function SelectOptionsSettings({
       }
 
       try {
-        const res = await collectionsApi.getItems(optionsSource.collectionId, {
+        const res = await collectionsReadApi.getItems(optionsSource.collectionId, {
           limit: SOURCE_ITEMS_PAGE_SIZE,
           offset: requestOffset,
         });
@@ -792,7 +792,7 @@ export default function SelectOptionsSettings({
     if (sourceItems.some((item) => item.id === selectedDefaultId)) return;
 
     let cancelled = false;
-    collectionsApi
+    collectionsReadApi
       .getItemById(collectionId, selectedDefaultId)
       .then((res) => {
         if (cancelled || res.error || !res.data) return;

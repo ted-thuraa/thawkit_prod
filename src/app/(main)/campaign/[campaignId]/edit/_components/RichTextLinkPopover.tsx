@@ -25,7 +25,7 @@ import type {
   CollectionField,
   Collection,
   LinkSettings,
-  LinkType,
+  RichTextLinkOptionType,
 } from "@/types/funnel";
 import type { FieldGroup } from "./CollectionFieldSelector";
 
@@ -51,7 +51,7 @@ export interface RichTextLinkPopoverProps {
   /** Whether the link button is disabled */
   disabled?: boolean;
   /** Link types to exclude from the dropdown */
-  excludedLinkTypes?: LinkType[];
+  excludedLinkTypes?: RichTextLinkOptionType[];
   /** Hide "Current page item" and "Reference field" options (e.g. when editing CMS item content) */
   hidePageContextOptions?: boolean;
 }

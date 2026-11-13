@@ -21,7 +21,7 @@ import Icon from "@/components/ui/icon";
 // import PageContextMenu from './PageContextMenu';
 // import { getPageStatusAvailability } from './PageStatusBadge';
 import type { Page } from "@/types/funnel";
-import type { StatusAction } from "@/lib/collection-field-utils";
+import type { StatusAction } from "@/types/funnel";
 import { cn } from "@/lib/utils";
 import {
   useTreeDragDrop,
