@@ -85,6 +85,7 @@ export type CollectionFieldType =
   | "reference"
   | "multi_reference"
   | "rich_text"
+  | "icon"
   | "image"
   | "audio"
   | "video"

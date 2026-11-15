@@ -37,6 +37,54 @@ export interface SampleCollectionDefinition {
  */
 export const SAMPLE_COLLECTIONS: SampleCollectionDefinition[] = [
   {
+    id: "quiz categories",
+    name: "Quiz Categories",
+    customFields: [
+      {
+        name: "Description",
+        key: "description",
+        type: "text",
+        fillable: true,
+        hidden: false,
+        order: 5,
+      },
+      {
+        name: "Icon",
+        key: "icon",
+        type: "image",
+        fillable: true,
+        hidden: false,
+        order: 6,
+      },
+    ],
+    items: [
+      {
+        values: {
+          name: "About you",
+          slug: "about-you",
+          description: "",
+        },
+        images: { image: "" },
+      },
+      {
+        values: {
+          name: "Your goals",
+          slug: "your-goals",
+          description: "",
+        },
+        images: { image: "" },
+      },
+      {
+        values: {
+          name: "Your current challenges",
+          slug: "your-current-challenges",
+          description: "",
+        },
+        images: { image: "" },
+      },
+    ],
+  },
+  {
     id: "blog-posts",
     name: "Blog posts",
     customFields: [
