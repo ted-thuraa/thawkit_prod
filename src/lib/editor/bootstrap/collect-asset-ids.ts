@@ -107,6 +107,17 @@ function collectAssetIdsFromValue(
     } catch {
       // Not JSON (a plain URL, say) — nothing to preload.
     }
+    return;
+  }
+
+  // Quiz answer options: a JSON array whose entries may carry
+  // `image: { asset_id }` (the shared `asset_id` key convention).
+  if (fieldType === "answer_options" && value.trim().startsWith("[")) {
+    try {
+      collectAssetIdsFromJson(JSON.parse(value), out);
+    } catch {
+      // Malformed value — nothing to preload.
+    }
   }
 }
 

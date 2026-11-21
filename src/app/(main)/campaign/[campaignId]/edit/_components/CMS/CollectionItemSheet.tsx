@@ -74,6 +74,12 @@ import ReferenceFieldCombobox from "../ReferenceFieldCombobox";
 import CollectionLinkFieldInput from "./CollectionLinkFieldInput";
 import ColorFieldInput from "../ColorFieldInput";
 import AssetFieldCard, { SortableAssetFieldCard } from "../AssetFieldCard";
+import AnswerOptionsEditor from "./AnswerOptionsEditor";
+import {
+  indexFieldsById,
+  isFieldVisible,
+} from "@/lib/collection-field-visibility";
+import { resolveQuizSchema, toQuizRaw, validateQuizRaw } from "@/lib/quiz";
 import {
   DndContext,
   closestCenter,
@@ -187,6 +193,19 @@ export default function CollectionItemSheet({
   const form = useForm();
   // Subscribe to isDirty at render level so react-hook-form tracks it
   const { isDirty } = form.formState;
+
+  // Conditional field display (`showWhen`) is driven by the live form values.
+  const fieldsById = useMemo(
+    () => indexFieldsById(collectionFields),
+    [collectionFields],
+  );
+  const watchedValues = form.watch();
+
+  // Non-null only for quiz-shaped collections: enables quiz validation below.
+  const quizSchema = useMemo(
+    () => resolveQuizSchema(collectionFields),
+    [collectionFields],
+  );
 
   const isCreateMode = !itemId;
 
@@ -363,14 +382,46 @@ export default function CollectionItemSheet({
 
     if (hasErrors) return;
 
+    // Fields that don't apply to the current selection (`showWhen`) and that the
+    // user never touched are not sent, so meaningless defaults (e.g. "false" for a
+    // numeric-only toggle on a single-choice question) are never persisted. Their
+    // existing stored values are left alone (switching a type back restores them).
+    const dirty = form.formState.dirtyFields;
+    const payload: Record<string, unknown> = {};
+    for (const [fieldId, fieldValue] of Object.entries(values)) {
+      const f = fieldsById.get(fieldId);
+      if (f && !isFieldVisible(f, fieldsById, values) && !dirty[fieldId]) continue;
+      payload[fieldId] = fieldValue;
+    }
+
+    // Quiz questions: cross-field rules (ranges, option counts, media) on the
+    // record this save would produce. The server enforces the same rules.
+    if (quizSchema) {
+      const merged: Record<string, string> = { ...(editingItem?.values ?? {}) };
+      for (const [fieldId, fieldValue] of Object.entries(payload)) {
+        merged[fieldId] = fieldValue == null ? "" : String(fieldValue);
+      }
+      const issues = validateQuizRaw(toQuizRaw(quizSchema, merged), quizSchema);
+      if (issues.length > 0) {
+        const reported = new Set<string>();
+        for (const issue of issues) {
+          const fieldId = quizSchema.fieldIdByRole[issue.role];
+          if (!fieldId || reported.has(fieldId)) continue;
+          reported.add(fieldId);
+          form.setError(fieldId, { type: "manual", message: issue.message });
+        }
+        return;
+      }
+    }
+
     setIsSaving(true);
     try {
       if (editingItem) {
-        const saved = await updateItem(collectionId, editingItem.id, values);
+        const saved = await updateItem(collectionId, editingItem.id, payload);
         // Keep collection layers (canvas) in step with the persisted values.
         updateItemInLayerData(saved.id, saved.values);
       } else {
-        await createItem(collectionId, values);
+        await createItem(collectionId, payload);
       }
 
       invalidateLayerData(collectionId);
@@ -494,7 +545,10 @@ export default function CollectionItemSheet({
           >
             <div className="flex-1 flex flex-col gap-6">
               {collectionFields
-                .filter((f) => f.fillable)
+                .filter(
+                  (f) =>
+                    f.fillable && isFieldVisible(f, fieldsById, watchedValues),
+                )
                 .map((field) => {
                   return (
                     <FormField
@@ -879,6 +933,16 @@ export default function CollectionItemSheet({
                                     </div>
                                   );
                                 })()
+                              ) : field.type === "answer_options" ? (
+                                <AnswerOptionsEditor
+                                  idPrefix={`answer-options-${field.id}`}
+                                  value={
+                                    typeof formField.value === "string"
+                                      ? formField.value
+                                      : ""
+                                  }
+                                  onChange={formField.onChange}
+                                />
                               ) : field.type === "boolean" ? (
                                 <div className="flex items-center gap-2">
                                   <Checkbox

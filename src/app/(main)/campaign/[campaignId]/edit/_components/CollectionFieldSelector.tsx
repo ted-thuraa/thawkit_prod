@@ -34,6 +34,7 @@ import {
   filterFieldGroupsByType,
   flattenFieldGroups,
   DISPLAYABLE_FIELD_TYPES,
+  isBindableFieldType,
 } from "@/lib/collection-field-utils";
 
 // Import and re-export from centralized location for backwards compatibility
@@ -150,7 +151,7 @@ function ReferenceFieldGroup({
 
   // Filter sub-fields: exclude multi_reference, apply allowedTypes if provided (keeping reference for deep nesting)
   const displayableFields = referencedFields.filter((f) => {
-    if (f.type === "multi_reference") return false;
+    if (f.type === "multi_reference" || !isBindableFieldType(f.type)) return false;
     if (allowedTypes && allowedTypes.length > 0 && f.type !== "reference") {
       return allowedTypes.includes(f.type);
     }

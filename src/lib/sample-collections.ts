@@ -1,4 +1,5 @@
-import type { CollectionFieldType } from "@/types/funnel";
+import type { CollectionFieldData, CollectionFieldType } from "@/types/funnel";
+import { QUIZ_SAMPLE } from "@/lib/quiz/sample";
 
 /**
  * Sample Collections Configuration
@@ -6,6 +7,14 @@ import type { CollectionFieldType } from "@/types/funnel";
  * Defines pre-built collection templates with fields and sample items.
  * Used by the CMS to let users quickly scaffold common content structures.
  */
+
+/** Show a field only while the sibling field `fieldKey` holds one of `equals`. */
+export interface SampleFieldVisibilityRule {
+  /** Key of a field of the same sample (custom or built-in). */
+  fieldKey: string;
+  /** For `option` sources: option IDs; otherwise raw stored text. */
+  equals: string[];
+}
 
 export interface SampleFieldDefinition {
   name: string;
@@ -15,6 +24,18 @@ export interface SampleFieldDefinition {
   hidden: boolean;
   order: number;
   is_computed?: boolean;
+  /**
+   * Persist `key` so the field is LOCKED (like built-ins): it cannot be
+   * renamed, retyped or deleted, only hidden. Default: unlocked (`key` is used
+   * only to address values in sample items and is not persisted).
+   */
+  locked?: boolean;
+  /** Stored as the field's default value (for `option` fields: the option LABEL). */
+  default?: string;
+  /** Field configuration, e.g. `{ options: [{ id, name }] }` for `option` fields. */
+  data?: CollectionFieldData;
+  /** Conditional display in the item editor (all rules must hold). */
+  showWhen?: SampleFieldVisibilityRule[];
 }
 
 export interface SampleItemDefinition {
@@ -27,6 +48,8 @@ export interface SampleItemDefinition {
 export interface SampleCollectionDefinition {
   id: string;
   name: string;
+  /** Relabel built-in fields for this sample (cosmetic), e.g. `name` → "Question". */
+  builtInLabels?: { name?: string };
   /** Built-in fields are auto-created by the store, these are the EXTRA custom fields */
   customFields: SampleFieldDefinition[];
   items: SampleItemDefinition[];
@@ -84,6 +107,7 @@ export const SAMPLE_COLLECTIONS: SampleCollectionDefinition[] = [
       },
     ],
   },
+  QUIZ_SAMPLE,
   {
     id: "blog-posts",
     name: "Blog posts",

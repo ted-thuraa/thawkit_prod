@@ -94,7 +94,13 @@ export type CollectionFieldType =
   | "email"
   | "phone"
   | "option"
-  | "count";
+  | "count"
+  /**
+   * Template-only: a validated JSON list of scored answer options (Quiz
+   * collection). Never offered in the "Add field" menu and rejected by the
+   * public createField action — it is created only by sample templates.
+   */
+  | "answer_options";
 
 export type CollectionSortDirection = "asc" | "desc" | "manual";
 
@@ -131,11 +137,28 @@ export interface UpdateCollectionData {
 }
 
 /** Field-specific settings stored in the data column */
+/**
+ * One condition of `CollectionFieldData.showWhen`: the field is shown only
+ * while the SOURCE field's value is one of `equals`. For `option` sources the
+ * comparison uses the option **id** (the stored label is mapped to its id);
+ * for other sources it is the raw stored text (booleans: "true"/"false").
+ */
+export interface FieldVisibilityCondition {
+  fieldId: string;
+  equals: string[];
+}
+
 export interface CollectionFieldData {
   multiple?: boolean; // For asset fields - allow multiple files
   options?: { id: string; name: string }[]; // For option fields - selectable values
   // For count fields: which child collection / reference field to count back from
   count?: { collectionId: string; fieldId: string };
+  /**
+   * Conditional display in the item editor. ALL conditions must hold (AND).
+   * Display only: hidden fields keep their stored values (non-destructive) and
+   * an unresolvable source fails open (the field stays visible).
+   */
+  showWhen?: FieldVisibilityCondition[];
 }
 
 export interface CreateCollectionFieldData {

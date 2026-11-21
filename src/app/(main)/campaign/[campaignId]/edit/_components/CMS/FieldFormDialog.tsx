@@ -36,6 +36,7 @@ import {
   getFileManagerCategory,
   getAssetFieldLabel,
   type FieldType,
+  isCatalogFieldType,
 } from "@/lib/collection-field-utils";
 import { parseMultiReferenceValue } from "@/lib/collection-utils";
 import { clampDateInputValue } from "@/lib/date-format-utils";
@@ -197,7 +198,9 @@ export default function FieldFormDialog({
 
     if (field) {
       setFieldName(field.name);
-      setFieldType(field.type);
+      // Only catalogue types are editable here; template-only types (e.g. quiz
+      // answer options) and not-yet-catalogued ones are never opened in this dialog.
+      if (isCatalogFieldType(field.type)) setFieldType(field.type);
       setFieldDefault(field.default || "");
       setReferenceCollectionId(field.reference_collection_id || null);
       setFieldMultiple(field.data?.multiple || false);

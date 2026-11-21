@@ -115,6 +115,7 @@ import {
   isMultipleAssetField,
   MULTI_ASSET_COLLECTION_ID,
   SIMPLE_TEXT_FIELD_TYPES,
+  bindableFields,
 } from "@/lib/collection-field-utils";
 import { getInverseReferenceFields } from "@/lib/collection-utils";
 
@@ -2223,7 +2224,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
     }
 
     if (!collectionId) return [];
-    return fields[collectionId] || [];
+    return bindableFields(fields[collectionId] || []);
   }, [parentCollectionLayer, fields, currentPage, editingComponentId]);
 
   // Build field groups for multi-source inline variable selection
@@ -2258,7 +2259,7 @@ const RightPanelContent = React.memo(function RightPanelContent({
     const collectionId = collectionVariable?.id;
     // Skip virtual collections (multi-asset)
     if (!collectionId || collectionId === MULTI_ASSET_COLLECTION_ID) return [];
-    return fields[collectionId] || [];
+    return bindableFields(fields[collectionId] || []);
   }, [selectedLayer, fields]);
 
   // Ensure fields for all referenced collections are loaded (for nested reference dropdowns)

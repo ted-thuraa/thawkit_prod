@@ -1,6 +1,7 @@
 // path: src/lib/editor/write/collection-mutations.ts
 
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/drizzle/db";
 import {
@@ -26,7 +27,21 @@ import {
   getCollectionUsage,
 } from "@/lib/collection-usage-utils";
 import { getSampleCollectionById } from "@/lib/sample-collections";
-import { validateFieldValue } from "@/lib/collection-field-utils";
+import { buildSampleFieldPlan } from "./sample-fields";
+import {
+  isValidAssetForField,
+  validateFieldValue,
+} from "@/lib/collection-field-utils";
+import { loadAssetsByIds } from "@/lib/editor/bootstrap/load-assets";
+import {
+  canonicalizeAnswerOptions,
+  interpretQuizRaw,
+  parseAnswerOptionsJson,
+  resolveQuizSchema,
+  serializeAnswerOptions,
+  toQuizRaw,
+  type QuizSchema,
+} from "@/lib/quiz";
 import { parseMultiReferenceValue } from "@/lib/collection-utils";
 import type {
   Collection,
@@ -38,8 +53,6 @@ import type {
 import {
   SYSTEM_FIELD_KEYS,
   getNewCollectionBuiltInFields,
-  BUILT_IN_FIELDS_END,
-  BUILT_IN_FIELDS_START,
   serializeItemValue,
   uniqueName,
 } from "./collection-builtins";
@@ -689,6 +702,7 @@ async function prepareValues(
   input: ItemValuesInput,
   itemId: string | null,
   mode: "create" | "update",
+  organizationId: string,
 ): Promise<PreparedValue[]> {
   const byId = new Map(fields.map((f) => [f.id, f]));
   const prepared: PreparedValue[] = [];
@@ -716,6 +730,8 @@ async function prepareValues(
           throw new ValidationError(`${field.name}: not a valid option.`);
         }
         value = value.trim();
+      } else if (field.type === "answer_options") {
+        value = canonicalizeAnswerOptionsValue(field, value);
       } else if (field.type === "reference") {
         refChecks.push({ field, ids: [value] });
       } else if (field.type === "multi_reference") {
@@ -795,7 +811,93 @@ async function prepareValues(
     }
   }
 
+  // Quiz-shaped collections get their cross-field rules enforced here — the
+  // persistence boundary — on the MERGED record (existing values + this write).
+  const quizSchema = resolveQuizSchema(fields);
+  if (quizSchema) {
+    await assertValidQuizRecord(
+      tx,
+      quizSchema,
+      prepared,
+      mode === "update" ? itemId : null,
+      organizationId,
+    );
+  }
+
   return prepared;
+}
+
+/**
+ * Parses, validates and canonicalises an `answer_options` value (assigning ids
+ * to options that lack one). Structural problems throw a ValidationError;
+ * count minimums depend on the question type and are checked with the record.
+ */
+function canonicalizeAnswerOptionsValue(
+  field: CollectionFieldRow,
+  value: string,
+): string | null {
+  const parsed = parseAnswerOptionsJson(value);
+  if (parsed.kind === "invalid") {
+    throw new ValidationError(`${field.name}: not a valid list of options.`);
+  }
+  if (parsed.kind === "empty" || parsed.items.length === 0) return null;
+  const { options, issues } = canonicalizeAnswerOptions(parsed.items);
+  if (issues.length > 0) {
+    throw new ValidationError(issues.map((i) => i.message).join(" "));
+  }
+  return serializeAnswerOptions(options);
+}
+
+/**
+ * Validates the quiz question this write would produce, and that every asset it
+ * references exists in the caller's organization with the right media type.
+ */
+async function assertValidQuizRecord(
+  tx: Tx,
+  schema: QuizSchema,
+  prepared: readonly PreparedValue[],
+  existingItemId: string | null,
+  organizationId: string,
+): Promise<void> {
+  const merged: Record<string, string> = existingItemId
+    ? await readItemValues(tx, existingItemId)
+    : {};
+  for (const p of prepared) {
+    if (p.value === null) delete merged[p.fieldId];
+    else merged[p.fieldId] = p.value;
+  }
+
+  const { value, issues } = interpretQuizRaw(toQuizRaw(schema, merged), schema);
+  if (!value) {
+    throw new ValidationError(issues.map((i) => i.message).join(" "));
+  }
+
+  // Assets the question actually uses (applicable fields only).
+  const wanted = new Map<string, "image" | "video">();
+  if (value.media.type === "image") wanted.set(value.media.assetId, "image");
+  if (value.media.type === "video" && value.media.source === "upload") {
+    wanted.set(value.media.assetId, "video");
+  }
+  if (value.config.type === "single_choice" || value.config.type === "multiple_choice") {
+    for (const option of value.config.options) {
+      if (option.image) wanted.set(option.image.asset_id, "image");
+    }
+  }
+  if (wanted.size === 0) return;
+
+  const found = new Map(
+    (await loadAssetsByIds(organizationId, [...wanted.keys()])).map((a) => [a.id, a]),
+  );
+  for (const [assetId, kind] of wanted) {
+    const asset = found.get(assetId);
+    if (!asset || !isValidAssetForField(asset, kind)) {
+      throw new ValidationError(
+        kind === "video"
+          ? "The selected video was not found."
+          : "A selected image was not found.",
+      );
+    }
+  }
 }
 
 async function nextBuiltInId(tx: Tx, fields: CollectionFieldRow[]): Promise<number> {
@@ -864,6 +966,7 @@ export async function createItem(
       values,
       null,
       "create",
+      scope.organizationId,
     );
 
     const [orderRow] = await tx
@@ -919,6 +1022,7 @@ export async function updateItem(
       values,
       itemId,
       "update",
+      scope.organizationId,
     );
 
     const updatedField = fields.find((f) => f.key === "updated_at");
@@ -1105,42 +1209,29 @@ export async function createSampleCollection(
       .values({ funnelId: scope.funnelId, name, order, isPublished: DRAFT })
       .returning();
 
-    // start built-ins, sample custom fields (key NULL so they stay editable),
-    // end built-ins — sequential order.
-    const defs = [
-      ...BUILT_IN_FIELDS_START.map((f) => ({ ...f, persistKey: f.key as string | null, lookupKey: f.key as string | null })),
-      ...sample.customFields.map((f) => ({
-        name: f.name,
-        type: f.type,
-        fillable: f.fillable,
-        hidden: f.hidden,
-        persistKey: null as string | null,
-        lookupKey: f.key,
-      })),
-      ...BUILT_IN_FIELDS_END.map((f) => ({ ...f, persistKey: f.key as string | null, lookupKey: f.key as string | null })),
-    ];
+    // Field plan: built-ins → sample custom fields → built-ins. Field ids are
+    // generated here (not by the DB) so `showWhen` can reference sibling ids.
+    const plan = buildSampleFieldPlan(sample, randomUUID);
     const fieldRows = await tx
       .insert(collectionField)
       .values(
-        defs.map((d, order) => ({
+        plan.map((f) => ({
+          id: f.id,
           collectionId: created.id,
-          name: d.name,
-          key: d.persistKey,
-          type: d.type,
-          fillable: d.fillable,
-          hidden: d.hidden,
-          order,
+          name: f.name,
+          key: f.persistKey,
+          type: f.type,
+          defaultValue: f.defaultValue,
+          fillable: f.fillable,
+          hidden: f.hidden,
+          order: f.order,
+          data: f.data,
           isPublished: DRAFT,
         })),
       )
       .returning();
-    // `returning()` order isn't guaranteed — key by the order we assigned.
-    const byOrder = new Map(fieldRows.map((f) => [f.order, f]));
     const fieldIdByKey = new Map<string, string>();
-    defs.forEach((d, i) => {
-      const row = byOrder.get(i);
-      if (row && d.lookupKey) fieldIdByKey.set(d.lookupKey, row.id);
-    });
+    for (const f of plan) if (f.lookupKey) fieldIdByKey.set(f.lookupKey, f.id);
 
     const itemRows = sample.items.length
       ? await tx

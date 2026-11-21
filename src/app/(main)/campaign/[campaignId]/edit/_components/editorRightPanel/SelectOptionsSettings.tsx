@@ -66,6 +66,7 @@ import { collectionsReadApi } from "@/lib/editor/editor-read-api";
 import {
   findDisplayField,
   getItemDisplayName,
+  bindableFields,
 } from "@/lib/collection-field-utils";
 import { toast } from "sonner";
 
@@ -437,7 +438,7 @@ export default function SelectOptionsSettings({
     ? fields[sortByCollectionId]
     : undefined;
   const sortByCollectionFields = useMemo(
-    () => rawSortByFields || EMPTY_FIELDS,
+    () => (rawSortByFields ? bindableFields(rawSortByFields) : EMPTY_FIELDS),
     [rawSortByFields],
   );
 

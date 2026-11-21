@@ -77,6 +77,13 @@ import CollectionItemSheet from "./CollectionItemSheet";
 import { ReferenceFieldCell, SortableRow } from "./CmsTableParts";
 import FieldFormDialog, { type FieldFormData } from "./FieldFormDialog";
 import { FieldUsageSections } from "./UsageSections";
+import {
+  parseAnswerOptionsJson,
+  resolveQuizSchema,
+  toQuizRaw,
+  validateQuizRaw,
+  type QuizIssue,
+} from "@/lib/quiz";
 
 interface CmsContentEditorProps {
   campaignId: string;
@@ -196,6 +203,22 @@ const CmsContentEditor = React.memo(
     const totalItems = selectedCollectionId
       ? itemsTotalCount[selectedCollectionId] || 0
       : 0;
+
+    // Quiz collections: flag questions that don't satisfy the shared rules (e.g.
+    // records created before a rule changed). Null schema ⇒ not a quiz ⇒ no work.
+    const quizSchema = useMemo(
+      () => resolveQuizSchema(collectionFields),
+      [collectionFields],
+    );
+    const quizIssuesByItem = useMemo(() => {
+      const map = new Map<string, QuizIssue[]>();
+      if (!quizSchema) return map;
+      for (const item of collectionItems) {
+        const issues = validateQuizRaw(toQuizRaw(quizSchema, item.values), quizSchema);
+        if (issues.length > 0) map.set(item.id, issues);
+      }
+      return map;
+    }, [quizSchema, collectionItems]);
 
     // Items come pre-sorted from the API — no client-side sorting needed.
     // Manual order is the DB default; field sorting is handled server-side with global pagination.
@@ -1487,6 +1510,25 @@ const CmsContentEditor = React.memo(
                               );
                             }
 
+                            // Quiz answer options - a count, never the raw JSON
+                            if (field.type === "answer_options") {
+                              const parsed = parseAnswerOptionsJson(value);
+                              const count =
+                                parsed.kind === "ok" ? parsed.items.length : 0;
+                              return (
+                                <td
+                                  key={field.id}
+                                  className="px-4 py-5 text-muted-foreground"
+                                >
+                                  <span className="line-clamp-1 truncate">
+                                    {count > 0
+                                      ? `${count} option${count !== 1 ? "s" : ""}`
+                                      : "-"}
+                                  </span>
+                                </td>
+                              );
+                            }
+
                             // Count fields - computed numeric value, defaults to 0
                             if (field.type === "count") {
                               const numeric =
@@ -1511,14 +1553,45 @@ const CmsContentEditor = React.memo(
                                 ? extractPlainTextFromTiptap(value)
                                 : value;
 
+                            const rowIssues =
+                              field.key === "name"
+                                ? quizIssuesByItem.get(item.id)
+                                : undefined;
+
                             return (
                               <td
                                 key={field.id}
                                 className="px-4 py-5 text-muted-foreground"
                               >
-                                <span className="line-clamp-1 truncate">
-                                  {displayValue || "-"}
-                                </span>
+                                {rowIssues ? (
+                                  <span className="flex items-center gap-2 min-w-0">
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span
+                                          role="img"
+                                          aria-label="This question has problems"
+                                          data-testid="quiz-issue-marker"
+                                          className="shrink-0 text-destructive"
+                                        >
+                                          <Icon name="info" className="size-3.5" />
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        {rowIssues
+                                          .slice(0, 3)
+                                          .map((i) => i.message)
+                                          .join(" ")}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                    <span className="line-clamp-1 truncate">
+                                      {displayValue || "-"}
+                                    </span>
+                                  </span>
+                                ) : (
+                                  <span className="line-clamp-1 truncate">
+                                    {displayValue || "-"}
+                                  </span>
+                                )}
                               </td>
                             );
                           })}
@@ -1567,6 +1640,7 @@ const CmsContentEditor = React.memo(
       openDropdownId,
       fieldDialogOpen,
       searchQuery,
+      quizIssuesByItem,
       collectionItems.length,
       showSkeleton,
       totalItems,

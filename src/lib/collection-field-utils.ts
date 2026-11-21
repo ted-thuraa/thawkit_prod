@@ -212,11 +212,74 @@ export function isValidFieldType(type: string): type is FieldType {
   return VALID_FIELD_TYPES.includes(type);
 }
 
-const FIELD_TYPES_BY_VALUE: Record<FieldType, (typeof FIELD_TYPES)[number]> =
-  Object.fromEntries(FIELD_TYPES.map((t) => [t.value, t])) as Record<
-    FieldType,
-    (typeof FIELD_TYPES)[number]
-  >;
+/**
+ * Field types that exist only inside sample TEMPLATES (not user-creatable).
+ * They are deliberately kept OUT of `FIELD_TYPES`, so every list derived from
+ * it — the "Add field" menu, `isValidFieldType`, `DISPLAYABLE_FIELD_TYPES`
+ * (variable selectors) — excludes them by construction.
+ */
+export const TEMPLATE_ONLY_FIELD_TYPES = [
+  {
+    value: "answer_options",
+    label: "Answer options",
+    icon: "listUnordered",
+    hasDefault: false,
+  },
+] as const satisfies readonly {
+  value: CollectionFieldType;
+  label: string;
+  icon: IconProps["name"];
+  hasDefault: boolean;
+}[];
+
+export type TemplateOnlyFieldType =
+  (typeof TEMPLATE_ONLY_FIELD_TYPES)[number]["value"];
+
+/** True for types that only sample templates may create (e.g. `answer_options`). */
+export function isTemplateOnlyFieldType(
+  type: CollectionFieldType | string | undefined,
+): type is TemplateOnlyFieldType {
+  return TEMPLATE_ONLY_FIELD_TYPES.some((t) => t.value === type);
+}
+
+/**
+ * True when `type` is in the user-facing catalogue (`FIELD_TYPES`). Narrows a
+ * stored `CollectionFieldType` to the `FieldType` the field dialog can edit;
+ * template-only (and any not-yet-catalogued) types are not.
+ */
+export function isCatalogFieldType(
+  type: CollectionFieldType | string | undefined,
+): type is FieldType {
+  return FIELD_TYPES.some((t) => t.value === type);
+}
+
+/**
+ * Whether a field of this type can be offered as a dynamic-content / link /
+ * visibility-condition / filter source. Template-only JSON fields cannot: they
+ * would surface as a raw JSON string.
+ */
+export function isBindableFieldType(
+  type: CollectionFieldType | string | undefined,
+): boolean {
+  return !isTemplateOnlyFieldType(type);
+}
+
+/** `fields` without those that must not be offered as binding sources. */
+export function bindableFields<T extends { type: CollectionFieldType | string }>(
+  fields: readonly T[],
+): T[] {
+  return fields.filter((f) => isBindableFieldType(f.type));
+}
+
+type FieldTypeMeta = {
+  label: string;
+  icon: IconProps["name"];
+};
+
+const FIELD_TYPES_BY_VALUE: Record<string, FieldTypeMeta> = {
+  ...Object.fromEntries(FIELD_TYPES.map((t) => [t.value, t])),
+  ...Object.fromEntries(TEMPLATE_ONLY_FIELD_TYPES.map((t) => [t.value, t])),
+};
 
 /** Get icon name for field type. Returns `defaultIcon` for invalid field types. */
 export function getFieldIcon(
@@ -224,14 +287,14 @@ export function getFieldIcon(
   defaultIcon: IconProps["name"] = "text",
 ): IconProps["name"] {
   if (!fieldType) return defaultIcon;
-  return FIELD_TYPES_BY_VALUE[fieldType as FieldType]?.icon ?? defaultIcon;
+  return FIELD_TYPES_BY_VALUE[fieldType]?.icon ?? defaultIcon;
 }
 
 /** Get human-readable label for a field type (e.g. 'date_only' → 'Date') */
 export function getFieldTypeLabel(
   fieldType: CollectionFieldType | string,
 ): string {
-  return FIELD_TYPES_BY_VALUE[fieldType as FieldType]?.label ?? fieldType;
+  return FIELD_TYPES_BY_VALUE[fieldType]?.label ?? fieldType;
 }
 
 // =============================================================================
@@ -945,7 +1008,9 @@ export function buildFieldGroups(
       continue;
     }
 
-    const collectionFields = fieldsByCollectionId[collectionId] || [];
+    const collectionFields = bindableFields(
+      fieldsByCollectionId[collectionId] || [],
+    );
     const collection = collections.find((c) => c.id === collectionId);
     if (collectionFields.length > 0) {
       const isClosest = i === 0;
@@ -964,7 +1029,9 @@ export function buildFieldGroups(
   // Always add even if same collection as layer - page data differs from collection layer data
   if (page?.is_dynamic && page?.settings?.cms?.collection_id) {
     const pageCollectionId = page.settings.cms.collection_id;
-    const pageCollectionFields = fieldsByCollectionId[pageCollectionId] || [];
+    const pageCollectionFields = bindableFields(
+      fieldsByCollectionId[pageCollectionId] || [],
+    );
     const pageCollection = collections.find((c) => c.id === pageCollectionId);
     if (pageCollectionFields.length > 0) {
       groups.push({
